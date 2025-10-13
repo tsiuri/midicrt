@@ -1,0 +1,29 @@
+# plugins/polydisplay.py
+# Diagnostic version — shows "ACTIVE(n)" when notes are detected per channel.
+
+import mido
+
+# ---------------------------------------------------------------------
+# Global dictionary: active notes per channel (1–16)
+# ---------------------------------------------------------------------
+_active = {ch: set() for ch in range(1, 17)}
+
+
+def handle(msg):
+    """Record note-on / note-off messages."""
+    if msg.type in ("note_on", "note_off"):
+        ch = msg.channel + 1
+        if msg.type == "note_on" and msg.velocity > 0:
+            _active[ch].add(msg.note)
+        else:
+            # note_off or velocity 0 = release
+            _active[ch].discard(msg.note)
+
+
+def get_notes(ch):
+    """Diagnostic: return 'ACTIVE(n)' if notes are currently held."""
+    notes = sorted(_active.get(ch, []))
+    if notes:
+        return f"ACTIVE({len(notes)})"
+    else:
+        return ""

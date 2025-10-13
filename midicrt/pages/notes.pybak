@@ -1,0 +1,14 @@
+# pages/notes.py — main Notes page for composite CRT
+import plugins.polydisplay as polydisplay
+from midicrt import INSTRUMENT_NAMES
+
+background = False  # only active when visible
+
+def draw(state):
+    """Draw polyphonic notes per channel."""
+    for ch, name in enumerate(INSTRUMENT_NAMES, start=1):
+        note_str = polydisplay.get_notes(ch)
+        print(f"{ch:02d}  {name:<11.11}  {note_str}")
+
+def handle(msg):
+    polydisplay.handle(msg)

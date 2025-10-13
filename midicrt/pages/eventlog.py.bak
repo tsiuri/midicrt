@@ -1,0 +1,137 @@
+# pages/eventlog.py — general MIDI event log with CC filter input
+background = True
+PAGE_ID = 6
+PAGE_NAME = "Event Log"
+
+from collections import deque
+import time
+from blessed import Terminal
+from midicrt import draw_line
+
+term = Terminal()
+
+MAX_LOG = 300
+log_buffer = deque(maxlen=MAX_LOG)
+scroll_offset = 0
+VISIBLE_ROWS_TARGET = 20
+
+# --------- filters ---------
+filters = {
+    "type": None,        # "control_change" etc.
+    "channel": None,     # 1–16
+    "control": None,     # CC number
+}
+filter_input_mode = False
+filter_input_text = ""
+
+def passes_filter(msg):
+    if filters["type"] and msg.type != filters["type"]:
+        return False
+    if filters["channel"] and (msg.channel + 1) != filters["channel"]:
+        return False
+    if filters["control"] and getattr(msg, "control", None) != filters["control"]:
+        return False
+    return True
+
+# ---------- MIDI handler ----------
+def handle(msg):
+    if not passes_filter(msg):
+        return
+    ts = time.strftime("%H:%M:%S")
+    desc = msg.type
+    if msg.type == "note_on":
+        desc += f"  Ch{msg.channel+1:02d} Note {msg.note:03d} vel {msg.velocity:03d}"
+    elif msg.type == "control_change":
+        desc += f"  Ch{msg.channel+1:02d} CC{msg.control:03d}={msg.value:03d}"
+    elif msg.type == "program_change":
+        desc += f"  Ch{msg.channel+1:02d} Prog {msg.program:03d}"
+    else:
+        desc += f"  Ch{msg.channel+1:02d}"
+    log_buffer.append(f"[{ts}] {desc}")
+
+# ---------- keyboard control ----------
+def keypress(ch):
+    """Called from midicrt.keyboard_listener when active page is this one."""
+    global filter_input_mode, filter_input_text
+
+    if filter_input_mode:
+        if ch.name == "KEY_ENTER":
+            if filter_input_text.strip():
+                try:
+                    cc_num = int(filter_input_text.strip())
+                    filters["type"] = "control_change"
+                    filters["control"] = cc_num
+                except ValueError:
+                    pass
+            filter_input_mode = False
+            filter_input_text = ""
+        elif ch.name == "KEY_ESCAPE":
+            filter_input_mode = False
+            filter_input_text = ""
+        elif ch.name == "KEY_BACKSPACE":
+            filter_input_text = filter_input_text[:-1]
+        elif ch.isdigit():
+            filter_input_text += ch
+        return
+
+    # outside filter mode
+    if ch.lower() == "f":
+        filter_input_mode = True
+        filter_input_text = ""
+    elif ch == "*":
+        filters["type"] = filters["channel"] = filters["control"] = None
+
+# ---------- draw ----------
+def draw(state):
+    y0 = state.get("y_offset", 3)
+    cols = state["cols"]
+    rows = state["rows"]
+
+    draw_line(y0, f"--- {PAGE_NAME} ---")
+
+    # filter line
+    if filter_input_mode:
+        draw_line(y0 + 1, f"[Filter: CC {filter_input_text or '?'}]  (Enter=apply, Esc=cancel)")
+    else:
+        active = []
+        if filters["type"]:
+            active.append(filters["type"])
+        if filters["channel"]:
+            active.append(f"Ch{filters['channel']}")
+        if filters["control"]:
+            active.append(f"CC{filters['control']}")
+        if active:
+            draw_line(y0 + 1, "Filter: " + ", ".join(active))
+        else:
+            draw_line(y0 + 1, "(no filters) — press 'f' to enter CC# filter, '*' to clear")
+
+    # compute visible range
+    top = y0 + 2
+    bottom = rows - 2
+    visible_rows = max(5, min(VISIBLE_ROWS_TARGET, bottom - top))
+
+    if len(log_buffer) == 0:
+        draw_line(top, "(no events yet)")
+        return
+
+    start_index = max(0, len(log_buffer) - visible_rows - scroll_offset)
+    end_index = start_index + visible_rows
+    visible = list(log_buffer)[start_index:end_index]
+
+    y = top
+    last_y = y
+    for line in visible:
+        draw_line(y, line[:cols])
+        last_y = y
+        y += 1
+        if y >= top + visible_rows:
+            break
+
+    # end marker
+    marker = f"  ⟵ offset {scroll_offset}" if scroll_offset else "  ⟵ end of log"
+    base = visible[-1] if visible else ""
+    gap = 4
+    usable_cols = cols - gap
+    space = max(0, usable_cols - len(base) - len(marker))
+    merged = (base[:usable_cols] + " " * space + marker)[:cols - 1]
+    draw_line(last_y, merged)

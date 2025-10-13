@@ -1,0 +1,237 @@
+# pages/pianoroll.py — Braille piano roll (C2–C6), multi-channel
+BACKGROUND = True
+PAGE_ID = 8
+PAGE_NAME = "Piano Roll"
+
+import sys, time
+from collections import deque
+from blessed import Terminal
+from midicrt import draw_line
+
+term = Terminal()
+
+# -------- Configuration --------
+PITCH_LOW_DEFAULT = 36   # C2
+PITCH_HIGH_DEFAULT = 83  # B5
+TICKS_PER_COL = 6
+LEFT_MARGIN = 10
+
+# -------- State --------
+visible_channels = set(range(1, 17))
+active = {}  # {(ch,pitch): vel}
+cols_buf = deque()
+time_cols = 0
+pitch_low = PITCH_LOW_DEFAULT
+pitch_high = PITCH_HIGH_DEFAULT
+_last_tick = None
+vis_input_mode = False
+vis_input_text = ""
+
+# -------- Braille constants --------
+DOTS_LEFT = [0x01, 0x02, 0x04, 0x40]
+DOTS_RIGHT = [0x08, 0x10, 0x20, 0x80]
+BRAILLE_BASE = 0x2800
+NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+
+# -------- Helper functions --------
+def _notename(n):
+    if n < 0: n = 0
+    o = n // 12 - 1
+    return f"{NOTE_NAMES[n % 12]}{o}"
+
+def _note_on(msg):
+    if msg.velocity == 0:
+        _note_off(msg)
+        return
+    active[(msg.channel + 1, msg.note)] = msg.velocity
+
+def _note_off(msg):
+    active.pop((msg.channel + 1, msg.note), None)
+
+def _ensure_cols(width_chars):
+    """Keep a fixed-length time buffer."""
+    global time_cols, cols_buf
+    needed = max(8, width_chars)
+    if time_cols != needed or not cols_buf:
+        time_cols = needed
+        cols_buf = deque([[] for _ in range(time_cols)], maxlen=time_cols)
+
+def _shift_if_needed(state):
+    """Shift roll buffer by MIDI ticks."""
+    global _last_tick
+    tick = state["tick"]
+    if _last_tick is None:
+        _last_tick = tick
+        return
+    moved = tick - _last_tick
+    if moved <= 0:
+        return
+    _last_tick = tick
+    steps = moved // TICKS_PER_COL
+    for _ in range(steps):
+        now_col = [(p, ch, v) for (ch, p), v in active.items()]
+        cols_buf.append(now_col)
+
+def _braille_for_group(pitches):
+    """Convert up to 4 semitone hits into a Braille cell."""
+    bits = 0
+    for i, vel in pitches:
+        bits |= DOTS_LEFT[i]
+        if vel >= 100:
+            bits |= DOTS_RIGHT[i]
+    return chr(BRAILLE_BASE + bits) if bits else " "
+
+def _channel_legend():
+    lst = " ".join(str(c) for c in sorted(visible_channels))
+    return f"Vis: {lst}   [d=ch10, v=edit, *=all]"
+
+def apply_visibility_list(text):
+    visible_channels.clear()
+    try:
+        if not text:
+            visible_channels.update(range(1, 17))
+            return
+        for part in text.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            if "-" in part:
+                a, b = map(int, part.split("-", 1))
+                for c in range(min(a, b), max(a, b) + 1):
+                    if 1 <= c <= 16:
+                        visible_channels.add(c)
+            else:
+                c = int(part)
+                if 1 <= c <= 16:
+                    visible_channels.add(c)
+        if not visible_channels:
+            visible_channels.update(range(1, 17))
+    except Exception:
+        visible_channels.update(range(1, 17))
+
+# -------- MIDI + Keypress --------
+def handle(msg):
+    t = msg.type
+    if t == "note_on":
+        _note_on(msg)
+    elif t == "note_off":
+        _note_off(msg)
+
+def keypress(ch):
+    global vis_input_mode, vis_input_text, pitch_low, pitch_high
+    if vis_input_mode:
+        if ch.name == "KEY_ENTER":
+            apply_visibility_list(vis_input_text.strip())
+            vis_input_mode = False
+            vis_input_text = ""
+            return True
+        elif ch.name == "KEY_ESCAPE":
+            vis_input_mode = False
+            vis_input_text = ""
+            return True
+        elif ch.name == "KEY_BACKSPACE":
+            vis_input_text = vis_input_text[:-1]
+            return True
+        else:
+            s = str(ch)
+            if s and all(c in "0123456789,- " for c in s):
+                vis_input_text += s
+                return True
+            return True
+
+    if str(ch).lower() == "v":
+        vis_input_mode = True
+        vis_input_text = ""
+        return True
+    if str(ch).lower() == "d":
+        if 10 in visible_channels:
+            visible_channels.discard(10)
+        else:
+            visible_channels.add(10)
+        return True
+    if str(ch) == "*":
+        visible_channels.clear()
+        visible_channels.update(range(1, 17))
+        return True
+
+    if ch.is_sequence:
+        if ch.name in ("KEY_PGUP", "KEY_PPAGE"):
+            pitch_low = max(0, pitch_low - 12)
+            pitch_high = pitch_low + 47
+            return True
+        elif ch.name in ("KEY_PGDN", "KEY_NPAGE", "KEY_PGDOWN"):
+            pitch_low = min(108 - 47, pitch_low + 12)
+            pitch_high = pitch_low + 47
+            return True
+        elif ch.name == "KEY_HOME":
+            pitch_low, pitch_high = PITCH_LOW_DEFAULT, PITCH_HIGH_DEFAULT
+            return True
+    return False
+
+# -------- Draw --------
+def draw(state):
+    global pitch_low, pitch_high
+    cols = state["cols"]
+    rows = state["rows"]
+    y0 = state.get("y_offset", 3)
+
+    # --- Header
+    draw_line(y0, f"--- {PAGE_NAME} ---".ljust(cols))
+    if vis_input_mode:
+        draw_line(y0 + 1, f"[Channels: {vis_input_text or '?'}] Enter=apply Esc=cancel".ljust(cols))
+    else:
+        draw_line(y0 + 1, _channel_legend()[:cols])
+
+    # --- Layout
+    top = y0 + 2
+    bottom = rows - 5   # move footer up 3 lines
+    avail_rows = bottom - top
+    braille_rows = min(12, max(4, avail_rows))
+    span = braille_rows * 4
+    pitch_high = pitch_low + span - 1
+
+    roll_cols = max(8, cols - LEFT_MARGIN - 2)
+    _ensure_cols(roll_cols)
+    _shift_if_needed(state)
+
+    # --- Left labels
+    draw_line(top, f"{_notename(pitch_high):>7} │")
+    draw_line(bottom - 1, f"{_notename(pitch_low):>7} │")
+
+    # --- Columns
+    if len(cols_buf) < roll_cols:
+        visible_cols = [[] for _ in range(roll_cols - len(cols_buf))] + list(cols_buf)
+    else:
+        visible_cols = list(cols_buf)[-roll_cols:]
+
+    # --- Draw grid
+    for r in range(braille_rows):
+        y = top + r
+        group_top = pitch_high - r * 4
+        group_pitches = [group_top - i for i in range(4)]
+        chars = []
+        for col_events in visible_cols:
+            group_hits = [(group_pitches.index(p), v) for (p, ch, v) in col_events
+                          if p in group_pitches and ch in visible_channels]
+            chars.append(_braille_for_group(group_hits))
+
+        if (group_top + 1) % 12 == 0:
+            bar = "-" * roll_cols
+        else:
+            bar = "".join(chars)
+
+        full = (" " * (LEFT_MARGIN - 1)) + "│" + bar.ljust(roll_cols)[:roll_cols]
+        draw_line(y, full[:cols])
+
+    # --- Right boundary
+    for r in range(braille_rows):
+        y = top + r
+        sys.stdout.write(term.move_yx(y, LEFT_MARGIN + roll_cols) + "│")
+
+    # --- Footer
+    footer_y = rows - 5
+    sys.stdout.write(term.move_yx(footer_y, 0))
+    sys.stdout.write(term.clear_eol)
+    status = f"Range: {_notename(pitch_low)}–{_notename(pitch_high)}  T/col:{TICKS_PER_COL}  Active:{len(active)}"
+    draw_line(footer_y, status[:cols])
+

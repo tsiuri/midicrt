@@ -1,0 +1,35 @@
+# -*- coding: utf-8 -*-
+# Plugin: MIDI Note Activity Meters for midicrt
+#
+# Draws 10-cell horizontal activity bars per channel.
+# Uses note_on velocity and time decay for a lively display.
+
+import time
+from collections import defaultdict
+import midicrt  # import your main program's symbols
+
+# Store "last hit" timestamps
+activity = defaultdict(float)
+
+# This hook will be called automatically by midicrt's MIDI loop
+def handle(msg):
+    if msg.type == "note_on" and msg.velocity > 0:
+        # mark channel activity
+        activity[msg.channel + 1] = time.time()
+
+# Draw meters on screen
+def draw():
+    now = time.time()
+    y = 3
+    for ch in range(1, 17):
+        label = midicrt.CHANNEL_LABELS.get(ch, f"CH{ch:02d}")
+        age = now - activity.get(ch, 999)
+        # 0.0s → full bar, fade after 1s
+        decay = max(0.0, 1.0 - age)
+        filled = int(decay * 10)
+        bar = "#" * filled + " " * (10 - filled)
+        line = f"{label:<16} [{bar}]"
+        midicrt.draw_boxed_text(y, line.ljust(midicrt.SCREEN_COLS))
+        y += 1
+        if y >= midicrt.SCREEN_ROWS - 4:
+            break

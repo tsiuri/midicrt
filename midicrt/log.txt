@@ -1,0 +1,35 @@
+[Plugin] Loaded plugins.beat_counter
+[Plugin] Loaded plugins.beatflash
+[Plugin] Loaded plugins.loopprogress
+[Plugin] Loaded plugins.timeclock
+[Page load failed] /home/billie/midicrt/pages/ccgraph.py cannot import name 'draw_line' from 'midicrt' (consider renaming '/home/billie/midicrt/midicrt.py' if it has the same name as a library you intended to import)
+[Page load failed] /home/billie/midicrt/pages/ccmonitor.py cannot import name 'draw_line' from 'midicrt' (consider renaming '/home/billie/midicrt/midicrt.py' if it has the same name as a library you intended to import)
+[Page load failed] /home/billie/midicrt/pages/eventlog.py cannot import name 'draw_line' from 'midicrt' (consider renaming '/home/billie/midicrt/midicrt.py' if it has the same name as a library you intended to import)
+[Page load failed] /home/billie/midicrt/pages/help.py cannot import name 'draw_line' from 'midicrt' (consider renaming '/home/billie/midicrt/midicrt.py' if it has the same name as a library you intended to import)
+[Page load failed] /home/billie/midicrt/pages/notes.py cannot import name 'draw_line' from 'midicrt' (consider renaming '/home/billie/midicrt/midicrt.py' if it has the same name as a library you intended to import)
+[Page load failed] /home/billie/midicrt/pages/pianoroll.py cannot import name 'draw_line' from 'midicrt' (consider renaming '/home/billie/midicrt/midicrt.py' if it has the same name as a library you intended to import)
+[Page load failed] /home/billie/midicrt/pages/pianoroll_gfx.py unexpected indent (pianoroll_gfx.py, line 49)
+[Page load failed] /home/billie/midicrt/pages/ports.py cannot import name 'draw_line' from 'midicrt' (consider renaming '/home/billie/midicrt/midicrt.py' if it has the same name as a library you intended to import)
+[Page load failed] /home/billie/midicrt/pages/proglog.py cannot import name 'draw_line' from 'midicrt' (consider renaming '/home/billie/midicrt/midicrt.py' if it has the same name as a library you intended to import)
+[Page load failed] /home/billie/midicrt/pages/transport.py cannot import name 'draw_line' from 'midicrt' (consider renaming '/home/billie/midicrt/midicrt.py' if it has the same name as a library you intended to import)
+[Plugin] Loaded plugins.beat_counter
+[Plugin] Loaded plugins.beatflash
+[Plugin] Loaded plugins.loopprogress
+[Plugin] Loaded plugins.timeclock
+[Page] Loaded ccgraph → 5
+[Page] Loaded ccmonitor → 4
+[Page] Loaded eventlog → 6
+[Page] Loaded help → 0
+[Page] Loaded notes → 1
+[Page] Loaded pianoroll → 8
+[Page load failed] /home/billie/midicrt/pages/pianoroll_gfx.py unexpected indent (pianoroll_gfx.py, line 49)
+[Page] Loaded ports → 2
+[Page] Loaded proglog → 7
+[Page] Loaded transport → 3
+[Info] Starting MIDI backend...
+
+[Startup] Loaded plugins:
+   • plugins.beat_counter
+   • plugins.beatflash
+   • plugins.loopprogress
+   • plugins.timeclock

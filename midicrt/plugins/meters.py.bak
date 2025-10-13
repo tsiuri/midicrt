@@ -1,0 +1,56 @@
+# -*- coding: utf-8 -*-
+# Plugin: Velocity + Note display (inline right side)
+#
+# Draws per-channel velocity bars appended to each channel line
+# of the main display.  Bar length reflects velocity; brightness
+# fades over ~1.5 s.  Note name and MIDI number are shown.
+# Octave is shifted +1 to match Cirklon’s convention.
+
+import time
+from collections import defaultdict
+import midicrt
+
+# Store timestamp, velocity, and note number for each channel
+activity = defaultdict(lambda: (0.0, 0, None))
+
+NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F",
+              "F#", "G", "G#", "A", "A#", "B"]
+
+def note_name(note_num):
+    """Return e.g. 'C#4' for note 61 (shifted +1 octave)."""
+    name = NOTE_NAMES[note_num % 12]
+    octave = (note_num // 12)        # +1 octave vs. standard -1 mapping
+    return f"{name}{octave}"
+
+def handle(msg):
+    """Capture note_on events with velocity."""
+    if msg.type == "note_on" and msg.velocity > 0:
+        ch = msg.channel + 1
+        activity[ch] = (time.time(), msg.velocity, msg.note)
+
+def draw():
+    """Render the bar + note text inline on each channel row."""
+    now = time.time()
+    for ch in range(1, 17):
+        y = 3 + (ch - 1)
+        ts, vel, note = activity.get(ch, (0, 0, None))
+        age = now - ts
+        if age > 1.5:
+            continue  # fade expired
+
+        # Velocity → base bar length 1–10
+        max_len = int((vel / 127) * 10)
+        fade = max(0.0, 1.5 - age) / 1.5
+        filled = int(max_len * fade)
+        bar = "#" * filled + " " * (10 - filled)
+
+        xpos = midicrt.SCREEN_COLS - 26  # shift left to fit note text
+
+        # Format note name + number
+        if note is not None:
+            ntext = f"{note_name(note):<4}{note:03d}"
+        else:
+            ntext = " " * 7
+
+        out = f"[{bar}] {ntext}"
+        print(midicrt.term.move_yx(y, xpos) + out)

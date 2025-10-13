@@ -1,0 +1,267 @@
+# -*- coding: utf-8 -*-
+# midicrt.py — MIDI visualizer for Apple II CRT display
+#
+# Features:
+#   • Auto-creates virtual MIDI port "GreenCRT Monitor"
+#   • Reads instrument names from instruments.txt
+#   • BPM + bar counter + beat-flash indicator
+#   • Plugin support (meters, loop progress, etc.)
+
+import time
+import mido
+import importlib.util, glob, os, sys          # ← os added here
+import subprocess, time, re  #bq
+from blessed import Terminal
+#bq
+#bq Global accessors so plugins always see current values
+def get_timing():
+    return {
+        "tick": tick_counter,
+        "bar": bar_counter,
+        "running": running,
+    }
+#bq
+#bq
+term = Terminal()
+
+# ---------------------------------------------------------------------
+#  Screen geometry (tuned for Apple II composite)
+# ---------------------------------------------------------------------
+SCREEN_COLS = 60
+SCREEN_ROWS = 24
+
+# ---------------------------------------------------------------------
+#  Global timing / transport state
+# ---------------------------------------------------------------------
+bpm = 0.0
+tick_counter = 0
+bar_counter = 0
+running = False
+
+# ---------------------------------------------------------------------
+#  Load instrument names from external text file
+# ---------------------------------------------------------------------
+def load_instrument_names():
+    """Read 16 instrument names from instruments.txt (pad if shorter)."""
+    path = os.path.join(os.path.dirname(__file__), "instruments.txt")
+    names = []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            names = [line.strip() for line in f if line.strip()]
+    except FileNotFoundError:
+        # fallback default list
+        names = [f"Channel {i+1}" for i in range(16)]
+    while len(names) < 16:
+        names.append(f"Channel {len(names)+1}")
+    return names[:16]
+
+INSTRUMENT_NAMES = load_instrument_names()
+
+# ---------------------------------------------------------------------
+#  Prepare MIDI backend
+# ---------------------------------------------------------------------
+mido.set_backend("mido.backends.rtmidi")
+VIRTUAL_PORT_NAME = "GreenCRT Monitor"
+
+# ---------------------------------------------------------------------
+#  Plugin loader
+# --------------------------------------------------------------------
+PLUGINS = []
+loaded_names = set()
+for fname in sorted(os.listdir("plugins")):
+    if fname.endswith(".py") and not fname.startswith("__"):
+        modname = fname[:-3]
+        fqname = f"plugins.{modname}"
+        if fqname not in loaded_names:
+            try:
+                mod = importlib.import_module(fqname)
+                PLUGINS.append(mod)
+                loaded_names.add(fqname)
+                print(f"[Plugin] Loaded {fqname}")
+            except Exception as e:
+                print(f"[Plugin Error] {fqname}: {e}")
+
+# ---------------------------------------------------------------------
+#  Helpers
+# ---------------------------------------------------------------------
+def trunc(s, n):
+    return s[:n].ljust(n)
+
+def draw_boxed_text(row, text):
+    """Draw one line safely."""
+    print(term.move_yx(row, 0) + trunc(text, SCREEN_COLS), end="")
+
+# ---------------------------------------------------------------------
+#  MIDI handler
+# ---------------------------------------------------------------------
+last_clock_time = None
+clock_times = []
+
+def handle_midi(msg):
+    """Update global timing and dispatch to plugins."""
+    global tick_counter, bar_counter, running, bpm, last_clock_time, clock_times
+    if msg.type == "start":
+        running = True
+        tick_counter = 0
+        bar_counter = 0
+        clock_times.clear()
+    elif msg.type == "stop":
+        running = False
+    elif msg.type == "clock":
+        if not running:
+            # ignore clocks while stopped
+            return
+
+        tick_counter += 1
+
+        # every 96 ticks (4 beats @ 24 PPQN) -> increment bar
+        if tick_counter % (24 * 4) == 0:
+            bar_counter += 1
+
+        # BPM calculation
+        now = time.time()
+        if last_clock_time:
+            dt = now - last_clock_time
+            clock_times.append(dt)
+            if len(clock_times) > 24:
+                clock_times.pop(0)
+            avg = sum(clock_times) / len(clock_times)
+            bpm = 60.0 / (24 * avg)
+        last_clock_time = now
+
+    elif msg.type in ("note_on", "note_off"):
+        for mod in PLUGINS:
+            if hasattr(mod, "handle"):
+                try:
+                    mod.handle(msg)
+                except Exception:
+                    pass
+
+# ---------------------------------------------------------------------
+#  UI loop
+# ---------------------------------------------------------------------
+def ui_loop():
+    global bpm, bar_counter, tick_counter, running
+    with term.fullscreen(), term.hidden_cursor():
+        print(term.home + term.clear)
+        while True:
+            # --- header line with transport & BPM ---
+            transport_status = "RUN" if running else "STOP"
+            draw_boxed_text(0, trunc(f" {transport_status}  {bpm:5.1f} BPM ", SCREEN_COLS))
+
+            # --- Beat-flash indicator ---
+            PPQN = 24
+            beat_phase = tick_counter % PPQN
+            flash_on = beat_phase < 3 and running
+            symbol = "●" if flash_on else "○"
+            xpos = SCREEN_COLS - 4
+            print(term.move_yx(0, xpos) +
+                  (term.reverse(symbol) if flash_on else symbol) + term.normal)
+
+            # --- Bar counter line ---
+            draw_boxed_text(1, trunc(f"BAR {bar_counter:04d}", SCREEN_COLS))
+
+            # --- Channel / instrument list (rows 3–18) ---
+            for ch, name in enumerate(INSTRUMENT_NAMES, start=1):
+                y = 3 + (ch - 1)
+                draw_boxed_text(y, trunc(f"{ch:02d}  {name}", SCREEN_COLS))
+            # --- Plugin drawing (meters, progress bar, etc.) ---
+            plugin_state = {
+                "tick": tick_counter,
+                "bar": bar_counter,
+                "running": running,
+                "bpm": bpm,
+            }
+
+            for mod in PLUGINS:
+                if hasattr(mod, "draw"):
+                    try:
+                        # try draw(state) first, fallback to draw()
+                        from inspect import signature
+                        if len(signature(mod.draw).parameters) == 1:
+                            mod.draw(plugin_state)
+                        else:
+                            mod.draw()
+                    except Exception:
+                        pass
+
+            sys.stdout.flush()
+            time.sleep(1 / 60)  # ~60 fps refresh
+
+#bq
+
+def wait_and_autoconnect(source_name="Cirklon", target_name="GreenCRT Monitor", timeout=10.0):
+    """
+    Wait for the visualizer's ALSA port to appear, then connect Cirklon to it.
+    """
+    print(f"[AutoConnect] Waiting for '{target_name}'...")
+    start = time.time()
+
+    target_port = None
+    while time.time() - start < timeout:
+        # Get current ALSA client list
+        try:
+            out = subprocess.check_output(["aconnect", "-l"], text=True)
+        except subprocess.CalledProcessError:
+            time.sleep(0.5)
+            continue
+
+        # find target port number
+        match = re.search(rf"client (\d+): '{re.escape(target_name)}'", out)
+        if match:
+            target_port = f"{match.group(1)}:0"
+            break
+        time.sleep(0.5)
+
+    if not target_port:
+        print(f"[AutoConnect] ERROR: '{target_name}' not found after {timeout}s")
+        return False
+
+    # find source port (Cirklon)
+    match = re.search(rf"client (\d+): '{re.escape(source_name)}'", out)
+    if not match:
+        print(f"[AutoConnect] ERROR: '{source_name}' not found")
+        return False
+    source_port = f"{match.group(1)}:0"
+
+    # connect them
+    try:
+        subprocess.check_call(["aconnect", source_port, target_port])
+        print(f"[AutoConnect] Connected {source_port} → {target_port}")
+        return True
+    except subprocess.CalledProcessError as e:
+        print(f"[AutoConnect] Failed to connect: {e}")
+        return False
+
+#bq
+
+
+# ---------------------------------------------------------------------
+#  Main
+# ---------------------------------------------------------------------
+def main():
+    """Create virtual port and process MIDI."""
+    global VIRTUAL_PORT_NAME
+    try:
+        print(f"[Info] Creating virtual MIDI input: {VIRTUAL_PORT_NAME}")
+        with mido.open_input(VIRTUAL_PORT_NAME, virtual=True) as port:
+            print(f"[Info] Listening on '{VIRTUAL_PORT_NAME}' — connect Cirklon output here.")
+                # --- auto-connect Cirklon to this virtual port ---
+            wait_and_autoconnect("Cirklon", "GreenCRT Monitor", timeout=15.0)
+            import threading
+            threading.Thread(target=ui_loop, daemon=True).start()
+
+            while True:
+                for msg in port.iter_pending():
+                    handle_midi(msg)
+                time.sleep(0.001)
+    except KeyboardInterrupt:
+        print(term.normal)
+    except Exception as e:
+        print("Fatal error:", e)
+    finally:
+        print(term.normal)
+
+# ---------------------------------------------------------------------
+if __name__ == "__main__":
+    main()

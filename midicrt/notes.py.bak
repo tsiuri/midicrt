@@ -1,0 +1,19 @@
+# pages/notes.py — main notes/velocity/active poly view
+PAGE_ID = 1
+PAGE_NAME = "Notes"
+
+from midicrt import draw_line, INSTRUMENT_NAMES
+from plugins import polydisplay
+
+def draw(state):
+    y0 = state.get("y_offset", 3)
+    # Title for context (optional)
+    draw_line(y0, f"--- {PAGE_NAME} ---")
+
+    # Each channel below the title
+    for ch, name in enumerate(INSTRUMENT_NAMES, start=1):
+        y = y0 + 2 + (ch - 1)
+        notes = polydisplay.get_notes(ch)
+        # Enforce 11-character width on name, left-aligned
+        line = f"{ch:02d}  {name:<11.11}  {notes}"
+        draw_line(y, line)

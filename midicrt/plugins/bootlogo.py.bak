@@ -1,0 +1,21 @@
+# -*- coding: utf-8 -*-
+# Plugin: ASCII boot screen
+import time
+from midicrt import term, SCREEN_COLS
+
+logo = [
+    "   __  ___ _     _      ___ ",
+    "  /  |/  /| |   | |    / _ \\",
+    " / /|_/ / | |__ | |__ | (_) |",
+    "/_/  /_/  |____||____| \\___/ ",
+]
+
+def main():
+    print(term.home + term.green + term.on_black)
+    for line in logo:
+        print(line.center(SCREEN_COLS))
+        time.sleep(0.1)
+    print("\n" * 4)
+    time.sleep(0.5)
+
+main()
