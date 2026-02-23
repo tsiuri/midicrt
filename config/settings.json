@@ -1,0 +1,176 @@
+{
+  "instruments": {
+    "names": [
+      "Kawai XD5",
+      "Matrix-1k",
+      "BassStaRack",
+      "Mnilogue",
+      "Arp 2600",
+      "Yamaha 1",
+      "Yamaha 2",
+      "Yamaha 3",
+      "Akai S 1",
+      "Akai S 2",
+      "Akai S 3",
+      "Akai S 4",
+      "Akai CD1",
+      "Akai CD2",
+      "Akai CD3",
+      "Akai CD4"
+    ]
+  },
+  "voice_monitor": {
+    "poly_limit_global": 16,
+    "poly_limit_ch": 8,
+    "event_log_len": 8,
+    "per_channel_limits": [
+      8,
+      8,
+      8,
+      8,
+      8,
+      8,
+      8,
+      8,
+      8,
+      8,
+      8,
+      8,
+      8,
+      8,
+      8,
+      8
+    ],
+    "over_limit_beats": 2.0
+  },
+  "audiospectrum": {
+    "lowcut_hz": 160.0,
+    "hpf_on": true,
+    "display_scale": 0.9964682651113557,
+    "floor_db": -35.0,
+    "ceil_db": 30.0,
+    "freq_scale": "log",
+    "agg_mode": "max",
+    "auto_adapt": true,
+    "bins": 96,
+    "gain_db": 0.0,
+    "smoothing": 1.3877787807814457e-17
+  },
+  "stuck_notes": {
+    "warn_after": 2.0,
+    "crit_after": 10.0,
+    "hold_after": 15.0,
+    "max_list": 3,
+    "y_pos_offset": 4,
+    "suspend_when_sustain": true,
+    "panic_on_crit": true,
+    "panic_scope": "channel",
+    "panic_output_name": "GreenCRT Panic",
+    "panic_cooldown": 3.0,
+    "panic_autoconnect": true,
+    "panic_dst_hints": [
+      "USB MIDI Interface",
+      "USB MIDI",
+      "MIDI 1"
+    ]
+  },
+  "harmony": {
+    "recent_note_count": 24,
+    "recent_note_seconds": 0.0,
+    "min_unique_for_chord": 2,
+    "min_unique_for_scale": 3,
+    "chord_min_ratio": 0.6,
+    "scale_min_ratio": 0.7,
+    "key_history_len": 256
+  },
+  "tuner": {
+    "pitch_method": "yin",
+    "tolerance": 0.8,
+    "silence_db": -55.0,
+    "min_conf": 0.3,
+    "smoothing": 0.55
+  },
+  "screensaver": {
+    "idle_timeout": 60.0
+  },
+  "pagecycle": {
+    "enabled": true,
+    "cycle_pages": [
+      1,
+      6,
+      8,
+      9
+    ],
+    "interval": 300.0,
+    "user_pause": 3600.0
+  },
+  "pianoroll": {
+    "pitch_low_default": 36,
+    "pitch_high_default": 83,
+    "ticks_per_col": 6,
+    "left_margin": 10,
+    "max_visible_rows": 20,
+    "idle_scroll_bpm": 120.0,
+    "out_range_hold": 2.5
+  },
+  "eventlog": {
+    "max_log": 300,
+    "visible_rows_target": 200
+  },
+  "core": {
+    "fps": 60.00000000000007,
+    "header_scroll_speed": 4.0
+  },
+  "panic": {
+    "output_name": "GreenCRT Panic",
+    "dst_hints": [
+      "USB MIDI Interface",
+      "USB MIDI",
+      "MIDI 1"
+    ]
+  },
+  "configui": {
+    "accel_step_int": 2,
+    "accel_step_float": 0.1,
+    "accel_window": 0.25,
+    "accel_max": 12
+  },
+  "timesig": {
+    "max_events": 128,
+    "min_events": 8,
+    "sigma_ticks": 4.0,
+    "tie_thresh": 0.02,
+    "window_seconds": 20.0,
+    "decay_seconds": 15.0,
+    "eval_interval": 0.5,
+    "min_conf": 0.35,
+    "change_confirm": 3,
+    "collapse_same_tick": true
+  },
+  "timesig_exp": {
+    "window_ticks": 768,
+    "min_events": 12,
+    "sigma_bar": 6.0,
+    "sigma_beat": 3.0,
+    "sigma_sub": 2.0,
+    "weight_down": 1.0,
+    "weight_beat": 0.6,
+    "weight_sub": 0.3,
+    "off_penalty": 0.25,
+    "eval_interval": 0.5,
+    "min_conf": 0.35,
+    "change_confirm": 3,
+    "collapse_same_tick": true,
+    "prior": {
+      "2/4": 1.0,
+      "3/4": 1.1,
+      "4/4": 1.2,
+      "5/4": 0.9,
+      "7/4": 0.8,
+      "6/8": 1.0,
+      "7/8": 0.8,
+      "9/8": 0.9,
+      "12/8": 1.0
+    }
+  }
+}

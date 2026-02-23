@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Backups and scratch files
+*.bak
+*.bak2
+*.py7
+*.pybak
+pages/pianoroll
+
+# Runtime logs and state
+log.txt
+midicrt_autoconnect.log
+sysex.log
+sysex.d/
+vars.txt
+
+# Duplicate / lowercase alias
+agents.md
