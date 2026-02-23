@@ -8,6 +8,11 @@ This file tracks launch, config, and development notes for midicrt.
   - activates /home/billie/codex/midicrt-venv
   - runs /home/billie/codex/midicrt/midicrt.py
 
+## Git
+
+- https://github.com/tsiuri/midicrt
+- Remote: origin/master
+
 ## Autostart
 
 - /etc/systemd/system/getty@tty1.service.d/override.conf (autologin billie on tty1)
