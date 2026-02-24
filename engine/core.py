@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import threading
 import time
+import os
+from collections import deque
 from dataclasses import asdict, dataclass, field
 from typing import Any, Callable
 
@@ -48,6 +50,15 @@ class MidiEngine:
         self._view_interval = 1.0 / max(0.1, float(view_publish_hz))
         self._last_views_at = 0.0
         self._cached_views: dict[str, Any] = {}
+        self._capture_cfg = {
+            "bars_to_keep": 16,
+            "dump_bars": 4,
+            "output_dir": "captures",
+            "file_prefix": "capture",
+            "default_bpm": 120.0,
+        }
+        self._capture_events = deque()
+        self._capture_seq = 0
 
     def get_snapshot(self) -> dict[str, Any]:
         with self._lock:
@@ -100,6 +111,7 @@ class MidiEngine:
     def ingest(self, msg: mido.Message) -> dict[str, Any]:
         event = self._normalize_event(msg)
         self._update_transport(event)
+        self._capture_event(event, msg)
         self._dispatch(event, msg)
         if self.on_event:
             try:
@@ -112,6 +124,87 @@ class MidiEngine:
             except Exception:
                 pass
         return event
+
+    def configure_capture(self, cfg: dict[str, Any] | None) -> None:
+        cfg = cfg if isinstance(cfg, dict) else {}
+        bars_to_keep = int(cfg.get("bars_to_keep", self._capture_cfg["bars_to_keep"]))
+        dump_bars = int(cfg.get("dump_bars", self._capture_cfg["dump_bars"]))
+        output_dir = str(cfg.get("output_dir", self._capture_cfg["output_dir"]))
+        file_prefix = str(cfg.get("file_prefix", self._capture_cfg["file_prefix"]))
+        default_bpm = float(cfg.get("default_bpm", self._capture_cfg["default_bpm"]))
+        self._capture_cfg = {
+            "bars_to_keep": max(1, bars_to_keep),
+            "dump_bars": max(1, dump_bars),
+            "output_dir": output_dir,
+            "file_prefix": file_prefix,
+            "default_bpm": max(20.0, default_bpm),
+        }
+
+    def set_status_text(self, text: str) -> None:
+        with self._lock:
+            self.state.status_text = str(text)
+
+    def capture_recent_to_file(self, bars: int | None = None, trigger: str = "manual") -> tuple[bool, str, str | None]:
+        cfg = dict(self._capture_cfg)
+        bars = int(bars or cfg["dump_bars"])
+        bars = max(1, min(bars, cfg["bars_to_keep"]))
+        with self._lock:
+            tick_now = int(self.state.tick_counter)
+            bpm_now = float(self.state.bpm or 0.0)
+
+        ticks_per_bar = 24 * 4
+        start_tick = max(0, tick_now - bars * ticks_per_bar)
+        now = time.time()
+        bpm_ref = bpm_now if bpm_now > 0 else float(cfg["default_bpm"])
+        wall_secs = max(2.0, bars * (240.0 / max(1.0, bpm_ref)))
+        start_wall = now - wall_secs
+
+        events = []
+        for ev in list(self._capture_events):
+            beat_tick = ev.get("beat_tick")
+            ts = ev.get("timestamp", 0.0)
+            in_beat_range = beat_tick is not None and int(beat_tick) >= start_tick
+            in_wall_range = ts >= start_wall
+            if in_beat_range or in_wall_range:
+                events.append(ev)
+
+        if not events:
+            return False, f"capture failed: no events in last {bars} bars", None
+
+        midi = mido.MidiFile(ticks_per_beat=480)
+        track = mido.MidiTrack()
+        midi.tracks.append(track)
+        tempo = mido.bpm2tempo(bpm_ref)
+        track.append(mido.MetaMessage("set_tempo", tempo=int(tempo), time=0))
+        track.append(mido.MetaMessage("track_name", name=f"midicrt {trigger}", time=0))
+
+        ticks_per_clock = midi.ticks_per_beat / 24.0
+        ticks_per_second = (bpm_ref / 60.0) * midi.ticks_per_beat
+        events.sort(key=lambda item: (item.get("beat_tick") is None, item.get("beat_tick", 0), item.get("timestamp", 0.0)))
+        prev_abs_tick = 0
+        for ev in events:
+            msg_obj = ev.get("msg")
+            if msg_obj is None:
+                continue
+            beat_tick = ev.get("beat_tick")
+            if beat_tick is not None:
+                abs_tick = int(max(0, (int(beat_tick) - start_tick) * ticks_per_clock))
+            else:
+                abs_tick = int(max(0.0, (ev.get("timestamp", now) - start_wall) * ticks_per_second))
+            delta = max(0, abs_tick - prev_abs_tick)
+            prev_abs_tick = abs_tick
+            track.append(msg_obj.copy(time=delta))
+
+        output_dir = cfg["output_dir"]
+        if not os.path.isabs(output_dir):
+            output_dir = os.path.join(os.getcwd(), output_dir)
+        os.makedirs(output_dir, exist_ok=True)
+        self._capture_seq += 1
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        fname = f"{cfg['file_prefix']}-{stamp}-{trigger}-{self._capture_seq:04d}.mid"
+        out_path = os.path.join(output_dir, fname)
+        midi.save(out_path)
+        return True, f"capture saved: {out_path}", out_path
 
     def run_input_loop(self, port: Any, stop_flag: Callable[[], bool], sleep_s: float = 0.001) -> None:
         while not stop_flag():
@@ -237,3 +330,30 @@ class MidiEngine:
                     pg.handle(msg)
                 except Exception:
                     pass
+
+    def _capture_event(self, event: dict[str, Any], msg: mido.Message) -> None:
+        if event["kind"] in ("clock", "start", "stop", "continue", "active_sensing"):
+            return
+        try:
+            msg_copy = mido.Message.from_bytes(msg.bytes())
+        except Exception:
+            try:
+                msg_copy = msg.copy()
+            except Exception:
+                return
+
+        with self._lock:
+            beat_tick = int(self.state.tick_counter)
+            self._capture_events.append({
+                "timestamp": float(event.get("timestamp", time.time())),
+                "beat_tick": beat_tick,
+                "kind": event.get("kind"),
+                "msg": msg_copy,
+            })
+            min_tick = max(0, beat_tick - int(self._capture_cfg["bars_to_keep"]) * (24 * 4))
+            cutoff = time.time() - (int(self._capture_cfg["bars_to_keep"]) * 8.0)
+            while self._capture_events:
+                head = self._capture_events[0]
+                if int(head.get("beat_tick", 0)) >= min_tick and float(head.get("timestamp", 0.0)) >= cutoff:
+                    break
+                self._capture_events.popleft()

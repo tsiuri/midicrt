@@ -207,5 +207,12 @@
       ],
       "crt_tint_strength": 0.08
     }
+  },
+  "capture": {
+    "bars_to_keep": 16,
+    "dump_bars": 4,
+    "output_dir": "captures",
+    "file_prefix": "capture",
+    "default_bpm": 120.0
   }
 }
