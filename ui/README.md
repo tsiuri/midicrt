@@ -66,15 +66,34 @@ Backward-compatibility notes:
 
 ### `views.pianoroll` (page 8)
 
-Compact payload intended for renderers and remotes:
+Renderer-facing contract for page 8. Both text and pixel renderers must consume
+this same payload-to-widget mapping.
 
-- `time_cols` (`int`): backing history width used by the roll buffer.
-- `pitch_low` (`int`): lowest visible MIDI pitch.
-- `pitch_high` (`int`): highest visible MIDI pitch.
-- `active_notes` (`list[list[int,int,int]]`): `[channel, pitch, velocity]`.
-- `recent_hits` (`list[list[int,int,int,int]]`):
-  `[pitch, channel, velocity, age_ms]`.
-- `overflow_flags` (`object`): `{ "above": bool, "below": bool }`.
+Required/standard fields and semantics:
+
+- `time_cols` (`int`): history buffer width represented by `columns` before
+  viewport slicing.
+- `tick_right` (`int`): absolute transport tick represented by the newest
+  (right-most) roll column.
+- `active_count` (`int`): count of currently active notes in the source state.
+- `pitch_low` (`int`): lowest pitch in the source roll range.
+- `pitch_high` (`int`): highest pitch in the source roll range.
+- `columns` (`list[list[tuple[int,int,int]]]`): visible roll columns, oldest to
+  newest. Each event tuple is `(pitch, channel_1_based, velocity)`.
+- `active_notes` (`list[list[int,int,int]]`): compact active-note list encoded
+  as `[channel_1_based, pitch, velocity]`.
+- `recent_hits` (`list[list[int,int,int,int]]`): recent transient accents
+  encoded as `[pitch, channel_1_based, velocity, age_ms]`.
+- `overflow_flags` (`object`): hold-state flags with shape
+  `{ "above": bool, "below": bool }`.
+- `overflow` (`object`): detail object with shape
+  `{ "above": [pitch, channel_1_based, ts] | null, "below": [...],
+     "above_count": int, "below_count": int }`.
+
+Compatibility path:
+
+- If `views.pianoroll`/`views["8"]` is unavailable, in-process UI code may adapt
+  direct `active_notes` state to this exact schema before widget assembly.
 
 ### View payload throttling
 

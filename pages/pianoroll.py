@@ -247,6 +247,91 @@ def get_view_payload(max_active_notes=64, max_recent_hits=32):
     }
 
 
+def _coerce_pianoroll_payload(payload, roll_cols, pitch_low_val, pitch_high_val):
+    """Normalize partial/legacy payloads to the views.pianoroll contract."""
+    if not isinstance(payload, dict):
+        payload = {}
+    normalized = {
+        "time_cols": int(payload.get("time_cols", roll_cols)),
+        "tick_right": int(payload.get("tick_right", 0)),
+        "active_count": int(payload.get("active_count", 0)),
+        "pitch_low": int(payload.get("pitch_low", pitch_low_val)),
+        "pitch_high": int(payload.get("pitch_high", pitch_high_val)),
+        "active_notes": payload.get("active_notes", []),
+        "recent_hits": payload.get("recent_hits", []),
+        "overflow_flags": payload.get("overflow_flags", {}),
+        "overflow": payload.get("overflow", {}),
+        "columns": payload.get("columns", []),
+    }
+    cols = normalized["columns"] if isinstance(normalized["columns"], list) else []
+    if len(cols) < roll_cols:
+        cols = ([[] for _ in range(roll_cols - len(cols))] + cols)
+    normalized["columns"] = cols[-roll_cols:]
+    return normalized
+
+
+def _payload_from_direct_state(state, roll_cols, now):
+    """Backward-compatible adapter from in-process state to views.pianoroll."""
+    active_notes = state.get("active_notes")
+    if not isinstance(active_notes, dict):
+        return None
+
+    payload_active = []
+    for channel, notes in active_notes.items():
+        try:
+            ch = int(channel) + 1
+        except Exception:
+            continue
+        if not isinstance(notes, (set, list, tuple)):
+            continue
+        for note in notes:
+            try:
+                payload_active.append([ch, int(note), 100])
+            except Exception:
+                continue
+
+    columns = [list() for _ in range(roll_cols)]
+    for ch, pitch, vel in payload_active:
+        columns[-1].append((pitch, ch, vel))
+
+    return {
+        "time_cols": roll_cols,
+        "tick_right": int(state.get("tick", 0)),
+        "active_count": len(payload_active),
+        "active_notes": payload_active,
+        "recent_hits": [],
+        "overflow_flags": {"above": False, "below": False},
+        "overflow": {
+            "above": None,
+            "below": None,
+            "above_count": 0,
+            "below_count": 0,
+        },
+        "columns": columns,
+        "_source": "direct_state",
+        "_adapted_at": float(now),
+    }
+
+
+def _resolve_pianoroll_payload(state, roll_cols, pitch_low_val, pitch_high_val, now):
+    views = state.get("views") if isinstance(state.get("views"), dict) else {}
+    payload = views.get("pianoroll") or views.get("8")
+    if payload is None:
+        payload = _payload_from_direct_state(state, roll_cols=roll_cols, now=now)
+    if payload is None:
+        payload = {
+            "pitch_low": int(pitch_low_val),
+            "pitch_high": int(pitch_high_val),
+            **roll_state.get_view_payload(
+                pitch_low=pitch_low_val,
+                pitch_high=pitch_high_val,
+                roll_cols=roll_cols,
+                now=now,
+            ),
+        }
+    return _coerce_pianoroll_payload(payload, roll_cols, pitch_low_val, pitch_high_val)
+
+
 def build_roll_view(state):
     """Canonical logical frame view for page 8.
 
@@ -268,10 +353,11 @@ def build_roll_view(state):
     pitch_high = pitch_low + note_rows - 1
 
     roll_cols = max(16, cols - LEFT_MARGIN - 2)
-    payload = roll_state.get_view_payload(
-        pitch_low=pitch_low,
-        pitch_high=pitch_high,
+    payload = _resolve_pianoroll_payload(
+        state,
         roll_cols=roll_cols,
+        pitch_low_val=pitch_low,
+        pitch_high_val=pitch_high,
         now=now,
     )
     visible_cols = payload["columns"]
@@ -305,7 +391,7 @@ def build_roll_view(state):
     header_left = f"--- {PAGE_NAME} ---"
     overflow = payload.get("overflow", {})
     header_right = _fmt_out_of_range(overflow.get("above"), now, "high", extra=overflow.get("above_count", 0))
-    footer_left = f"Range: {_notename(pitch_low)}–{_notename(pitch_high)}  T/col:{TICKS_PER_COL}  Active:{payload.get('active_count', 0)}  Cols:{roll_state.time_cols}"
+    footer_left = f"Range: {_notename(pitch_low)}–{_notename(pitch_high)}  T/col:{TICKS_PER_COL}  Active:{payload.get('active_count', 0)}  Cols:{payload.get('time_cols', roll_cols)}"
     footer_right = _fmt_out_of_range(overflow.get("below"), now, "low", extra=overflow.get("below_count", 0))
 
     return {
