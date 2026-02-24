@@ -44,6 +44,7 @@ being quit — after quitting you land at a zsh prompt and can relaunch.
 ## Layout
 
 - midicrt.py: main program
+- ui/: widget model + renderer backends (TTY-first architecture)
 - pages/: UI pages loaded at startup (IDs 0-9; see pages/help.py)
 - plugins/: plugin handlers loaded at startup
 - config/audiospectrum.json: config for the audio spectrum page
@@ -52,6 +53,37 @@ being quit — after quitting you land at a zsh prompt and can relaunch.
 - instruments.txt: channel labels (16 entries)
 - vars.txt: SDL framebuffer environment settings
 - log.txt and midicrt_autoconnect.log: startup and autoconnect logs
+
+## Rendering architecture
+
+The UI is now structured as a widget tree + renderer pipeline for incremental
+page migration:
+
+- `ui/model.py`: character-cell widget primitives.
+- `ui/renderers/base.py`: renderer protocol.
+- `ui/renderers/text/`: ANSI/Blessed implementation (`TextRenderer`).
+
+Pages can implement either:
+
+- `build_widget(state)` (new path, rendered by `TextRenderer`), or
+- `draw(state)` (legacy path, still supported during migration).
+
+### CRT compatibility constraints
+
+- Character cells are the primary unit of layout.
+- Rendering must remain meaningful in monochrome text terminals.
+- Styling is limited to terminal-safe attributes (reverse/bold).
+- Block graphics are optional enhancements, never required for core meaning.
+- Pixel-oriented renderers must remain optional extras and never part of the
+  default startup dependency chain.
+
+### Incremental migration targets
+
+Parity is being proved in stages:
+
+1. Transport (migrated)
+2. Notes (next)
+3. Event Log (next)
 
 ## Pages
 
