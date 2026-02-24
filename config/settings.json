@@ -81,7 +81,11 @@
     "min_unique_for_scale": 3,
     "chord_min_ratio": 0.6,
     "scale_min_ratio": 0.7,
-    "key_history_len": 256
+    "key_history_len": 256,
+    "key_confidence_threshold": 0.72,
+    "key_hysteresis_margin": 0.06,
+    "key_update_every_notes": 2,
+    "key_alt_margin": 0.04
   },
   "tuner": {
     "pitch_method": "yin",
@@ -208,5 +212,12 @@
       ],
       "crt_tint_strength": 0.08
     }
+  },
+  "capture": {
+    "bars_to_keep": 16,
+    "dump_bars": 4,
+    "output_dir": "captures",
+    "file_prefix": "capture",
+    "default_bpm": 120.0
   }
 }
