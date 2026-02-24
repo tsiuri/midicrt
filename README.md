@@ -178,9 +178,9 @@ Automatically rotates through a list of pages on a timer.
 Configuration variables at the top of the file:
 
 - `ENABLED = True` — set False to disable cycling entirely
-- `CYCLE_PAGES = [1, 6, 8]` — page IDs to rotate through
-- `INTERVAL = 15.0` — seconds between page switches
-- `USER_PAUSE = 300` — seconds to pause cycling after any keypress
+- `CYCLE_PAGES = [1, 6, 8, 9]` — page IDs to rotate through
+- `INTERVAL = 300` — seconds between page switches (default 5 minutes)
+- `USER_PAUSE = 3600` — seconds to pause cycling after any keypress (default 60 minutes)
 
 Cycling pauses for USER_PAUSE seconds whenever the user presses a key,
 then resumes automatically.
@@ -209,8 +209,9 @@ F0  7D  6D  63  <cmd>  [args...]  F7
 | `03` | `00`     | Disable page cycler                     |
 | `03` | `01`     | Enable page cycler                      |
 
-Received commands are logged to the status line (row 2) so you can see
-what arrived. Unknown commands are logged with their raw bytes.
+Received commands are logged in the footer/status area and to `sysex.log`
+(+ split files in `sysex.d/`) so you can see what arrived. Unknown commands
+are logged with their raw bytes.
 
 **Example — switch to page 8 (Piano Roll):**
 ```
