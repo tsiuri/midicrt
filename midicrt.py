@@ -7,6 +7,7 @@ from inspect import signature
 from blessed import Terminal
 import mido
 from engine.core import MidiEngine
+from engine.ipc import SnapshotPublisher
 from ui.model import Frame
 from ui.renderers.text import TextRenderer
 
@@ -55,15 +56,27 @@ HEADER_SCROLL_SPEED = 4.0  # characters per second; set to 0 to disable scrollin
 _core_cfg = load_section("core")
 if _core_cfg is None:
     _core_cfg = {}
+IPC_ENABLED = True
+IPC_SOCKET_PATH = "/tmp/midicrt.sock"
+IPC_PUBLISH_HZ = 20.0
 try:
     FPS = float(_core_cfg.get("fps", FPS))
     HEADER_SCROLL_SPEED = float(_core_cfg.get("header_scroll_speed", HEADER_SCROLL_SPEED))
+    _ipc_cfg = _core_cfg.get("ipc", {}) if isinstance(_core_cfg.get("ipc", {}), dict) else {}
+    IPC_ENABLED = bool(_ipc_cfg.get("enabled", IPC_ENABLED))
+    IPC_SOCKET_PATH = str(_ipc_cfg.get("socket_path", IPC_SOCKET_PATH))
+    IPC_PUBLISH_HZ = float(_ipc_cfg.get("publish_hz", IPC_PUBLISH_HZ))
 except Exception:
     pass
 try:
     save_section("core", {
         "fps": float(FPS),
         "header_scroll_speed": float(HEADER_SCROLL_SPEED),
+        "ipc": {
+            "enabled": bool(IPC_ENABLED),
+            "socket_path": str(IPC_SOCKET_PATH),
+            "publish_hz": float(IPC_PUBLISH_HZ),
+        },
     })
 except Exception:
     pass
@@ -243,11 +256,19 @@ _auto_scroll_last_time = 0.0
 _auto_last_msg = ""
 _auto_last_window = 0
 
+SNAPSHOT_PUBLISHER = SnapshotPublisher(
+    socket_path=IPC_SOCKET_PATH,
+    enabled=IPC_ENABLED,
+    publish_hz=IPC_PUBLISH_HZ,
+)
+SNAPSHOT_PUBLISHER.start()
+
 ENGINE = MidiEngine(
     plugins=PLUGINS,
     pages=PAGES,
     get_current_page=lambda: current_page,
     on_event=handle_engine_event,
+    publisher=SNAPSHOT_PUBLISHER,
 )
 
 def ui_loop():
@@ -768,6 +789,10 @@ def main():
         sys.stdout.write(term.normal)
         print("Fatal error:", e)
     finally:
+        try:
+            SNAPSHOT_PUBLISHER.stop()
+        except Exception:
+            pass
         sys.stdout.write(term.normal)
 
 if __name__ == "__main__":

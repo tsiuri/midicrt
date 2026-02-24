@@ -119,7 +119,12 @@
   },
   "core": {
     "fps": 60.00000000000007,
-    "header_scroll_speed": 4.0
+    "header_scroll_speed": 4.0,
+    "ipc": {
+      "enabled": true,
+      "socket_path": "/tmp/midicrt.sock",
+      "publish_hz": 20.0
+    }
   },
   "panic": {
     "output_name": "GreenCRT Panic",
