@@ -3,10 +3,10 @@
 
 import os, sys, time, glob, importlib.util, subprocess, threading, re
 from configutil import load_section, save_section
-from collections import deque
 from inspect import signature
 from blessed import Terminal
 import mido
+from engine.core import MidiEngine
 from ui.model import Frame
 from ui.renderers.text import TextRenderer
 
@@ -84,6 +84,8 @@ def draw_line(row, text):
 
 
 def plugin_state_dict():
+    if ENGINE:
+        return ENGINE.make_plugin_state(SCREEN_COLS, SCREEN_ROWS, y_offset=3)
     return {
         "tick": tick_counter,
         "bar": bar_counter,
@@ -101,8 +103,7 @@ bpm = 0.0
 tick_counter = 0
 bar_counter = 0
 running = False
-last_clock_time = None
-clock_intervals = deque(maxlen=24)
+ENGINE = None
 
 # ---------------------------------------------------------------------
 # Instrument names
@@ -201,89 +202,25 @@ def load_pages():
 load_pages()
 
 # ---------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------
-def draw_line(row, text):
-    sys.stdout.write(term.move_yx(row, 0) + text[:SCREEN_COLS].ljust(SCREEN_COLS))
-
-def plugin_state_dict():
-    return {
-        "tick": tick_counter,
-        "bar": bar_counter,
-        "running": running,
-        "bpm": bpm,
-        "cols": SCREEN_COLS,
-        "rows": SCREEN_ROWS,
-        "y_offset": 3,  # safe area: plugins/pages start drawing from here
-    }
-
-# ---------------------------------------------------------------------
 # MIDI handling
 # ---------------------------------------------------------------------
-def handle_midi(msg: mido.Message):
-    global running, tick_counter, bar_counter, bpm, last_clock_time
-    if msg.type == "start":
-        running = True
-        tick_counter = bar_counter = 0
-        clock_intervals.clear()
-        last_clock_time = None
-    elif msg.type == "stop":
-        running = False
-    elif msg.type == "clock":
-        if not running:
-            return
-        tick_counter += 1
-        if (tick_counter % (24 * 4)) == 0:
-            bar_counter += 1
-        now = time.time()
-        if last_clock_time is not None:
-            clock_intervals.append(now - last_clock_time)
-            if clock_intervals:
-                avg = sum(clock_intervals) / len(clock_intervals)
-                bpm = 60.0 / (24 * avg)
-        last_clock_time = now
-    elif msg.type == "sysex":
-        for mod in PLUGINS:
-            if hasattr(mod, "handle"):
-                try:
-                    mod.handle(msg)
-                except Exception:
-                    pass
+def _sync_transport_globals(snapshot):
+    global running, tick_counter, bar_counter, bpm
+    running = snapshot["running"]
+    tick_counter = snapshot["tick_counter"]
+    bar_counter = snapshot["bar_counter"]
+    bpm = snapshot["bpm"]
 
-    elif msg.type in ("note_on", "note_off", "control_change", "program_change"):
-        # wake screensaver on MIDI activity (mirrors keypress path)
+
+def handle_engine_event(event, msg: mido.Message):
+    # wake screensaver on note/CC/prog activity (mirrors keypress path)
+    if event["kind"] in ("note_on", "note_off", "control_change", "program_change"):
         _ss = next((m for m in PLUGINS if hasattr(m, "is_active") and hasattr(m, "deactivate")), None)
         if _ss and _ss.is_active():
             _ss.deactivate()
-
-        # send to plugins (always)
-        for mod in PLUGINS:
-            if hasattr(mod, "handle"):
-                try:
-                    mod.handle(msg)
-                except Exception:
-                    pass
-
-        # update shared polyphonic note state (always)
         polydisplay.handle(msg)
 
-        # send to active page
-        page = PAGES.get(current_page)
-        if page and hasattr(page, "handle"):
-            try:
-                page.handle(msg)
-            except Exception:
-                pass
-
-        # NEW: send to any page that opts into background handling
-        for pid, pg in PAGES.items():
-            if pid == current_page:
-                continue
-            if getattr(pg, "BACKGROUND", False) and hasattr(pg, "handle"):
-                try:
-                    pg.handle(msg)
-                except Exception:
-                    pass
+    _sync_transport_globals(ENGINE.get_snapshot())
 
 
 # ---------------------------------------------------------------------
@@ -305,6 +242,13 @@ _auto_scroll_offset = 0.0
 _auto_scroll_last_time = 0.0
 _auto_last_msg = ""
 _auto_last_window = 0
+
+ENGINE = MidiEngine(
+    plugins=PLUGINS,
+    pages=PAGES,
+    get_current_page=lambda: current_page,
+    on_event=handle_engine_event,
+)
 
 def ui_loop():
     global last_page, current_page, exit_flag, last_header, SCREEN_COLS, SCREEN_ROWS
@@ -331,6 +275,12 @@ def ui_loop():
                 last_page = current_page
                 last_header = ""  # force header redraw after clear
 
+            snapshot = ENGINE.get_snapshot() if ENGINE else {
+                "tick_counter": tick_counter,
+                "bar_counter": bar_counter,
+                "running": running,
+                "bpm": bpm,
+            }
             state = plugin_state_dict()
 
             # --- HEADER (row 0) — scrolling marquee when wider than screen
@@ -354,9 +304,9 @@ def ui_loop():
                 draw_line(0, (full * 2)[offset:offset + SCREEN_COLS])
 
             # --- TRANSPORT (row 1)
-            status = "RUN" if running else "STOP"
-            metronome = "●" if running and (tick_counter % 24) < 3 else "○"
-            base = f" {status:<4}  {bpm:6.1f} BPM   BAR {bar_counter:04d}   {metronome}"
+            status = "RUN" if snapshot["running"] else "STOP"
+            metronome = "●" if snapshot["running"] and (snapshot["tick_counter"] % 24) < 3 else "○"
+            base = f" {status:<4}  {snapshot['bpm']:6.1f} BPM   BAR {snapshot['bar_counter']:04d}   {metronome}"
             msg = AUTOCONNECT_LOG[-1] if AUTOCONNECT_LOG else ""
             if msg:
                 msg = msg.strip()
@@ -811,10 +761,7 @@ def main():
             threading.Thread(target=ui_loop, daemon=True).start()
             threading.Thread(target=keyboard_listener, daemon=True).start()
 
-            while not exit_flag:
-                for msg in port.iter_pending():
-                    handle_midi(msg)
-                time.sleep(0.001)
+            ENGINE.run_input_loop(port, lambda: exit_flag)
     except KeyboardInterrupt:
         sys.stdout.write(term.normal)
     except Exception as e:
