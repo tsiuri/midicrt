@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+set -euo pipefail
+exec python /home/billie/codex/midicrt/midicrt.py --profile run_tui "$@"

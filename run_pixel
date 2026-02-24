@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+: "${MIDICRT_ENABLE_PIXEL:=1}"
+export MIDICRT_ENABLE_PIXEL
+exec python /home/billie/codex/midicrt/midicrt.py --profile run_pixel "$@"

@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "midicrt"
+version = "0.0.0"
+description = "CRT-style MIDI monitor / visualizer"
+requires-python = ">=3.10"
+dependencies = [
+  "blessed",
+  "mido",
+  "python-rtmidi",
+]
+
+[project.optional-dependencies]
+pixel = [
+  "pygame>=2.5",
+]

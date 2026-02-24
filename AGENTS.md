@@ -8,6 +8,16 @@ This file tracks launch, config, and development notes for midicrt.
   - activates /home/billie/codex/midicrt-venv
   - runs /home/billie/codex/midicrt/midicrt.py
 
+## Startup profile policy (IMPORTANT)
+
+- Startup profiles:
+  - `run_tui` (default, blessed/ANSI, tty-safe)
+  - `run_pixel` (optional, pixel backend path)
+- **tty1 autostart must always target `run_tui`.**
+- Keep `run_tui` free of GUI/pixel imports so headless/TTY boot cannot fail.
+- Pixel dependencies must stay optional (`pip install '.[pixel]'`) and enabled at runtime via feature flags.
+- Startup self-check must log active profile/backend to `log.txt`.
+
 ## Git
 
 - https://github.com/tsiuri/midicrt
