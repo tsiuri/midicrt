@@ -49,15 +49,99 @@ quits. Relaunch from inside the session with /home/billie/run_midicrt.sh
 - Connect: `<pi-ip>:5900` with any VNC client (view-only; use SSH/tmux for input)
 - billie is in the `video` group — no sudo needed
 
-## Fresh deployment checklist
+## Fresh deployment — hardware & system
 
-1. Clone repo: `git clone https://github.com/tsiuri/midicrt ~/codex/midicrt`
-2. Create venv: `python3 -m venv ~/codex/midicrt-venv`
-3. Install deps: `source ~/codex/midicrt-venv/bin/activate && pip install -e ~/codex/midicrt`
-4. Copy dotfiles: `cp ~/codex/midicrt/dotfiles/tmux.conf ~/.tmux.conf`
-5. Copy launcher: ensure `~/run_midicrt.sh` is in place (see Entrypoint above)
-6. Configure autologin: set up getty@tty1 override for billie
-7. Add .zprofile autostart block (see repo .zprofile.example if present)
+### Hardware
+- **Board:** Raspberry Pi 3 Model B Rev 1.2 (aarch64)
+- **Display:** Composite analog output (CRT monitor, NTSC, 4:3)
+  - No HDMI; Pi drives a real CRT over the 3.5 mm composite jack
+- **MIDI:** USB MIDI Interface (`hw:1,0,0`) — one USB-MIDI device
+
+### OS / kernel
+- **OS:** Debian GNU/Linux 13 (trixie)
+- **Kernel:** `6.12.47+rpt-rpi-v8` (Raspberry Pi aarch64 build)
+- **User:** `billie` — groups include `audio video plugdev input render gpio`
+
+### /boot/firmware/config.txt (key settings)
+```
+disable_splash=1
+boot_delay=0
+enable_tvout=1            # composite out
+hdmi_ignore_hotplug=1     # ignore HDMI entirely
+sdtv_mode=0               # NTSC
+sdtv_aspect=1             # 4:3
+disable_overscan=1
+dtoverlay=vc4-fkms-v3d    # VC4 FKMS driver (not legacy, not full KMS)
+dtparam=audio=on
+audio_pwm_mode=2
+hdmi_drive=1
+```
+
+### Framebuffer / display
+- **Device:** `/dev/fb0`, driver `vc4drmfb`
+- **Resolution:** 800×475, 16 bpp RGB565, stride 1600 bytes/row
+- **Terminal:** tty1, 100×59 characters, ~8×8 px per cell
+- **billie in `video` group** — can read/write `/dev/fb0` without sudo
+
+### Autologin (tty1)
+```
+# /etc/systemd/system/getty@tty1.service.d/override.conf
+[Service]
+ExecStart=
+ExecStart=-/sbin/agetty --autologin billie --noclear %I $TERM
+```
+
+### System packages to install
+```bash
+sudo apt install -y \
+  git gh tmux x11vnc \
+  alsa-utils libasound2-dev libportaudio2 \
+  python3 python3-dev python3-venv python3-pip
+```
+
+### Python environment
+- **Python:** 3.13.x (system)
+- **Venv:** `~/codex/midicrt-venv`
+- **Core pip packages** (installed via `pip install -e .`):
+  - `mido==1.3.3`, `python-rtmidi==1.5.8`, `blessed==1.22.0`
+- **Audio pip packages** (install manually):
+  - `numpy`, `sounddevice`
+  - `aubio` — **requires local patch** for Python 3.13 / NumPy 2.x
+    (patch fixes `const` signature incompatibility; build from source)
+- **Pixel extras** (optional): `pip install '.[pixel]'` → adds `pygame>=2.5`
+
+### Audio / MIDI stack
+- PipeWire + ALSA (system audio)
+- `aconnect` used for MIDI autoconnect at runtime
+- midicrt uses `mido` with `rtmidi` backend, reads sequencer input
+
+### Fresh deployment checklist
+1. Flash Raspberry Pi OS Lite (64-bit, Debian trixie base) or equivalent Debian trixie
+2. Apply `/boot/firmware/config.txt` settings above
+3. Configure autologin: create getty override file above
+4. Add billie to `video audio input` groups
+5. Install system packages (see above)
+6. Clone repo: `git clone https://github.com/tsiuri/midicrt ~/codex/midicrt`
+7. Create venv: `python3 -m venv ~/codex/midicrt-venv`
+8. Install deps: `source ~/codex/midicrt-venv/bin/activate && pip install -e ~/codex/midicrt`
+9. Install audio deps: `pip install numpy sounddevice` + build aubio with patch
+10. Copy dotfiles: `cp ~/codex/midicrt/dotfiles/tmux.conf ~/.tmux.conf`
+11. Install launcher: place `run_midicrt.sh` in `~/` (see Entrypoint section)
+12. Add `.zprofile` autostart block:
+```bash
+if [[ -z "$SSH_TTY" && -t 0 ]]; then
+  TTY=$(tty 2>/dev/null || true)
+  if [[ "$TTY" == "/dev/tty1" ]]; then
+    if ! pgrep -x x11vnc > /dev/null 2>&1; then
+      x11vnc -rawfb map:/dev/fb0@800x475x16 -nopw -rfbport 5900 -bg 2>/dev/null
+    fi
+    if ! tmux has-session -t midicrt 2>/dev/null; then
+      tmux new-session -d -s midicrt -n midicrt -x 100 -y 59 'zsh -c "/home/billie/run_midicrt.sh; exec zsh"'
+    fi
+    exec tmux attach -t midicrt
+  fi
+fi
+```
 
 ## Config and logs
 
