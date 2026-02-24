@@ -115,7 +115,8 @@
     "left_margin": 10,
     "max_visible_rows": 20,
     "idle_scroll_bpm": 120.0,
-    "out_range_hold": 2.5
+    "out_range_hold": 2.5,
+    "pixel_style": "text"
   },
   "eventlog": {
     "max_log": 300,

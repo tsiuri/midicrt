@@ -4,63 +4,14 @@ This module is imported only by the run_pixel startup profile so TUI startup
 remains free of GUI dependencies.
 """
 
-from __future__ import annotations
+from blessed import Terminal
 
-import os
-from dataclasses import dataclass, field
-from typing import List
-
-from configutil import load_section, save_section
-from ui.model import Column, Frame, Line, Segment, Spacer, Style, TextBlock, Widget
+from ui.model import Line, PianoRollWidget
+from ui.renderers.text import TextRenderer
 
 
-@dataclass(frozen=True)
-class PixelSegment:
-    """Pixel-space segment carrying text + style metadata."""
-
-    text: str
-    style: Style = field(default_factory=Style)
-
-
-@dataclass(frozen=True)
-class PixelLine:
-    """Pixel-space line matching ui.model.Line segment ordering."""
-
-    segments: List[PixelSegment] = field(default_factory=list)
-
-
-@dataclass(frozen=True)
-class PixelFrame:
-    """Grid-model frame with fixed cell metrics for widget compatibility."""
-
-    cols: int
-    rows: int
-    cell_width: int
-    cell_height: int
-    lines: List[PixelLine] = field(default_factory=list)
-
-
-class PixelRenderer:
-    """Render ui.model widget trees into a pixel surface using pygame."""
-
-    _DEFAULTS = {
-        "backend": "sdl2",
-        "fullscreen": False,
-        "scale": 1,
-        "target_fps": 60,
-        "font_name": "DejaVu Sans Mono",
-        "font_size": 18,
-        "cell_width": 10,
-        "cell_height": 18,
-        "window_title": "midicrt pixel renderer",
-        "palette": {
-            "foreground": [120, 255, 120],
-            "background": [5, 16, 5],
-            "bold_boost": 1.25,
-            "crt_tint": [30, 255, 100],
-            "crt_tint_strength": 0.08,
-        },
-    }
+class PixelRenderer(TextRenderer):
+    """Pixel-oriented renderer with piano-roll parity support."""
 
     def __init__(self, renderer_name: str = "sdl2"):
         self.renderer_name = (renderer_name or "sdl2").lower()
@@ -146,82 +97,37 @@ class PixelRenderer:
                 raise RuntimeError(
                     "Optional pixel stack unavailable. Install extras: pip install 'midicrt[pixel]'"
                 ) from exc
-            self._pygame = pygame
-            pygame.init()
-            pygame.font.init()
-            self._clock = pygame.time.Clock()
 
-        scale = max(1, int(self._settings.get("scale", 1)))
-        width = pix_frame.cols * pix_frame.cell_width * scale
-        height = pix_frame.rows * pix_frame.cell_height * scale
-        desired_size = (width, height)
+    def _flatten(self, widget):
+        if isinstance(widget, PianoRollWidget):
+            return self._flatten_pianoroll(widget)
+        return super()._flatten(widget)
 
-        if self._surface is None or self._display_size != desired_size:
-            flags = 0
-            if self._settings.get("fullscreen"):
-                flags |= self._pygame.FULLSCREEN
-            self._surface = self._pygame.display.set_mode(desired_size, flags)
-            self._pygame.display.set_caption(str(self._settings.get("window_title", "midicrt pixel renderer")))
-            self._display_size = desired_size
-            size = max(8, int(self._settings.get("font_size", 18)) * scale)
-            self._font = self._pygame.font.SysFont(str(self._settings.get("font_name", "monospace")), size)
+    def _flatten_pianoroll(self, widget: PianoRollWidget) -> list[Line]:
+        lines: list[Line] = []
+        timeline_label = f"{'Bars':>7} │"
+        lines.append(Line.plain(timeline_label + widget.timeline))
+        for pitch, row_cells in zip(widget.pitches, widget.cells):
+            label = f"{self._note_name(pitch):>7} │"
+            chars = "".join(self._pixel_char(c.velocity, c.channel, widget.style_mode) for c in row_cells)
+            lines.append(Line.plain(label + chars))
+        return lines
 
-    def _draw_pixel_frame(self, pix_frame: PixelFrame):
-        self._ensure_display(pix_frame)
-        pg = self._pygame
-        assert self._surface is not None
-        assert self._font is not None
+    def _pixel_char(self, velocity: int, channel: int | None, style_mode: str) -> str:
+        if velocity <= 0:
+            return " "
+        # text mode keeps parity with terminal glyph density.
+        if style_mode == "text":
+            return self._velocity_char(velocity)
 
-        fg = tuple(self._settings["palette"]["foreground"])
-        bg = tuple(self._settings["palette"]["background"])
-        bold_boost = float(self._settings["palette"].get("bold_boost", 1.25))
-
-        scale = max(1, int(self._settings.get("scale", 1)))
-        cell_w = pix_frame.cell_width * scale
-        cell_h = pix_frame.cell_height * scale
-
-        for event in pg.event.get():
-            if event.type == pg.QUIT:
-                pg.display.quit()
-                self._surface = None
-                return
-
-        self._surface.fill(bg)
-
-        for row_idx, line in enumerate(pix_frame.lines):
-            col = 0
-            for seg in line.segments:
-                if col >= pix_frame.cols:
-                    break
-                text = (seg.text or "")
-                max_len = max(0, pix_frame.cols - col)
-                text = text[:max_len]
-                seg_fg = fg
-                seg_bg = bg
-                if seg.style.bold:
-                    seg_fg = tuple(min(255, int(c * bold_boost)) for c in seg_fg)
-                if seg.style.reverse:
-                    seg_fg, seg_bg = seg_bg, seg_fg
-
-                if text:
-                    rect = pg.Rect(col * cell_w, row_idx * cell_h, len(text) * cell_w, cell_h)
-                    self._surface.fill(seg_bg, rect)
-                    glyph = self._font.render(text, True, seg_fg)
-                    self._surface.blit(glyph, (col * cell_w, row_idx * cell_h))
-                col += len(text)
-
-            if col < pix_frame.cols:
-                rect = pg.Rect(col * cell_w, row_idx * cell_h, (pix_frame.cols - col) * cell_w, cell_h)
-                self._surface.fill(bg, rect)
-
-        tint = self._settings["palette"].get("crt_tint")
-        tint_strength = float(self._settings["palette"].get("crt_tint_strength", 0.0))
-        if tint and tint_strength > 0:
-            overlay = pg.Surface(self._display_size, pg.SRCALPHA)
-            alpha = max(0, min(255, int(255 * tint_strength)))
-            overlay.fill((int(tint[0]), int(tint[1]), int(tint[2]), alpha))
-            self._surface.blit(overlay, (0, 0))
-
-        pg.display.flip()
-        if self._clock is not None:
-            self._clock.tick(max(1, int(self._settings.get("target_fps", 60))))
+        # dense mode favors filled cells while remaining monochrome-compatible.
+        base = "█"
+        if getattr(self.term, "number_of_colors", 0) and channel is not None:
+            palette = [2, 3, 4, 5, 6, 7, 1]
+            color = palette[(int(channel) - 1) % len(palette)]
+            return self.term.color(color)(base)
+        # fallback shading by channel when color isn't available.
+        shades = ["█", "▓", "▒", "░"]
+        if channel is None:
+            return base
+        return shades[(int(channel) - 1) % len(shades)]

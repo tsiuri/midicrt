@@ -66,3 +66,25 @@ class Frame:
 
     cols: int
     rows: int
+
+
+@dataclass(frozen=True)
+class PianoRollCell:
+    """Single piano-roll cell state for a pitch/time slot."""
+
+    velocity: int = 0
+    channel: int | None = None
+
+
+@dataclass(frozen=True)
+class PianoRollWidget(Widget):
+    """Grid representation for piano-roll pages.
+
+    Rows are ordered high->low pitch, columns left->right time.
+    """
+
+    pitches: List[int] = field(default_factory=list)
+    cells: List[List[PianoRollCell]] = field(default_factory=list)
+    timeline: str = ""
+    left_margin: int = 10
+    style_mode: str = "text"

@@ -10,6 +10,7 @@ def draw(state):
         "1 - Notes view",
         "2 - MIDI Ports",
         "3 - Transport info",
+        "8 - Piano Roll",
         "9 - Audio Spectrum",
         "t - Tuner",
         "! - Chord+Key",
@@ -17,6 +18,7 @@ def draw(state):
         "# - Voice Monitor",
         "$ - Config",
         "% - TimeSig Exp",
+        "(Page 8) y - Piano roll style toggle",
         "0 - This help screen",
         "Q - Quit program",
     ]
