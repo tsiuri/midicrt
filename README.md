@@ -190,14 +190,25 @@ then resumes automatically.
 Receives SysEx messages and dispatches them as commands. This allows remote
 control from the Cirklon or any MIDI device that can send SysEx.
 
-**Message format:**
+**Message formats:**
 ```
+Legacy (still supported):
 F0  7D  6D  63  <cmd>  [args...]  F7
+
+Versioned (preferred):
+F0  7D  6D  63  <ver>  <cmd>  [args...]  F7
 ```
 - `7D` — MIDI non-commercial / private-use manufacturer ID
 - `6D 63` — ASCII `mc` (midicrt identifier)
+- `<ver>` — protocol byte (`41` = v1, `40` = negotiate highest supported)
 - `<cmd>` — command byte
 - `[args...]` — zero or more argument bytes (0–127)
+
+**Version negotiation rule:**
+- If `<ver>=40`, midicrt negotiates to its highest supported protocol version.
+- If `<ver>=41`, protocol version is `<ver>-40` (so `41` = v1).
+- Unsupported versions return an error reply containing supported versions.
+- Frames without `<ver>` are treated as legacy/unversioned for backward compatibility.
 
 **Commands:**
 
@@ -208,6 +219,14 @@ F0  7D  6D  63  <cmd>  [args...]  F7
 | `02` | `01`     | Force screensaver on immediately        |
 | `03` | `00`     | Disable page cycler                     |
 | `03` | `01`     | Enable page cycler                      |
+| `04` | `[bars]` | Capture recent bars (optional arg)      |
+| `10` | *(none)* | Capabilities query (versioned only)     |
+
+For versioned commands, midicrt sends a SysEx reply frame:
+```
+F0 7D 6D 63 <ver> <cmd> <status> [payload...] F7
+```
+where status is `00=ok`, `01=error`.
 
 Received commands are logged in the footer/status area and to `sysex.log`
 (+ split files in `sysex.d/`) so you can see what arrived. Unknown commands
@@ -216,6 +235,16 @@ are logged with their raw bytes.
 **Example — switch to page 8 (Piano Roll):**
 ```
 F0 7D 6D 63 01 08 F7
+```
+
+**Example — versioned switch to page 8 (v1):**
+```
+F0 7D 6D 63 41 01 08 F7
+```
+
+**Example — capabilities query with negotiation:**
+```
+F0 7D 6D 63 40 10 F7
 ```
 
 **Testing from the command line** (using the venv):
