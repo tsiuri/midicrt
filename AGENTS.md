@@ -87,7 +87,7 @@ sequence, so plugins named with 'z' prefix draw last (on top).
 ### SysEx receiver (plugins/sysex.py)
 - handle_midi() has a dedicated `elif msg.type == "sysex"` branch that forwards
   to all plugins (sysex is NOT forwarded via the note/CC branch)
-- sysex.py checks for prefix (0x7D, 0x6D, 0x63) and dispatches by command byte
+- sysex.py checks for prefix (0x7D, 0x6D, 0x63), then supports both legacy (unversioned) and versioned command frames
 - Commands are logged to AUTOCONNECT_LOG (visible on row 2)
 - To add new commands: add an elif block in sysex._dispatch()
 
@@ -322,7 +322,9 @@ hardware port. Use `aseqsend` to send SysEx to that sequencer port.
    - aseqsend -l
    - Expect a line like: `128:0    RtMidiIn Client  GreenCRT Monitor`
 2. Send a page-switch SysEx (example: page 5 = CC Dashboard):
-   - aseqsend -p 128:0 "F0 7D 6D 63 01 05 F7"
+   - Legacy frame: `aseqsend -p 128:0 "F0 7D 6D 63 01 05 F7"`
+   - Versioned v1 frame: `aseqsend -p 128:0 "F0 7D 6D 63 41 01 05 F7"`
+   - Version negotiation + capabilities query: `aseqsend -p 128:0 "F0 7D 6D 63 40 10 F7"`
 3. Confirm in tmux:
    - tmux capture-pane -t midicrt:0 -p
 
