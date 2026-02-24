@@ -178,5 +178,35 @@
       "9/8": 0.9,
       "12/8": 1.0
     }
+  },
+  "pixel_renderer": {
+    "backend": "sdl2",
+    "fullscreen": false,
+    "scale": 1,
+    "target_fps": 60,
+    "font_name": "DejaVu Sans Mono",
+    "font_size": 18,
+    "cell_width": 10,
+    "cell_height": 18,
+    "window_title": "midicrt pixel renderer",
+    "palette": {
+      "foreground": [
+        120,
+        255,
+        120
+      ],
+      "background": [
+        5,
+        16,
+        5
+      ],
+      "bold_boost": 1.25,
+      "crt_tint": [
+        30,
+        255,
+        100
+      ],
+      "crt_tint_strength": 0.08
+    }
   }
 }

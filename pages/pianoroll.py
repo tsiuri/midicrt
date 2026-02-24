@@ -5,6 +5,8 @@ PAGE_NAME = "Piano Roll"
 
 import sys, time, threading
 from collections import deque
+from dataclasses import dataclass
+from typing import List
 from blessed import Terminal
 from midicrt import draw_line
 from configutil import load_section, save_section
@@ -366,6 +368,7 @@ def _current_roll_view(state):
     avail_rows = bottom - top
     total_rows = max(9, avail_rows)
     marker_rows = 1
+    total_rows = max(9, avail_rows)
     note_rows = max(1, total_rows - marker_rows)
     pitch_high = pitch_low + note_rows - 1
 

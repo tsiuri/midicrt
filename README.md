@@ -64,6 +64,26 @@ midicrt now supports two startup profiles:
   - `MIDICRT_ENABLE_PIXEL=1 MIDICRT_PIXEL_RENDERER=sdl2 ./run_pixel`
   - `python midicrt.py --profile run_pixel`
 
+### Pixel renderer runtime controls
+
+`run_pixel` reads defaults from `config/settings.json` under
+`pixel_renderer`, then applies env var overrides at runtime:
+
+- `MIDICRT_ENABLE_PIXEL=1` enables pixel backend selection for `run_pixel`.
+- `MIDICRT_PIXEL_RENDERER` selects backend id (supported: `sdl2`, `pygame`,
+  `kmsdrm`, `fb`, `framebuffer`).
+- `MIDICRT_PIXEL_FULLSCREEN=1` enables fullscreen SDL mode (`0` disables).
+- `MIDICRT_PIXEL_SCALE=2` multiplies cell metrics for window/display size.
+- `MIDICRT_PIXEL_TARGET_FPS=30` sets pixel present-rate cap.
+- `MIDICRT_PIXEL_CRT_TINT=30,255,100` overrides CRT tint RGB.
+
+Fallback behavior:
+
+- If `MIDICRT_ENABLE_PIXEL` is not set, `run_pixel` falls back to text.
+- If pygame/SDL extras are unavailable, startup logs the reason and falls
+  back to text.
+- `run_tui` remains the tty-safe default and never imports pixel deps.
+
 On startup, midicrt appends a self-check line to `log.txt` recording the active
 profile and backend.
 
