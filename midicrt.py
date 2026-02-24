@@ -7,12 +7,15 @@ from collections import deque
 from inspect import signature
 from blessed import Terminal
 import mido
+from ui.model import Frame
+from ui.renderers.text import TextRenderer
 
 # Ensure the running script is importable as `midicrt` so plugin/page imports do
 # not re-execute this module under a different name.
 sys.modules.setdefault("midicrt", sys.modules[__name__])
 
 term = Terminal()
+text_renderer = TextRenderer(term)
 AUTOCONNECT_LOG = []
 PANIC_OUT_PORT = None
 PANIC_OUT_VIRTUAL = False
@@ -392,7 +395,16 @@ def ui_loop():
 
             # --- PAGE CONTENT (start row 3)
             page = PAGES.get(current_page)
-            if page and hasattr(page, "draw"):
+            if page and hasattr(page, "build_widget"):
+                try:
+                    content_rows = max(0, SCREEN_ROWS - 3)
+                    widget = page.build_widget(state)
+                    rendered = text_renderer.render(widget, Frame(cols=SCREEN_COLS, rows=content_rows))
+                    for idx, line in enumerate(rendered):
+                        draw_line(3 + idx, line)
+                except Exception as e:
+                    draw_line(3, f"[Error {current_page}] {e}")
+            elif page and hasattr(page, "draw"):
                 try:
                     page.draw(state)
                 except Exception as e:
