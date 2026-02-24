@@ -133,6 +133,23 @@ def draw(state):
             else:
                 draw_line(info_y + 7, "Scale conf: --  missing: -"[:cols])
 
+        if info_y + 8 <= rows - 1:
+            stable = zharmony.get_stable_key()
+            key_label = stable.get("label") or "?"
+            alts = stable.get("alternatives") or []
+            amb = stable.get("ambiguous")
+            if key_label == "?" and stable.get("top"):
+                key_label = f"?→{stable['top']['label']}"
+            if alts and amb:
+                alt_txt = ", ".join(a["label"] for a in alts[:2])
+                key_line = f"Key: {key_label}  (alts: {alt_txt})"
+            elif amb:
+                key_line = f"Key: {key_label}  (ambiguous)"
+            else:
+                key_line = f"Key: {key_label}"
+            func = zharmony.get_last_function_label() or "?"
+            draw_line(info_y + 8, f"{key_line}  Fn: {func}"[:cols])
+
         if info_y + 9 <= rows - 1:
             global _tension_held, _tension_held_ts
             if len(active_pcs) >= 2:

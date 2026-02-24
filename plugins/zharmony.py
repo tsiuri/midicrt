@@ -4,7 +4,7 @@
 from collections import deque
 import sys
 import time
-from harmony import detect_harmony, detect_harmony_info
+from harmony import NOTE_NAMES, detect_harmony, detect_harmony_info
 from configutil import load_section, save_section
 import midicrt
 
@@ -17,6 +17,10 @@ MIN_UNIQUE_FOR_SCALE = 3
 CHORD_MIN_RATIO = 0.6
 SCALE_MIN_RATIO = 0.7
 KEY_HISTORY_LEN = 256
+KEY_CONFIDENCE_THRESHOLD = 0.72
+KEY_HYSTERESIS_MARGIN = 0.06
+KEY_UPDATE_EVERY_NOTES = 2
+KEY_ALT_MARGIN = 0.04
 
 _cfg = load_section("harmony")
 if _cfg is None:
@@ -29,6 +33,10 @@ try:
     CHORD_MIN_RATIO = float(_cfg.get("chord_min_ratio", CHORD_MIN_RATIO))
     SCALE_MIN_RATIO = float(_cfg.get("scale_min_ratio", SCALE_MIN_RATIO))
     KEY_HISTORY_LEN = int(_cfg.get("key_history_len", KEY_HISTORY_LEN))
+    KEY_CONFIDENCE_THRESHOLD = float(_cfg.get("key_confidence_threshold", KEY_CONFIDENCE_THRESHOLD))
+    KEY_HYSTERESIS_MARGIN = float(_cfg.get("key_hysteresis_margin", KEY_HYSTERESIS_MARGIN))
+    KEY_UPDATE_EVERY_NOTES = int(_cfg.get("key_update_every_notes", KEY_UPDATE_EVERY_NOTES))
+    KEY_ALT_MARGIN = float(_cfg.get("key_alt_margin", KEY_ALT_MARGIN))
 except Exception:
     pass
 
@@ -41,6 +49,10 @@ try:
         "chord_min_ratio": float(CHORD_MIN_RATIO),
         "scale_min_ratio": float(SCALE_MIN_RATIO),
         "key_history_len": int(KEY_HISTORY_LEN),
+        "key_confidence_threshold": float(KEY_CONFIDENCE_THRESHOLD),
+        "key_hysteresis_margin": float(KEY_HYSTERESIS_MARGIN),
+        "key_update_every_notes": int(KEY_UPDATE_EVERY_NOTES),
+        "key_alt_margin": float(KEY_ALT_MARGIN),
     })
 except Exception:
     pass
@@ -56,6 +68,12 @@ _last_chord_info = None
 _last_scale_info = None
 _key_notes = deque(maxlen=KEY_HISTORY_LEN)  # pitch classes only
 _key_counts = [0] * 12
+_notes_since_key_update = 0
+_stable_key = None
+_stable_key_conf = 0.0
+_stable_key_alt = []
+_last_function = None
+_function_history = deque(maxlen=6)
 
 _chord_change_times = deque(maxlen=16)   # timestamps of chord label changes
 _last_note_for_iv = None                 # previous note for interval computation
@@ -65,6 +83,10 @@ CHORD_HISTORY = deque(maxlen=4)
 SCALE_HISTORY = deque(maxlen=4)  # list of dicts: {label, pcs, in, total, uniq_in, uniq_total}
 
 _scale_current_label = None
+
+MAJOR_SCALE = [0, 2, 4, 5, 7, 9, 11]
+MINOR_SCALE = [0, 2, 3, 5, 7, 8, 10]
+ROMAN_DEGREES = {0: "I", 1: "bII", 2: "II", 3: "bIII", 4: "III", 5: "IV", 6: "#IV", 7: "V", 8: "bVI", 9: "VI", 10: "bVII", 11: "VII"}
 
 # Ensure we are registered as a plugin even if imported elsewhere
 try:
@@ -104,6 +126,7 @@ def handle(msg):
         # invalidate cache
         global _last_pcs
         _last_pcs = None
+        _update_stable_key()
 
 
 def get_harmony():
@@ -181,9 +204,108 @@ def get_harmony():
                 CHORD_HISTORY.appendleft(chord_label)
             _last_chord_label = chord_label
             _chord_change_times.appendleft(time.time())
+            _update_function_label(chord)
         if scale_label:
             _last_scale_label = scale_label
     return _last_result
+
+
+def _key_candidates(counts, total):
+    if total <= 0:
+        return []
+    results = []
+    for root in range(12):
+        for mode, intervals in (("maj", MAJOR_SCALE), ("min", MINOR_SCALE)):
+            scale = {(root + i) % 12 for i in intervals}
+            inside = sum(counts[pc] for pc in scale)
+            outside = total - inside
+            ratio = inside / total
+            score = ratio - (outside / total) * 0.5
+            results.append({
+                "root": root,
+                "mode": mode,
+                "label": f"{NOTE_NAMES[root]} {mode}",
+                "ratio": ratio,
+                "inside": inside,
+                "outside": outside,
+                "score": score,
+            })
+    results.sort(key=lambda r: r["score"], reverse=True)
+    return results
+
+
+def _update_stable_key(force=False):
+    global _notes_since_key_update, _stable_key, _stable_key_conf, _stable_key_alt
+    _notes_since_key_update += 1
+    cadence = max(1, int(KEY_UPDATE_EVERY_NOTES))
+    if not force and _notes_since_key_update < cadence:
+        return
+    _notes_since_key_update = 0
+    counts = list(_key_counts)
+    total = sum(counts)
+    cands = _key_candidates(counts, total)
+    if not cands:
+        _stable_key = None
+        _stable_key_conf = 0.0
+        _stable_key_alt = []
+        return
+    top = cands[0]
+    conf = float(top.get("ratio", 0.0))
+    eff_threshold = float(KEY_CONFIDENCE_THRESHOLD)
+    if _stable_key and _stable_key != top["label"]:
+        eff_threshold += float(KEY_HYSTERESIS_MARGIN)
+    if conf >= eff_threshold or (_stable_key == top["label"] and conf >= KEY_CONFIDENCE_THRESHOLD - KEY_HYSTERESIS_MARGIN):
+        _stable_key = top["label"]
+        _stable_key_conf = conf
+    _stable_key_alt = []
+    margin = max(0.0, float(KEY_ALT_MARGIN))
+    for cand in cands[1:4]:
+        if abs(cand["ratio"] - conf) <= margin:
+            _stable_key_alt.append(cand)
+
+
+def _roman_for_chord(chord_info, key_label):
+    if not chord_info or not key_label:
+        return None
+    if isinstance(chord_info, list):
+        chord_info = chord_info[0] if chord_info else None
+    if not isinstance(chord_info, dict):
+        return None
+    try:
+        key_root_name, key_mode = key_label.split(" ", 1)
+        key_root = NOTE_NAMES.index(key_root_name)
+    except Exception:
+        return None
+    chord_root = chord_info.get("root")
+    chord_name = (chord_info.get("name") or "").lower()
+    if chord_root is None:
+        return None
+    interval = (int(chord_root) - int(key_root)) % 12
+    roman = ROMAN_DEGREES.get(interval, "?")
+    if "min" in chord_name or chord_name.startswith("m"):
+        roman = roman.lower()
+    if "dim" in chord_name:
+        roman += "°"
+    elif "aug" in chord_name:
+        roman += "+"
+    func = {0: "T", 5: "S", 7: "D"}.get(interval)
+    if key_mode.strip() == "min" and interval == 10:
+        func = "D"
+    if func:
+        return f"{roman} ({func})"
+    return roman
+
+
+def _update_function_label(chord_info):
+    global _last_function
+    key = get_stable_key()
+    roman = _roman_for_chord(chord_info, key.get("label"))
+    if not roman:
+        _last_function = "?"
+    else:
+        _last_function = roman
+    if not _function_history or _function_history[0] != _last_function:
+        _function_history.appendleft(_last_function)
 
 
 def get_scale_pcs():
@@ -215,6 +337,31 @@ def get_key_histogram():
     counts = list(_key_counts)
     total = sum(counts)
     return counts, total
+
+
+def get_stable_key():
+    _update_stable_key(force=True)
+    counts = list(_key_counts)
+    total = sum(counts)
+    cands = _key_candidates(counts, total)
+    top = cands[0] if cands else None
+    near = bool(top and top.get("ratio", 0.0) < KEY_CONFIDENCE_THRESHOLD + KEY_ALT_MARGIN and _stable_key_alt)
+    return {
+        "label": _stable_key,
+        "confidence": _stable_key_conf,
+        "threshold": float(KEY_CONFIDENCE_THRESHOLD),
+        "alternatives": list(_stable_key_alt),
+        "top": top,
+        "ambiguous": near or _stable_key is None,
+    }
+
+
+def get_last_function_label():
+    return _last_function
+
+
+def get_function_history():
+    return list(_function_history)
 
 
 def get_chord_history():
