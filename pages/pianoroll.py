@@ -433,16 +433,16 @@ def get_view_payload(max_active_notes=64, max_recent_hits=32):
     }
 
 
-def build_frame_snapshot(state):
-    """Deterministic logical frame snapshot for page 8.
+def build_roll_view(state):
+    """Canonical logical frame view for page 8.
 
-    Optional state override: state['_now'] for deterministic tests/rendering.
+    Optional override: state['_now'] for deterministic tests/rendering.
     """
     global pitch_low, pitch_high, _last_above, _last_below
     cols = state["cols"]
     rows = state["rows"]
     y0 = state.get("y_offset", 3)
-    now = time.time()
+    now = float(state.get("_now", time.time()))
 
     top = y0 + 2
     bottom = rows - 5
@@ -453,27 +453,12 @@ def build_frame_snapshot(state):
     note_rows = max(1, total_rows - marker_rows)
     pitch_high = pitch_low + note_rows - 1
 
-    above_pitches = set()
-    below_pitches = set()
     try:
-        for (ch, pitch), _vel in active.items():
-            if pitch > pitch_high:
-                _last_above = (pitch, ch, now)
-                above_pitches.add(pitch)
-            elif pitch < pitch_low:
-                _last_below = (pitch, ch, now)
-                below_pitches.add(pitch)
-        for (pitch, ch, _vel, ts) in list(_recent_hits):
-            if (now - ts) > OUT_RANGE_HOLD:
-                continue
-            if pitch > pitch_high:
-                _last_above = (pitch, ch, ts)
-                above_pitches.add(pitch)
-            elif pitch < pitch_low:
-                _last_below = (pitch, ch, ts)
-                below_pitches.add(pitch)
+        _last_above, _last_below, above_pitches, below_pitches = _collect_out_of_range(
+            now, pitch_low, pitch_high, _last_above, _last_below
+        )
     except Exception:
-        pass
+        above_pitches, below_pitches = set(), set()
 
     roll_cols = max(16, cols - LEFT_MARGIN - 2)
     _ensure_cols(roll_cols)
@@ -498,7 +483,7 @@ def build_frame_snapshot(state):
         timeline_chars.append(mark)
 
     if visible_cols:
-        now_ts = time.time()
+        now_ts = now
         overlay = [(p, ch, v) for (p, ch, v, ts) in list(_recent_hits) if (now_ts - ts) <= 0.25]
         if overlay:
             visible_cols[-1] = list(visible_cols[-1]) + overlay
@@ -539,11 +524,20 @@ def build_frame_snapshot(state):
         "grid": grid,
         "footer_left": footer_left,
         "footer_right": footer_right,
+        "overflow": {
+            "above": bool(header_right),
+            "below": bool(footer_right),
+        },
     }
 
 
+def build_frame_snapshot(state):
+    """Backwards-compatible alias for canonical roll-view assembly."""
+    return build_roll_view(state)
+
+
 def build_widget(state):
-    view = _current_roll_view(state)
+    view = build_roll_view(state)
     cols = view["cols"]
     header = _merge_left_right(view["header_left"], view["header_right"], cols)
     header_line = Line.plain(header)
@@ -574,7 +568,7 @@ def build_widget(state):
 
 # -------- Drawing --------
 def draw(state):
-    view = _current_roll_view(state)
+    view = build_roll_view(state)
     cols = view["cols"]
     rows = view["rows"]
     y0 = view["y0"]
