@@ -453,8 +453,21 @@ def ui_loop():
             # --- STATUS (row 2): unused now; keep blank for space
             draw_line(2, "")
 
+            # --- SCREENSAVER CHECK: skip all drawing if active
+            _ss = next((m for m in PLUGINS if hasattr(m, "is_active") and hasattr(m, "deactivate")), None)
+            if _ss and _ss.is_active():
+                _ss.draw(state)
+                sys.stdout.flush()
+                time.sleep(1.0 / FPS)
+                continue
+
             # --- PAGE CONTENT (start row 3)
             page = PAGES.get(current_page)
+            if page and hasattr(page, "on_tick"):
+                try:
+                    page.on_tick(state)
+                except Exception:
+                    pass
             if page and hasattr(page, "build_widget"):
                 try:
                     content_rows = max(0, SCREEN_ROWS - 3)

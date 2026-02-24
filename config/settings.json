@@ -95,7 +95,7 @@
     "smoothing": 0.55
   },
   "screensaver": {
-    "idle_timeout": 60.0
+    "idle_timeout": 1.0
   },
   "pagecycle": {
     "enabled": true,
