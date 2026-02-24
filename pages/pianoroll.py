@@ -3,13 +3,11 @@ BACKGROUND = True
 PAGE_ID = 8
 PAGE_NAME = "Piano Roll"
 
-import sys, time, threading
-from collections import deque
-from dataclasses import dataclass
-from typing import List
+import sys, time
 from blessed import Terminal
 from midicrt import draw_line
 from configutil import load_section, save_section
+from engine.modules.pianoroll_state import PianoRollState
 from ui.model import Column, Line, PianoRollCell, PianoRollWidget, Spacer, TextBlock
 
 term = Terminal()
@@ -63,51 +61,18 @@ def _save_cfg():
 
 _save_cfg()
 
-# -------- State --------
+# -------- UI state --------
 visible_channels = set(range(1, 17))
-active = {}  # {(ch, pitch): velocity}
-cols_buf = deque()  # time columns of [(pitch, ch, vel)]
-time_cols = 0
 pitch_low = PITCH_LOW_DEFAULT
 pitch_high = PITCH_HIGH_DEFAULT
-_last_tick = 0
-_last_time = None
-_recent_hits = deque(maxlen=256)  # [(pitch, ch, vel, ts)] — ensures blips are shown at least once
-_last_run_bpm = IDLE_SCROLL_BPM
 vis_input_mode = False
 vis_input_text = ""
-_last_above = None  # (note, ch, ts)
-_last_below = None  # (note, ch, ts)
 
-# -------- Background scroll thread --------
-_bg_thread = None
-
-
-def _bg_loop():
-    try:
-        import midicrt as mc
-    except Exception:
-        return
-    while True:
-        try:
-            _shift_if_needed(
-                {
-                    "tick": mc.tick_counter,
-                    "running": mc.running,
-                    "bpm": mc.bpm,
-                }
-            )
-        except Exception:
-            pass
-        time.sleep(0.05)  # ~20 Hz
-
-
-def _ensure_bg():
-    global _bg_thread
-    if _bg_thread and _bg_thread.is_alive():
-        return
-    _bg_thread = threading.Thread(target=_bg_loop, daemon=True, name="pianoroll-bg")
-    _bg_thread.start()
+roll_state = PianoRollState(
+    ticks_per_col=TICKS_PER_COL,
+    idle_scroll_bpm=IDLE_SCROLL_BPM,
+    out_range_hold=OUT_RANGE_HOLD,
+)
 
 
 NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
@@ -121,44 +86,20 @@ def _notename(n):
 
 
 # -------- MIDI handlers --------
-def _note_on(msg):
-    global _last_above, _last_below
-    ch = msg.channel + 1
-    if msg.velocity > 0:
-        active[(ch, msg.note)] = msg.velocity
-        try:
-            _recent_hits.append((msg.note, ch, msg.velocity, time.time()))
-        except Exception:
-            pass
-        if msg.note > pitch_high:
-            _last_above = (msg.note, ch, time.time())
-        elif msg.note < pitch_low:
-            _last_below = (msg.note, ch, time.time())
-    else:
-        active.pop((ch, msg.note), None)
-
-
-def _note_off(msg):
-    ch = msg.channel + 1
-    active.pop((ch, msg.note), None)
-
-
-def _all_notes_off(ch):
-    keys = [k for k in active.keys() if k[0] == ch]
-    for k in keys:
-        active.pop(k, None)
-
-
 def handle(msg):
-    t = msg.type
-    if t == "note_on":
-        _note_on(msg)
-    elif t == "note_off":
-        _note_off(msg)
-    elif t == "control_change" and msg.control == 123:
-        _all_notes_off(msg.channel + 1)
-    elif t == "stop":
-        active.clear()
+    roll_state.on_midi_event(msg, pitch_low=pitch_low, pitch_high=pitch_high)
+
+
+def on_tick(state):
+    roll_cols = max(16, state["cols"] - LEFT_MARGIN - 2)
+    roll_state.on_tick(
+        tick=state.get("tick", 0),
+        running=state.get("running", False),
+        bpm=state.get("bpm", 0.0),
+        roll_cols=roll_cols,
+        pitch_low=pitch_low,
+        pitch_high=pitch_high,
+    )
 
 
 # -------- Channel visibility --------
@@ -259,71 +200,6 @@ def keypress(ch):
     return False
 
 
-# -------- Buffer mgmt --------
-def _ensure_cols(width_chars):
-    global time_cols, cols_buf
-    needed = max(16, width_chars)
-    if time_cols != needed or not cols_buf:
-        time_cols = needed
-        cols_buf = deque([[] for _ in range(time_cols)], maxlen=time_cols)
-
-
-def _shift_if_needed(state):
-    global _last_tick, _last_time, _last_run_bpm
-
-    now = time.time()
-    running = state.get("running", False)
-    bpm = state.get("bpm", 0.0) or 0.0
-
-    if _last_time is None:
-        _last_time = now
-        if bpm > 0:
-            _last_run_bpm = bpm
-
-    steps = 0
-    if running:
-        tick = state["tick"]
-        if tick < _last_tick:
-            _last_tick = tick
-        moved = tick - _last_tick
-        if moved >= TICKS_PER_COL:
-            steps = max(1, moved // TICKS_PER_COL)
-            _last_tick += steps * TICKS_PER_COL
-        _last_time = now
-        if bpm > 0:
-            _last_run_bpm = bpm
-    else:
-        eff_bpm = _last_run_bpm if _last_run_bpm else IDLE_SCROLL_BPM
-        ticks_per_sec = (eff_bpm * 24.0) / 60.0
-        elapsed = now - _last_time
-        virtual_ticks = elapsed * ticks_per_sec
-        if virtual_ticks >= TICKS_PER_COL:
-            steps = max(1, int(virtual_ticks // TICKS_PER_COL))
-            consumed = steps * TICKS_PER_COL / ticks_per_sec
-            _last_time += consumed
-
-    try:
-        col_secs = (
-            TICKS_PER_COL / ((bpm if running and bpm > 0 else _last_run_bpm) * 24.0 / 60.0)
-            if (bpm or _last_run_bpm)
-            else 0.125
-        )
-    except Exception:
-        col_secs = 0.125
-    overlay_window = max(0.05, min(0.25, col_secs))
-
-    for _ in range(steps):
-        now_col = [(p, ch, v) for (ch, p), v in active.items()]
-        try:
-            cutoff = time.time() - overlay_window
-            recent = [(p, ch, v) for (p, ch, v, ts) in list(_recent_hits) if ts >= cutoff]
-            if recent:
-                now_col.extend(recent)
-        except Exception:
-            pass
-        cols_buf.append(now_col)
-
-
 # -------- Formatting helpers --------
 def _merge_left_right(left, right, cols):
     if not right:
@@ -356,80 +232,18 @@ def _draw_right_reverse(y, text, cols):
     sys.stdout.write(term.move_yx(y, x) + term.reverse(text) + term.normal)
 
 
-@dataclass(frozen=True)
-class FrameSnapshot:
-    header_left: str
-    header_right: str
-    status_line: str
-    timeline_line: str
-    pitch_lines: List[str]
-    footer_left: str
-    footer_right: str
-    cols: int
-    rows: int
-    y0: int
-
-
-def _vel_char(v):
-    if v >= 100:
-        return "█"
-    if v >= 60:
-        return "▓"
-    if v > 0:
-        return "░"
-    return " "
-
-
-def _collect_out_of_range(now, lo, hi, current_above, current_below):
-    last_above = current_above
-    last_below = current_below
-    above_pitches = set()
-    below_pitches = set()
-    for (ch, pitch), _vel in active.items():
-        if pitch > hi:
-            last_above = (pitch, ch, now)
-            above_pitches.add(pitch)
-        elif pitch < lo:
-            last_below = (pitch, ch, now)
-            below_pitches.add(pitch)
-    for (pitch, ch, _vel, ts) in list(_recent_hits):
-        if (now - ts) > OUT_RANGE_HOLD:
-            continue
-        if pitch > hi:
-            last_above = (pitch, ch, ts)
-            above_pitches.add(pitch)
-        elif pitch < lo:
-            last_below = (pitch, ch, ts)
-            below_pitches.add(pitch)
-    return last_above, last_below, above_pitches, below_pitches
-
-
 def get_view_payload(max_active_notes=64, max_recent_hits=32):
     """Compact normalized view payload for schema snapshots."""
-    now = time.time()
-
-    active_notes_payload = [
-        [ch, pitch, vel]
-        for (ch, pitch), vel in sorted(active.items(), key=lambda item: (item[0][1], item[0][0]))[:max_active_notes]
-    ]
-
-    recent_hits = []
-    for pitch, ch, vel, ts in list(_recent_hits)[-max_recent_hits:]:
-        age_ms = int(max(0.0, now - ts) * 1000.0)
-        recent_hits.append([pitch, ch, vel, age_ms])
-
-    overflow_flags = {
-        "above": _last_above is not None,
-        "below": _last_below is not None,
-    }
-
     return {
-        "time_cols": int(time_cols),
         "pitch_low": int(pitch_low),
         "pitch_high": int(pitch_high),
-        "active_notes": active_notes_payload,
-        "recent_hits": recent_hits,
-        "overflow_flags": overflow_flags,
+        **roll_state.get_view_payload(
+            pitch_low=pitch_low,
+            pitch_high=pitch_high,
+            roll_cols=roll_state.time_cols or 16,
+            max_active_notes=max_active_notes,
+            max_recent_hits=max_recent_hits,
+        ),
     }
 
 
@@ -438,7 +252,7 @@ def build_roll_view(state):
 
     Optional override: state['_now'] for deterministic tests/rendering.
     """
-    global pitch_low, pitch_high, _last_above, _last_below
+    global pitch_low, pitch_high
     cols = state["cols"]
     rows = state["rows"]
     y0 = state.get("y_offset", 3)
@@ -453,23 +267,15 @@ def build_roll_view(state):
     note_rows = max(1, total_rows - marker_rows)
     pitch_high = pitch_low + note_rows - 1
 
-    try:
-        _last_above, _last_below, above_pitches, below_pitches = _collect_out_of_range(
-            now, pitch_low, pitch_high, _last_above, _last_below
-        )
-    except Exception:
-        above_pitches, below_pitches = set(), set()
-
     roll_cols = max(16, cols - LEFT_MARGIN - 2)
-    _ensure_cols(roll_cols)
-    _ensure_bg()
-
-    visible_cols = ([[] for _ in range(roll_cols - len(cols_buf))] + list(cols_buf) if len(cols_buf) < roll_cols else list(cols_buf)[-roll_cols:])
-
-    try:
-        tick_right = _last_tick
-    except Exception:
-        tick_right = state.get("tick", 0)
+    payload = roll_state.get_view_payload(
+        pitch_low=pitch_low,
+        pitch_high=pitch_high,
+        roll_cols=roll_cols,
+        now=now,
+    )
+    visible_cols = payload["columns"]
+    tick_right = payload.get("tick_right", state.get("tick", 0))
     bar_ticks = 24 * 4
     beat_ticks = 24
     timeline_chars = []
@@ -481,12 +287,6 @@ def build_roll_view(state):
         elif col_tick % beat_ticks == 0:
             mark = ":"
         timeline_chars.append(mark)
-
-    if visible_cols:
-        now_ts = now
-        overlay = [(p, ch, v) for (p, ch, v, ts) in list(_recent_hits) if (now_ts - ts) <= 0.25]
-        if overlay:
-            visible_cols[-1] = list(visible_cols[-1]) + overlay
 
     pitches = list(range(pitch_high, pitch_low - 1, -1))
     grid = []
@@ -503,9 +303,10 @@ def build_roll_view(state):
         grid.append(row_cells)
 
     header_left = f"--- {PAGE_NAME} ---"
-    header_right = _fmt_out_of_range(_last_above, now, "high", extra=max(0, len(above_pitches) - 1))
-    footer_left = f"Range: {_notename(pitch_low)}–{_notename(pitch_high)}  T/col:{TICKS_PER_COL}  Active:{len(active)}  Cols:{len(cols_buf)}"
-    footer_right = _fmt_out_of_range(_last_below, now, "low", extra=max(0, len(below_pitches) - 1))
+    overflow = payload.get("overflow", {})
+    header_right = _fmt_out_of_range(overflow.get("above"), now, "high", extra=overflow.get("above_count", 0))
+    footer_left = f"Range: {_notename(pitch_low)}–{_notename(pitch_high)}  T/col:{TICKS_PER_COL}  Active:{payload.get('active_count', 0)}  Cols:{roll_state.time_cols}"
+    footer_right = _fmt_out_of_range(overflow.get("below"), now, "low", extra=overflow.get("below_count", 0))
 
     return {
         "cols": cols,

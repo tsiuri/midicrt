@@ -310,6 +310,20 @@ class MidiEngine:
                 except Exception:
                     pass
 
+        if kind == "clock":
+            plugin_state = None
+            for pid, pg in self.pages.items():
+                if not hasattr(pg, "on_tick"):
+                    continue
+                if pid != current_page and not getattr(pg, "BACKGROUND", False):
+                    continue
+                try:
+                    if plugin_state is None:
+                        plugin_state = self.make_plugin_state(cols=80, rows=24, y_offset=3)
+                    pg.on_tick(plugin_state)
+                except Exception:
+                    pass
+
         page = self.pages.get(current_page)
         if page and hasattr(page, "handle") and kind in ("note_on", "note_off", "control_change", "program_change"):
             try:
