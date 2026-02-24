@@ -5,9 +5,12 @@ PAGE_NAME = "Piano Roll"
 
 import sys, time, threading
 from collections import deque
+from dataclasses import dataclass
+from typing import List
 from blessed import Terminal
 from midicrt import draw_line
 from configutil import load_section, save_section
+from ui.model import Column, Line, Segment, Style, TextBlock
 
 term = Terminal()
 
@@ -325,137 +328,184 @@ def _draw_right_reverse(y, text, cols):
     x = max(0, cols - len(text))
     sys.stdout.write(term.move_yx(y, x) + term.reverse(text) + term.normal)
 
-# -------- Drawing --------
-def draw(state):
-    global pitch_low, pitch_high
-    global _last_above, _last_below
+
+@dataclass(frozen=True)
+class FrameSnapshot:
+    header_left: str
+    header_right: str
+    status_line: str
+    timeline_line: str
+    pitch_lines: List[str]
+    footer_left: str
+    footer_right: str
+    cols: int
+    rows: int
+    y0: int
+
+
+def _vel_char(v):
+    if v >= 100:
+        return "█"
+    if v >= 60:
+        return "▓"
+    if v > 0:
+        return "░"
+    return " "
+
+
+def _collect_out_of_range(now, lo, hi, current_above, current_below):
+    last_above = current_above
+    last_below = current_below
+    above_pitches = set()
+    below_pitches = set()
+    for (ch, pitch), _vel in active.items():
+        if pitch > hi:
+            last_above = (pitch, ch, now)
+            above_pitches.add(pitch)
+        elif pitch < lo:
+            last_below = (pitch, ch, now)
+            below_pitches.add(pitch)
+    for (pitch, ch, _vel, ts) in list(_recent_hits):
+        if (now - ts) > OUT_RANGE_HOLD:
+            continue
+        if pitch > hi:
+            last_above = (pitch, ch, ts)
+            above_pitches.add(pitch)
+        elif pitch < lo:
+            last_below = (pitch, ch, ts)
+            below_pitches.add(pitch)
+    return last_above, last_below, above_pitches, below_pitches
+
+
+def build_frame_snapshot(state):
+    """Deterministic logical frame snapshot for page 8.
+
+    Optional state override: state['_now'] for deterministic tests/rendering.
+    """
+    global pitch_low, pitch_high, _last_above, _last_below
+
     cols = state["cols"]
     rows = state["rows"]
-    y0   = state.get("y_offset", 3)
-    now = time.time()
+    y0 = state.get("y_offset", 3)
+    now = state.get("_now", time.time())
 
-    top    = y0 + 2
+    top = y0 + 2
     bottom = rows - 5
     avail_rows = bottom - top
-    # Reserve 1 row at the top for bar/beat markers; use the rest for notes
-    total_rows = max(9, avail_rows)
     marker_rows = 1
+    total_rows = max(9, avail_rows)
     note_rows = max(1, total_rows - marker_rows)
     pitch_high = pitch_low + note_rows - 1
 
-    # Refresh out-of-range indicators from active notes and recent hits
-    above_pitches = set()
-    below_pitches = set()
-    try:
-        for (ch, pitch), _vel in active.items():
-            if pitch > pitch_high:
-                _last_above = (pitch, ch, now)
-                above_pitches.add(pitch)
-            elif pitch < pitch_low:
-                _last_below = (pitch, ch, now)
-                below_pitches.add(pitch)
-        for (pitch, ch, _vel, ts) in list(_recent_hits):
-            if (now - ts) > OUT_RANGE_HOLD:
-                continue
-            if pitch > pitch_high:
-                _last_above = (pitch, ch, ts)
-                above_pitches.add(pitch)
-            elif pitch < pitch_low:
-                _last_below = (pitch, ch, ts)
-                below_pitches.add(pitch)
-    except Exception:
-        pass
+    _last_above, _last_below, above_pitches, below_pitches = _collect_out_of_range(
+        now, pitch_low, pitch_high, _last_above, _last_below
+    )
 
-    # Header
     header_left = f"--- {PAGE_NAME} ---"
     header_right = _fmt_out_of_range(_last_above, now, "high", extra=max(0, len(above_pitches) - 1))
-    draw_line(y0, _merge_left_right(header_left, header_right, cols))
-    _draw_right_reverse(y0, header_right, cols)
     if vis_input_mode:
-        draw_line(y0 + 1, f"[Channels: {vis_input_text or '?'}] Enter=apply Esc=cancel".ljust(cols))
+        status_line = f"[Channels: {vis_input_text or '?'}] Enter=apply Esc=cancel".ljust(cols)
     else:
-        draw_line(y0 + 1, _channel_legend()[:cols])
+        status_line = _channel_legend()[:cols]
 
     roll_cols = max(16, cols - LEFT_MARGIN - 2)
     _ensure_cols(roll_cols)
     _ensure_bg()
 
-    # -------- Time columns / note grid --------
     visible_cols = (
         [[] for _ in range(roll_cols - len(cols_buf))] + list(cols_buf)
         if len(cols_buf) < roll_cols else list(cols_buf)[-roll_cols:]
     )
 
-    # -------- Timeline row with bar/beat markers --------
-    # The rightmost column corresponds approximately to _last_tick; each column
-    # to the left is TICKS_PER_COL earlier. Use that to mark bars and beats.
-    try:
-        tick_right = _last_tick
-    except Exception:
-        tick_right = state.get("tick", 0)
+    if visible_cols:
+        overlay = [(p, ch, v) for (p, ch, v, ts) in list(_recent_hits) if (now - ts) <= 0.25]
+        if overlay:
+            visible_cols[-1] = list(visible_cols[-1]) + overlay
+
+    tick_right = _last_tick
     bar_ticks = 24 * 4
     beat_ticks = 24
-
     timeline_chars = []
     for i in range(roll_cols):
-        # i grows left→right; compute tick at this column
         col_tick = tick_right - (roll_cols - 1 - i) * TICKS_PER_COL
-        ch = " "
         if col_tick % bar_ticks == 0:
-            ch = "|"
+            timeline_chars.append("|")
         elif col_tick % beat_ticks == 0:
-            ch = ":"
+            timeline_chars.append(":")
         else:
-            ch = " ."[(i % 4 == 0)] if False else " "
-        timeline_chars.append(ch)
-    # left label area for the timeline row
-    timeline_label = f"{'Bars':>7} │"
-    draw_line(top, (timeline_label + "".join(timeline_chars).ljust(roll_cols)[:roll_cols])[:cols])
+            timeline_chars.append(" ")
+    timeline_line = (f"{'Bars':>7} │" + "".join(timeline_chars).ljust(roll_cols)[:roll_cols])[:cols]
 
-    note_top = top + 1
-
-    # Overlay very recent hits into the latest column so short blips are visible
-    if visible_cols:
-        now_ts = time.time()
-        # consider hits within ~250 ms since they may fall between column steps
-        overlay = [(p, ch, v) for (p, ch, v, ts) in list(_recent_hits) if (now_ts - ts) <= 0.25]
-        if overlay:
-            merged_last = list(visible_cols[-1]) + overlay
-            visible_cols[-1] = merged_last
-
-    def vel_char(v):
-        if v >= 100: return "█"
-        if v >= 60:  return "▓"
-        if v >  0:   return "░"
-        return " "
-
-    # -------- Draw rows with note labels (beneath timeline) --------
-    for row, pitch in enumerate(range(pitch_high, pitch_low - 1, -1)):
-        y = note_top + row
-        label = f"{_notename(pitch):>7} │"  # every semitone labeled
+    pitch_lines = []
+    for pitch in range(pitch_high, pitch_low - 1, -1):
+        label = f"{_notename(pitch):>7} │"
         chars = []
         for col_events in visible_cols:
             hit_vel = 0
             for (p, ch, v) in col_events:
                 if p == pitch and ch in visible_channels:
                     hit_vel = max(hit_vel, v)
-            chars.append(vel_char(hit_vel))
-        full = label + "".join(chars).ljust(roll_cols)[:roll_cols]
-        draw_line(y, full[:cols])
+            chars.append(_vel_char(hit_vel))
+        row = label + "".join(chars).ljust(roll_cols)[:roll_cols] + "│"
+        pitch_lines.append(row[:cols])
 
-    # -------- Right boundary --------
-    for r in range(note_rows + marker_rows):
-        y = top + r
-        sys.stdout.write(term.move_yx(y, LEFT_MARGIN + roll_cols) + "│")
-
-    # -------- Footer --------
-    footer_y = rows - 5
-    sys.stdout.write(term.move_yx(footer_y, 0))
-    sys.stdout.write(term.clear_eol)
-    status = (
+    footer_left = (
         f"Range: {_notename(pitch_low)}–{_notename(pitch_high)}  "
         f"T/col:{TICKS_PER_COL}  Active:{len(active)}  Cols:{len(cols_buf)}"
     )
     footer_right = _fmt_out_of_range(_last_below, now, "low", extra=max(0, len(below_pitches) - 1))
-    draw_line(footer_y, _merge_left_right(status, footer_right, cols))
-    _draw_right_reverse(footer_y, footer_right, cols)
+
+    return FrameSnapshot(
+        header_left=header_left,
+        header_right=header_right,
+        status_line=status_line,
+        timeline_line=timeline_line,
+        pitch_lines=pitch_lines,
+        footer_left=footer_left,
+        footer_right=footer_right,
+        cols=cols,
+        rows=rows,
+        y0=y0,
+    )
+
+
+def _line_with_right_reverse(left, right, cols):
+    base = _merge_left_right(left, right, cols)
+    if not right:
+        return Line.plain(base)
+    right = right[-cols:]
+    x = max(0, cols - len(right))
+    return Line(segments=[
+        Segment(text=base[:x]),
+        Segment(text=right, style=Style(reverse=True)),
+        Segment(text=base[x + len(right):]),
+    ])
+
+
+def build_widget(state):
+    snap = build_frame_snapshot(state)
+    lines = [
+        _line_with_right_reverse(snap.header_left, snap.header_right, snap.cols),
+        Line.plain(snap.status_line),
+        Line.plain(snap.timeline_line),
+    ] + [Line.plain(row) for row in snap.pitch_lines] + [
+        _line_with_right_reverse(snap.footer_left, snap.footer_right, snap.cols)
+    ]
+    return Column(children=[TextBlock(lines=lines)])
+
+# -------- Drawing --------
+def draw(state):
+    snap = build_frame_snapshot(state)
+    draw_line(snap.y0, _merge_left_right(snap.header_left, snap.header_right, snap.cols))
+    _draw_right_reverse(snap.y0, snap.header_right, snap.cols)
+    draw_line(snap.y0 + 1, snap.status_line)
+    draw_line(snap.y0 + 2, snap.timeline_line)
+
+    for i, row in enumerate(snap.pitch_lines):
+        draw_line(snap.y0 + 3 + i, row)
+
+    footer_y = snap.rows - 5
+    sys.stdout.write(term.move_yx(footer_y, 0))
+    sys.stdout.write(term.clear_eol)
+    draw_line(footer_y, _merge_left_right(snap.footer_left, snap.footer_right, snap.cols))
+    _draw_right_reverse(footer_y, snap.footer_right, snap.cols)
