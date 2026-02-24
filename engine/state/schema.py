@@ -12,6 +12,10 @@ class TransportSnapshot:
     bar: int
     running: bool
     bpm: float
+    clock_interval_ms: float = 0.0
+    jitter_rms: float = 0.0
+    meter_estimate: str = "4/4"
+    confidence: float = 0.0
 
 
 @dataclass
@@ -39,6 +43,10 @@ class StateSnapshot:
                 "bar": self.transport.bar,
                 "running": self.transport.running,
                 "bpm": self.transport.bpm,
+                "clock_interval_ms": self.transport.clock_interval_ms,
+                "jitter_rms": self.transport.jitter_rms,
+                "meter_estimate": self.transport.meter_estimate,
+                "confidence": self.transport.confidence,
             },
             "channels": [
                 {"channel": ch.channel, "active_notes": list(ch.active_notes)} for ch in self.channels
@@ -56,6 +64,10 @@ def build_snapshot(
     bar: int,
     running: bool,
     bpm: float,
+    clock_interval_ms: float = 0.0,
+    jitter_rms: float = 0.0,
+    meter_estimate: str = "4/4",
+    confidence: float = 0.0,
     active_notes: dict[int, set[int]] | None = None,
     module_outputs: dict[str, Any] | None = None,
     status_text: str = "",
@@ -69,7 +81,16 @@ def build_snapshot(
     return StateSnapshot(
         schema_version=SCHEMA_VERSION,
         timestamp=timestamp,
-        transport=TransportSnapshot(tick=tick, bar=bar, running=running, bpm=bpm),
+        transport=TransportSnapshot(
+            tick=tick,
+            bar=bar,
+            running=running,
+            bpm=bpm,
+            clock_interval_ms=clock_interval_ms,
+            jitter_rms=jitter_rms,
+            meter_estimate=meter_estimate,
+            confidence=confidence,
+        ),
         channels=channels,
         active_notes=normalized,
         module_outputs=module_outputs or {},
