@@ -256,6 +256,19 @@ _auto_scroll_last_time = 0.0
 _auto_last_msg = ""
 _auto_last_window = 0
 
+
+def switch_page(page):
+    """Set current page if it exists. Returns (ok, resolved_page)."""
+    global current_page
+    try:
+        page_id = int(page)
+    except (TypeError, ValueError):
+        return False, None
+    if page_id not in PAGES:
+        return False, page_id
+    current_page = page_id
+    return True, page_id
+
 SNAPSHOT_PUBLISHER = SnapshotPublisher(
     socket_path=IPC_SOCKET_PATH,
     enabled=IPC_ENABLED,
@@ -646,7 +659,7 @@ def _connect_pair(src_id: str, dst_id: str) -> bool:
 
 #keyboard
 def keyboard_listener():
-    global current_page, exit_flag
+    global exit_flag
     # find plugins of interest once at startup
     _ss = next((m for m in PLUGINS if hasattr(m, "is_active") and hasattr(m, "deactivate")), None)
     _pc = next((m for m in PLUGINS if hasattr(m, "notify_keypress")), None)
@@ -680,25 +693,25 @@ def keyboard_listener():
                 exit_flag = True
                 break
             elif key in "0123456789":
-                current_page = int(key)
+                switch_page(key)
                 continue
             elif key == "!":
-                current_page = 11
+                switch_page(11)
                 continue
             elif key == "@":
-                current_page = 12
+                switch_page(12)
                 continue
             elif key == "#":
-                current_page = 13
+                switch_page(13)
                 continue
             elif key == "$":
-                current_page = 14
+                switch_page(14)
                 continue
             elif key == "%":
-                current_page = 15
+                switch_page(15)
                 continue
             elif key.lower() == "t":
-                current_page = 10
+                switch_page(10)
                 continue
             elif key.lower() == "q":
                 exit_flag = True
