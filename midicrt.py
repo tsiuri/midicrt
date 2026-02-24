@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # midicrt.py — CRT-style MIDI monitor / visualizer for Cirklon
 
-import os, sys, time, glob, importlib.util, subprocess, threading, re
+import os, sys, time, glob, importlib.util, subprocess, threading, re, argparse
 from configutil import load_section, save_section
 from inspect import signature
 from blessed import Terminal
@@ -17,6 +17,8 @@ sys.modules.setdefault("midicrt", sys.modules[__name__])
 
 term = Terminal()
 text_renderer = TextRenderer(term)
+ACTIVE_PROFILE = "run_tui"
+ACTIVE_RENDER_BACKEND = "text"
 AUTOCONNECT_LOG = []
 PANIC_OUT_PORT = None
 PANIC_OUT_VIRTUAL = False
@@ -28,6 +30,54 @@ PANIC_DST_HINTS = [
         "USB MIDI Interface,USB MIDI,MIDI 1",
     ).split(",") if h.strip()
 ]
+
+
+def _append_startup_log(message: str):
+    log_path = os.path.join(os.path.dirname(__file__), "log.txt")
+    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(f"[{timestamp}] [startup] {message}\n")
+    except Exception:
+        pass
+
+
+def configure_startup_profile(profile: str):
+    """Select runtime profile + renderer backend.
+
+    run_tui: default terminal-safe profile.
+    run_pixel: optional profile, gated behind feature flags + optional deps.
+    """
+    global ACTIVE_PROFILE, ACTIVE_RENDER_BACKEND, text_renderer
+
+    selected = profile or "run_tui"
+    ACTIVE_PROFILE = selected
+
+    if selected == "run_pixel":
+        feature_enabled = os.environ.get("MIDICRT_ENABLE_PIXEL", "0").strip().lower() in {"1", "true", "yes", "on"}
+        if feature_enabled:
+            renderer_name = os.environ.get("MIDICRT_PIXEL_RENDERER", "sdl2")
+            try:
+                # Optional import path; keep GUI deps out of TUI startup.
+                from ui.renderers.pixel import PixelRenderer
+
+                text_renderer = PixelRenderer(renderer_name=renderer_name)
+                ACTIVE_RENDER_BACKEND = f"pixel:{renderer_name}"
+            except Exception as exc:
+                ACTIVE_RENDER_BACKEND = "text(fallback)"
+                _append_startup_log(
+                    f"profile=run_pixel requested but unavailable ({exc}); falling back to text"
+                )
+        else:
+            ACTIVE_RENDER_BACKEND = "text(fallback)"
+            _append_startup_log(
+                "profile=run_pixel requested without MIDICRT_ENABLE_PIXEL=1; falling back to text"
+            )
+    else:
+        ACTIVE_PROFILE = "run_tui"
+        ACTIVE_RENDER_BACKEND = "text"
+
+    _append_startup_log(f"profile={ACTIVE_PROFILE} backend={ACTIVE_RENDER_BACKEND}")
 
 _panic_cfg = load_section("panic")
 if _panic_cfg is None:
@@ -747,7 +797,9 @@ def scroll_end():
 
 
 
-def main():
+def main(profile="run_tui"):
+    configure_startup_profile(profile)
+    print(f"[Info] Startup profile: {ACTIVE_PROFILE} ({ACTIVE_RENDER_BACKEND})")
     print("[Info] Starting MIDI backend...")
     mido.set_backend("mido.backends.rtmidi")
     global PANIC_OUT_PORT
@@ -809,4 +861,12 @@ def main():
         sys.stdout.write(term.normal)
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="midicrt startup profiles")
+    parser.add_argument(
+        "--profile",
+        choices=["run_tui", "run_pixel"],
+        default="run_tui",
+        help="Startup profile (default: run_tui)",
+    )
+    args = parser.parse_args()
+    main(profile=args.profile)

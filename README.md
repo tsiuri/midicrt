@@ -41,18 +41,45 @@ being quit — after quitting you land at a zsh prompt and can relaunch.
 - Relaunch after quit:
   - /home/billie/run_midicrt.sh  (from the shell prompt inside the session)
 
+## Startup profiles
+
+midicrt now supports two startup profiles:
+
+- `run_tui` (default): terminal-safe Blessed/ANSI path used for tty1/autostart.
+- `run_pixel` (optional): pixel path behind runtime feature flags and optional deps.
+
+### Operational policy
+
+- **tty1 autostart must always target `run_tui`**.
+- Keep `run_tui` free of GUI/pixel imports to avoid headless boot failures.
+- Use `run_pixel` only for explicitly provisioned environments.
+
+### Commands
+
+- TUI/default:
+  - `./run_tui`
+  - `python midicrt.py --profile run_tui`
+- Pixel (optional):
+  - `pip install '.[pixel]'`
+  - `MIDICRT_ENABLE_PIXEL=1 MIDICRT_PIXEL_RENDERER=sdl2 ./run_pixel`
+  - `python midicrt.py --profile run_pixel`
+
+On startup, midicrt appends a self-check line to `log.txt` recording the active
+profile and backend.
+
 ## Layout
 
 - midicrt.py: main program
 - ui/: widget model + renderer backends (TTY-first architecture)
 - pages/: UI pages loaded at startup (IDs 0-9; see pages/help.py)
 - plugins/: plugin handlers loaded at startup
-- config/audiospectrum.json: config for the audio spectrum page
+- config/settings.json: shared config for all tunables
 - config/chords.csv: chord interval database (imported)
 - config/scales.csv: scale interval database (imported)
-- instruments.txt: channel labels (16 entries)
-- vars.txt: SDL framebuffer environment settings
-- log.txt and midicrt_autoconnect.log: startup and autoconnect logs
+- run_tui: default startup profile wrapper (tty-safe)
+- run_pixel: optional pixel startup wrapper (feature-flagged)
+- vars.txt: SDL/framebuffer environment settings for optional pixel runs
+- log.txt and midicrt_autoconnect.log: startup/autoconnect logs
 
 ## Rendering architecture
 
