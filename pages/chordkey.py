@@ -7,9 +7,6 @@ from midicrt import draw_line
 from harmony import NOTE_NAMES, CHORDS
 import plugins.zharmony as zharmony
 
-MAJOR_SCALE = [0, 2, 4, 5, 7, 9, 11]
-MINOR_SCALE = [0, 2, 3, 5, 7, 8, 10]
-
 
 def _note_name(pc):
     return NOTE_NAMES[pc % 12]
@@ -54,26 +51,31 @@ def _chord_candidates(pcs):
     return results[:3]
 
 
-def _key_candidates(counts, total):
-    if total <= 0:
-        return []
-    results = []
-    for root in range(12):
-        for mode, intervals in (("maj", MAJOR_SCALE), ("min", MINOR_SCALE)):
-            scale = {(root + i) % 12 for i in intervals}
-            inside = sum(counts[pc] for pc in scale)
-            outside = total - inside
-            ratio = inside / total
-            score = ratio - (outside / total) * 0.5
-            results.append({
-                "label": f"{_note_name(root)} {mode}",
-                "ratio": ratio,
-                "inside": inside,
-                "outside": outside,
-                "score": score,
-            })
-    results.sort(key=lambda r: r["score"], reverse=True)
-    return results[:3]
+def _stable_key_lines(stable):
+    label = stable.get("label")
+    conf = float(stable.get("confidence", 0.0))
+    threshold = float(stable.get("threshold", 0.0))
+    alts = stable.get("alternatives") or []
+    ambiguous = bool(stable.get("ambiguous"))
+
+    if not label:
+        top = stable.get("top")
+        if top:
+            line1 = f"Key: ?  top:{top['label']} {int(round(top['ratio'] * 100)):d}%"
+        else:
+            line1 = "Key: ?"
+    else:
+        tag = "~" if ambiguous else "="
+        line1 = f"Key{tag} {label}  {int(round(conf * 100)):d}% (thr {int(round(threshold * 100)):d}%)"
+
+    if alts:
+        alt_txt = " | ".join(f"{a['label']} {int(round(a['ratio'] * 100)):d}%" for a in alts[:2])
+        line2 = f"alts: {alt_txt}"
+    elif ambiguous:
+        line2 = "alts: near-threshold / ambiguous"
+    else:
+        line2 = "alts: -"
+    return line1, line2
 
 
 def draw(state):
@@ -81,7 +83,7 @@ def draw(state):
     y0 = state.get("y_offset", 3)
 
     pcs = zharmony.get_recent_pcs()
-    counts, total = zharmony.get_key_histogram()
+    stable = zharmony.get_stable_key()
 
     draw_line(y0, f"--- {PAGE_NAME} ---".ljust(cols))
     draw_line(y0 + 1, f"Recent PCs: {_format_pcs(pcs)}"[:cols])
@@ -102,16 +104,13 @@ def draw(state):
             draw_line(y0 + 3 + j, "".ljust(cols))
 
     yk = y0 + 7
-    draw_line(yk, f"Key estimate (last {total} notes):".ljust(cols))
-    keys = _key_candidates(counts, total)
-    if not keys:
-        draw_line(yk + 1, "(no key yet)".ljust(cols))
-        draw_line(yk + 2, "".ljust(cols))
-        draw_line(yk + 3, "".ljust(cols))
+    draw_line(yk, "Stabilized key:".ljust(cols))
+    k1, k2 = _stable_key_lines(stable)
+    draw_line(yk + 1, k1[:cols])
+    draw_line(yk + 2, k2[:cols])
+
+    func = zharmony.get_last_function_label()
+    if func:
+        draw_line(yk + 3, f"Function: {func}"[:cols])
     else:
-        for i, cand in enumerate(keys):
-            pct = int(round(cand["ratio"] * 100))
-            line = f"{i+1}) {cand['label']}  {pct:3d}%  in:{cand['inside']}/{total}"
-            draw_line(yk + 1 + i, line[:cols])
-        for j in range(len(keys), 3):
-            draw_line(yk + 1 + j, "".ljust(cols))
+        draw_line(yk + 3, "Function: ?"[:cols])
