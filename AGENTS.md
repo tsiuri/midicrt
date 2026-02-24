@@ -26,18 +26,38 @@ This file tracks launch, config, and development notes for midicrt.
 ## Autostart
 
 - /etc/systemd/system/getty@tty1.service.d/override.conf (autologin billie on tty1)
-- /home/billie/.zprofile (runs run_midicrt.sh for tty1 local sessions)
+- /home/billie/.zprofile — on tty1 login: starts x11vnc (fb0 VNC, port 5900) then
+  creates/attaches the midicrt tmux session
 - /etc/systemd/system/midicrt.service exists but is not enabled
 
 ## Co-observing via tmux
 
-- Session name: midicrt
-- Create (if needed): tmux new-session -d -s midicrt -n midicrt 'zsh -c "/home/billie/run_midicrt.sh; exec zsh"'
-- Attach: tmux attach -t midicrt
-- Detach: Ctrl-b d
+- Session name: `midicrt`, pinned to 100×59 (tty1 native size)
+- Create (if needed): `tmux new-session -d -s midicrt -n midicrt -x 100 -y 59 'zsh -c "/home/billie/run_midicrt.sh; exec zsh"'`
+- Attach: `tmux attach -t midicrt`
+- Detach: `Ctrl-b d`
+- tmux config: `dotfiles/tmux.conf` → copy to `~/.tmux.conf` on fresh deploy
+  - Key setting: `window-size largest` so tty1 always wins over smaller SSH clients
 
 The session uses 'exec zsh' so it persists as a shell after midicrt
 quits. Relaunch from inside the session with /home/billie/run_midicrt.sh
+
+## Remote viewing (VNC)
+
+- x11vnc serves /dev/fb0 over VNC on port 5900 (no password)
+- Started automatically by .zprofile on tty1 login
+- Connect: `<pi-ip>:5900` with any VNC client (view-only; use SSH/tmux for input)
+- billie is in the `video` group — no sudo needed
+
+## Fresh deployment checklist
+
+1. Clone repo: `git clone https://github.com/tsiuri/midicrt ~/codex/midicrt`
+2. Create venv: `python3 -m venv ~/codex/midicrt-venv`
+3. Install deps: `source ~/codex/midicrt-venv/bin/activate && pip install -e ~/codex/midicrt`
+4. Copy dotfiles: `cp ~/codex/midicrt/dotfiles/tmux.conf ~/.tmux.conf`
+5. Copy launcher: ensure `~/run_midicrt.sh` is in place (see Entrypoint above)
+6. Configure autologin: set up getty@tty1 override for billie
+7. Add .zprofile autostart block (see repo .zprofile.example if present)
 
 ## Config and logs
 
