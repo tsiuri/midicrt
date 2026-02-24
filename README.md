@@ -99,6 +99,12 @@ Parity is being proved in stages:
 | 7  | Program Changes | Program-change event log     |
 | 8  | Piano Roll      | Multi-channel piano roll     |
 | 9  | Audio Spectrum  | USB soundcard spectrum       |
+| 10 | Tuner           | Audio pitch tuner            |
+| 11 | Chord+Key       | Chord candidates + key       |
+| 12 | Stuck Heatmap   | Stuck-note pitch heatmap     |
+| 13 | Voice Monitor   | Per-channel polyphony        |
+| 14 | Config          | Interactive settings editor  |
+| 15 | TimeSig Exp     | Experimental meter estimate  |
 
 ## Plugins
 
@@ -150,7 +156,7 @@ F0  7D  6D  63  <cmd>  [args...]  F7
 
 | Cmd  | Args     | Effect                                  |
 |------|----------|-----------------------------------------|
-| `01` | `<page>` | Switch to page 0–9                      |
+| `01` | `<page>` | Switch to any loaded page ID (currently 0–15) |
 | `02` | `00`     | Wake / deactivate screensaver           |
 | `02` | `01`     | Force screensaver on immediately        |
 | `03` | `00`     | Disable page cycler                     |
@@ -189,7 +195,9 @@ Configuration variables at the top of the file:
 
 Global keys:
 
-- 0-9: switch pages (0 is help)
+- 0-9: switch pages 0–9 (0 is help)
+- t: switch to page 10 (Tuner)
+- ! / @ / # / $ / %: switch to pages 11 / 12 / 13 / 14 / 15
 - q or Esc: quit
 
 Page-specific keys:

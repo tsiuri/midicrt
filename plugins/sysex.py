@@ -13,7 +13,7 @@
 #   [args...] = zero or more argument bytes (0–127)
 #
 # Commands:
-#   01 <page>    — switch to page 0–9
+#   01 <page>    — switch to any loaded page ID (current map: 0–15)
 #   02 <0|1>     — screensaver: 0 = wake/deactivate, 1 = activate now
 #   03 <0|1>     — page cycler: 0 = disable, 1 = enable
 
@@ -99,8 +99,11 @@ def _dispatch(cmd, args):
             _log("sx:01 missing page")
             return
         page = args[0]
-        midicrt.current_page = page
-        _log(f"sx:01 page→{page}")
+        ok, resolved = midicrt.switch_page(page)
+        if not ok:
+            _log(f"sx:01 invalid page {resolved}")
+            return
+        _log(f"sx:01 page→{resolved}")
 
     # --- 02: screensaver control ---
     elif cmd == 0x02:
