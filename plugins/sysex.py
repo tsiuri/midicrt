@@ -16,6 +16,7 @@
 #   01 <page>    — switch to any loaded page ID (current map: 0–15)
 #   02 <0|1>     — screensaver: 0 = wake/deactivate, 1 = activate now
 #   03 <0|1>     — page cycler: 0 = disable, 1 = enable
+#   04 [bars]    — dump recent bars to MIDI capture file
 
 import sys
 import time
@@ -132,6 +133,23 @@ def _dispatch(cmd, args):
             return
         pc.ENABLED = bool(args[0])
         _log(f"sx:03 cycle {'on' if args[0] else 'off'}")
+
+    # --- 04: capture recent bars ---
+    elif cmd == 0x04:
+        bars = None
+        if args:
+            try:
+                bars = max(1, int(args[0]))
+            except Exception:
+                bars = None
+        try:
+            ok, message, _ = midicrt.trigger_capture_recent(trigger="sysex:04", bars=bars)
+            if ok:
+                _log(f"sx:04 ok {bars or ''}".strip())
+            else:
+                _log("sx:04 fail")
+        except Exception as exc:
+            _log(f"sx:04 err {exc}")
 
     else:
         _log(f"sx:?? cmd=0x{cmd:02X}")

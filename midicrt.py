@@ -139,6 +139,25 @@ try:
 except Exception:
     pass
 
+_capture_cfg = load_section("capture")
+if _capture_cfg is None:
+    _capture_cfg = {}
+CAPTURE_BARS_TO_KEEP = int(_capture_cfg.get("bars_to_keep", 16))
+CAPTURE_DUMP_BARS = int(_capture_cfg.get("dump_bars", 4))
+CAPTURE_OUTPUT_DIR = str(_capture_cfg.get("output_dir", "captures"))
+CAPTURE_FILE_PREFIX = str(_capture_cfg.get("file_prefix", "capture"))
+CAPTURE_DEFAULT_BPM = float(_capture_cfg.get("default_bpm", 120.0))
+try:
+    save_section("capture", {
+        "bars_to_keep": max(1, int(CAPTURE_BARS_TO_KEEP)),
+        "dump_bars": max(1, int(CAPTURE_DUMP_BARS)),
+        "output_dir": str(CAPTURE_OUTPUT_DIR),
+        "file_prefix": str(CAPTURE_FILE_PREFIX),
+        "default_bpm": max(20.0, float(CAPTURE_DEFAULT_BPM)),
+    })
+except Exception:
+    pass
+
 # ---------------------------------------------------------------------
 # Helpers (exposed early so pages can import them safely)
 # ---------------------------------------------------------------------
@@ -333,6 +352,13 @@ ENGINE = MidiEngine(
     on_event=handle_engine_event,
     publisher=SNAPSHOT_PUBLISHER,
 )
+ENGINE.configure_capture({
+    "bars_to_keep": CAPTURE_BARS_TO_KEEP,
+    "dump_bars": CAPTURE_DUMP_BARS,
+    "output_dir": CAPTURE_OUTPUT_DIR,
+    "file_prefix": CAPTURE_FILE_PREFIX,
+    "default_bpm": CAPTURE_DEFAULT_BPM,
+})
 
 def ui_loop():
     global last_page, current_page, exit_flag, last_header, SCREEN_COLS, SCREEN_ROWS
@@ -707,6 +733,37 @@ def _connect_pair(src_id: str, dst_id: str) -> bool:
             time.sleep(0.5)
     return False
 
+
+def _append_runtime_log(message: str):
+    log_path = os.path.join(os.path.dirname(__file__), "log.txt")
+    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(f"[{timestamp}] {message}\n")
+    except Exception:
+        pass
+
+
+def trigger_capture_recent(trigger: str = "key", bars: int | None = None):
+    if not ENGINE:
+        return False, "capture failed: engine unavailable", None
+    try:
+        ok, message, out_path = ENGINE.capture_recent_to_file(bars=bars, trigger=trigger)
+    except Exception as exc:
+        ok, message, out_path = False, f"capture failed: {exc}", None
+    status = f"[Capture] {message}"
+    _log_autoconnect(status)
+    _append_runtime_log(status)
+    sysex_tag = "sx:04" if trigger.startswith("sysex") else "cap"
+    global sysex_status, sysex_status_time
+    sysex_status = f"{sysex_tag} {'ok' if ok else 'fail'}"
+    sysex_status_time = time.time()
+    try:
+        ENGINE.set_status_text(message)
+    except Exception:
+        pass
+    return ok, message, out_path
+
 #keyboard
 def keyboard_listener():
     global exit_flag
@@ -762,6 +819,9 @@ def keyboard_listener():
                 continue
             elif key.lower() == "t":
                 switch_page(10)
+                continue
+            elif key == "C":
+                trigger_capture_recent(trigger="key")
                 continue
             elif key.lower() == "q":
                 exit_flag = True
