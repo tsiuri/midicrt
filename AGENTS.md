@@ -227,6 +227,13 @@ Changed `CYCLE_PAGES = [1, 6, 8]` → `[1, 6, 8, 9]` to include Page 9
 Removed `"LOOPTEST"` debug string that had been left in the loop progress display.
 Replaced with spaces of the appropriate width.
 
+### Pixel parity milestone #1 (Piano Roll)
+
+- Added `ui.model.PianoRollWidget` to represent piano-roll cells by time column and pitch row.
+- `ui.renderers.pixel.PixelRenderer` now renders piano-roll grids in a dedicated mode with channel-aware shades/colors while preserving monochrome-safe defaults.
+- Page 8 now supports runtime piano-roll style toggle (`y`) between `text` and `dense`.
+- Config key: `settings.json` -> `pianoroll.pixel_style` (`"text"` or `"dense"`).
+
 ### pianoroll.py — background scroll thread
 
 **Problem:** Notes held while navigating away from the piano roll page appeared as

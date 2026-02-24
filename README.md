@@ -86,9 +86,10 @@ profile and backend.
 The UI is now structured as a widget tree + renderer pipeline for incremental
 page migration:
 
-- `ui/model.py`: character-cell widget primitives.
+- `ui/model.py`: character-cell widget primitives (including `PianoRollWidget`).
 - `ui/renderers/base.py`: renderer protocol.
 - `ui/renderers/text/`: ANSI/Blessed implementation (`TextRenderer`).
+- `ui/renderers/pixel.py`: optional pixel backend with dense piano-roll rendering.
 
 Pages can implement either:
 
@@ -108,9 +109,18 @@ Pages can implement either:
 
 Parity is being proved in stages:
 
-1. Transport (migrated)
-2. Notes (next)
-3. Event Log (next)
+1. Pixel parity milestone #1: Piano Roll widget + pixel presentation (implemented)
+2. Transport (migrated)
+3. Notes (next)
+4. Event Log (next)
+
+
+## Pixel parity milestones
+
+- **Milestone 1 (complete): Piano Roll parity in pixel backend**
+  - Added a dedicated `PianoRollWidget` model carrying per-cell occupancy/intensity.
+  - Pixel renderer now draws a dense piano-roll style with channel-aware shades/colors, while keeping text-like and monochrome-safe defaults.
+  - Runtime style toggle available from config (`pianoroll.pixel_style`) and keybinding (`y`) on Page 8.
 
 ## Pages
 
@@ -246,6 +256,7 @@ Page-specific keys:
   - *: show all channels
   - PgUp/PgDn: shift pitch range by octave
   - Home: reset pitch range
+  - y: toggle piano-roll pixel style (`text`/`dense`)
 - Page 9 (Audio Spectrum):
   - [ ] or { }: bins down/up
   - g / h: gain +/-
