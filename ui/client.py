@@ -50,17 +50,31 @@ class SnapshotClient:
                 return None
             if not line:
                 return None
-            return json.loads(line)
+            return normalize_snapshot(json.loads(line))
         if self.engine_snapshot_fn:
-            return self.engine_snapshot_fn()
+            return normalize_snapshot(self.engine_snapshot_fn())
         return None
 
 
+def normalize_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Return a schema snapshot across legacy and v2 payload shapes."""
+    if not isinstance(snapshot, dict):
+        return {}
+    if "transport" in snapshot and "schema_version" in snapshot:
+        return snapshot
+    nested = snapshot.get("schema")
+    if isinstance(nested, dict):
+        return nested
+    return snapshot
+
+
 def render_snapshot(snapshot: dict[str, Any], cols: int = 80) -> list[str]:
+    snapshot = normalize_snapshot(snapshot)
     transport = snapshot.get("transport", {})
     status = snapshot.get("status_text", "")
     channels = snapshot.get("channels", [])
     mods = snapshot.get("module_outputs", {})
+    views = snapshot.get("views", {}) if isinstance(snapshot.get("views"), dict) else {}
 
     lines = [
         f"schema v{snapshot.get('schema_version', '?')}  t={snapshot.get('timestamp', 0):.3f}",
@@ -77,6 +91,7 @@ def render_snapshot(snapshot: dict[str, Any], cols: int = 80) -> list[str]:
             f"ch{ch.get('channel', '?')}:[{','.join(str(n) for n in ch.get('active_notes', []))}]" for ch in channels
         ),
         "modules " + ", ".join(sorted(mods.keys())),
+        "views " + ", ".join(sorted(views.keys())) if views else "views (none)",
     ]
 
     return [ln[:cols].ljust(cols) for ln in lines]

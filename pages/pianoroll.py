@@ -377,6 +377,35 @@ def _collect_out_of_range(now, lo, hi, current_above, current_below):
     return last_above, last_below, above_pitches, below_pitches
 
 
+def get_view_payload(max_active_notes=64, max_recent_hits=32):
+    """Compact normalized view payload for schema snapshots."""
+    now = time.time()
+
+    active_notes_payload = [
+        [ch, pitch, vel]
+        for (ch, pitch), vel in sorted(active.items(), key=lambda item: (item[0][1], item[0][0]))[:max_active_notes]
+    ]
+
+    recent_hits = []
+    for pitch, ch, vel, ts in list(_recent_hits)[-max_recent_hits:]:
+        age_ms = int(max(0.0, now - ts) * 1000.0)
+        recent_hits.append([pitch, ch, vel, age_ms])
+
+    overflow_flags = {
+        "above": _last_above is not None,
+        "below": _last_below is not None,
+    }
+
+    return {
+        "time_cols": int(time_cols),
+        "pitch_low": int(pitch_low),
+        "pitch_high": int(pitch_high),
+        "active_notes": active_notes_payload,
+        "recent_hits": recent_hits,
+        "overflow_flags": overflow_flags,
+    }
+
+
 def build_frame_snapshot(state):
     """Deterministic logical frame snapshot for page 8.
 
