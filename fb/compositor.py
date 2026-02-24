@@ -28,17 +28,15 @@ import mmap
 import os
 
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
+
+from fb.psf_font import PSFFont
 
 # --- Framebuffer constants ---
 FB_PATH  = "/dev/fb0"
 FB_W     = 800
 FB_H     = 475
 FB_SIZE  = FB_W * FB_H * 2   # RGB565: 2 bytes/pixel
-
-# --- Default font ---
-FONT_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"
-FONT_SIZE = 13   # ~7×13 px per cell → ~114 cols × 36 rows
 
 # --- CRT green palette ---
 GREEN_BRIGHT = (0, 255, 80)
@@ -50,33 +48,23 @@ BLACK        = (0, 0, 0)
 class Compositor:
     """Pixel-level compositor backed by /dev/fb0.
 
-    All coordinates are in pixels. Text is rendered with a TrueType font
-    via Pillow. Graphics (rects, lines, arbitrary pixel writes) use the
-    same PIL Image buffer. flush() converts to RGB565 and writes to fb0.
+    Text is rendered using the system PSF console font (VGA 8×8) via
+    PSFFont, producing pixel-exact output identical to fbcon.  Graphics
+    primitives (rects, lines) use the PIL Image buffer directly.
+    flush() converts the buffer to RGB565 and writes to /dev/fb0.
     """
 
-    def __init__(
-        self,
-        font_path: str = FONT_PATH,
-        font_size: int = FONT_SIZE,
-        bg: tuple = BLACK,
-    ) -> None:
+    def __init__(self, bg: tuple = BLACK) -> None:
+        # Load the console bitmap font (VGA 8×8)
+        self._psf    = PSFFont()
+        self.char_w  = self._psf.width
+        self.char_h  = self._psf.height
+        self.cols    = FB_W // self.char_w
+        self.rows    = FB_H // self.char_h
+
         # Primary render buffer
         self._img  = Image.new("RGB", (FB_W, FB_H), bg)
         self._draw = ImageDraw.Draw(self._img)
-
-        # Font
-        try:
-            self._font = ImageFont.truetype(font_path, font_size)
-        except Exception:
-            self._font = ImageFont.load_default()
-
-        # Measure character cell (monospace — use 'M')
-        bb = self._draw.textbbox((0, 0), "M", font=self._font)
-        self.char_w = max(1, bb[2] - bb[0])
-        self.char_h = max(1, bb[3] - bb[1])
-        self.cols   = FB_W // self.char_w
-        self.rows   = FB_H // self.char_h
 
         # Open framebuffer
         self._fb_file = open(FB_PATH, "r+b", buffering=0)
@@ -109,11 +97,8 @@ class Compositor:
         fg: tuple = GREEN_BRIGHT,
         bg: tuple | None = None,
     ) -> None:
-        """Draw text at pixel coordinates, with optional background."""
-        if bg is not None:
-            bb = self._draw.textbbox((x, y), s, font=self._font)
-            self._draw.rectangle(bb, fill=bg)
-        self._draw.text((x, y), s, font=self._font, fill=fg)
+        """Draw text at pixel coordinates using the PSF console font."""
+        self._psf.draw_text(self._img, x, y, s, fg=fg, bg=bg)
 
     def text_cell(
         self,
@@ -153,10 +138,14 @@ class Compositor:
     # ------------------------------------------------------------------
 
     def close(self) -> None:
-        """Release fb0."""
+        """Blank fb0 and release it."""
         if self._closed:
             return
         self._closed = True
+        try:
+            self._fb_mm[:] = b"\x00" * FB_SIZE
+        except Exception:
+            pass
         try:
             self._fb_mm.close()
             self._fb_file.close()

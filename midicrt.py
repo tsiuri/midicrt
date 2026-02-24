@@ -19,6 +19,7 @@ term = Terminal()
 text_renderer = TextRenderer(term)
 ACTIVE_PROFILE = "run_tui"
 ACTIVE_RENDER_BACKEND = "text"
+_compositor = None   # set to CompositorRenderer when profile=run_compositor
 AUTOCONNECT_LOG = []
 PANIC_OUT_PORT = None
 PANIC_OUT_VIRTUAL = False
@@ -45,15 +46,30 @@ def _append_startup_log(message: str):
 def configure_startup_profile(profile: str):
     """Select runtime profile + renderer backend.
 
-    run_tui: default terminal-safe profile.
-    run_pixel: optional profile, gated behind feature flags + optional deps.
+    run_tui:        default terminal-safe profile.
+    run_pixel:      optional SDL/pygame profile (gated behind env flag).
+    run_compositor: direct /dev/fb0 pixel rendering via PIL compositor.
     """
-    global ACTIVE_PROFILE, ACTIVE_RENDER_BACKEND, text_renderer
+    global ACTIVE_PROFILE, ACTIVE_RENDER_BACKEND, text_renderer, _compositor
 
     selected = profile or "run_tui"
     ACTIVE_PROFILE = selected
 
-    if selected == "run_pixel":
+    if selected == "run_compositor":
+        try:
+            from fb.compositor_renderer import CompositorRenderer
+            cr = CompositorRenderer()
+            text_renderer = cr
+            _compositor = cr
+            ACTIVE_RENDER_BACKEND = "compositor"
+        except Exception as exc:
+            ACTIVE_RENDER_BACKEND = "text(fallback)"
+            _compositor = None
+            _append_startup_log(
+                f"profile=run_compositor unavailable ({exc}); falling back to text"
+            )
+            ACTIVE_PROFILE = "run_tui"
+    elif selected == "run_pixel":
         feature_enabled = os.environ.get("MIDICRT_ENABLE_PIXEL", "0").strip().lower() in {"1", "true", "yes", "on"}
         if feature_enabled:
             renderer_name = os.environ.get("MIDICRT_PIXEL_RENDERER", "sdl2")
@@ -162,7 +178,10 @@ except Exception:
 # Helpers (exposed early so pages can import them safely)
 # ---------------------------------------------------------------------
 def draw_line(row, text):
-    sys.stdout.write(term.move_yx(row, 0) + text[:SCREEN_COLS].ljust(SCREEN_COLS))
+    if _compositor is not None:
+        _compositor.draw_text_line(row, text)
+    else:
+        sys.stdout.write(term.move_yx(row, 0) + text[:SCREEN_COLS].ljust(SCREEN_COLS))
 
 
 def plugin_state_dict():
@@ -364,26 +383,54 @@ def ui_loop():
     global last_page, current_page, exit_flag, last_header, SCREEN_COLS, SCREEN_ROWS
     global _header_scroll_offset, _header_scroll_last_time
     global _auto_scroll_offset, _auto_scroll_last_time, _auto_last_msg, _auto_last_window
+
+    if _compositor is not None:
+        # Compositor mode: use fixed fb0 dimensions, no terminal context.
+        # Redirect stdout to /dev/null so that legacy page draw() calls and
+        # blessed escape sequences don't reach fbcon, which would fight us
+        # for fb0 ownership.
+        SCREEN_COLS = _compositor.comp.cols
+        SCREEN_ROWS = _compositor.comp.rows
+        _orig_stdout = sys.stdout
+        sys.stdout = open(os.devnull, "w")
+        try:
+            _ui_loop_body()
+        finally:
+            sys.stdout.close()
+            sys.stdout = _orig_stdout
+        return
+
     with term.fullscreen(), term.hidden_cursor():
         sys.stdout.write(term.home + term.clear)
-        while not exit_flag:
+        _ui_loop_body()
+
+
+def _ui_loop_body():
+    global last_page, current_page, exit_flag, last_header, SCREEN_COLS, SCREEN_ROWS
+    global _header_scroll_offset, _header_scroll_last_time
+    global _auto_scroll_offset, _auto_scroll_last_time, _auto_last_msg, _auto_last_window
+    while not exit_flag:
             # refresh screen size each frame so pages/plugins can use all space
-            try:
+        try:
+            if _compositor is None:
                 w = getattr(term, 'width', SCREEN_COLS) or SCREEN_COLS
                 h = getattr(term, 'height', SCREEN_ROWS) or SCREEN_ROWS
-                # keep within sensible bounds
                 if w != SCREEN_COLS or h != SCREEN_ROWS:
                     SCREEN_COLS = w
                     SCREEN_ROWS = h
-                    # force header redraw on resize
                     last_header = ""
-            except Exception:
-                pass
-            # clear on page switch
-            if current_page != last_page:
-                sys.stdout.write(term.home + term.clear)
-                last_page = current_page
-                last_header = ""  # force header redraw after clear
+        except Exception:
+            pass
+
+        if _compositor is not None:
+            _compositor.frame_clear()
+        elif current_page != last_page:
+            sys.stdout.write(term.home + term.clear)
+
+        # clear on page switch
+        if current_page != last_page:
+            last_page = current_page
+            last_header = ""  # force header redraw after clear
 
             snapshot = ENGINE.get_snapshot() if ENGINE else {
                 "tick_counter": tick_counter,
@@ -457,7 +504,10 @@ def ui_loop():
             _ss = next((m for m in PLUGINS if hasattr(m, "is_active") and hasattr(m, "deactivate")), None)
             if _ss and _ss.is_active():
                 _ss.draw(state)
-                sys.stdout.flush()
+                if _compositor is not None:
+                    _compositor.frame_flush()
+                else:
+                    sys.stdout.flush()
                 time.sleep(1.0 / FPS)
                 continue
 
@@ -478,10 +528,26 @@ def ui_loop():
                 except Exception as e:
                     draw_line(3, f"[Error {current_page}] {e}")
             elif page and hasattr(page, "draw"):
-                try:
-                    page.draw(state)
-                except Exception as e:
-                    draw_line(3, f"[Error {current_page}] {e}")
+                if _compositor is not None:
+                    # Capture ANSI output and render via compositor
+                    from fb.terminal_capture import TerminalCapture
+                    cap = TerminalCapture(SCREEN_COLS, SCREEN_ROWS)
+                    _saved = sys.stdout
+                    sys.stdout = cap
+                    try:
+                        page.draw(state)
+                    except Exception as e:
+                        sys.stdout = _saved
+                        draw_line(3, f"[Error {current_page}] {e}")
+                    else:
+                        sys.stdout = _saved
+                        for row_idx, row_text in cap.rows_with_content(start_row=3):
+                            _compositor.draw_text_line(row_idx, row_text)
+                else:
+                    try:
+                        page.draw(state)
+                    except Exception as e:
+                        draw_line(3, f"[Error {current_page}] {e}")
             else:
                 draw_line(3, f"No page loaded for {current_page}")
 
@@ -497,7 +563,10 @@ def ui_loop():
                         except Exception:
                             pass
 
-            sys.stdout.flush()
+            if _compositor is not None:
+                _compositor.frame_flush()
+            else:
+                sys.stdout.flush()
             time.sleep(1.0 / FPS)
 
 # ---------------------------------------------------------------------
@@ -937,7 +1006,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="midicrt startup profiles")
     parser.add_argument(
         "--profile",
-        choices=["run_tui", "run_pixel"],
+        choices=["run_tui", "run_pixel", "run_compositor"],
         default="run_tui",
         help="Startup profile (default: run_tui)",
     )
