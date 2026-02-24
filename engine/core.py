@@ -35,6 +35,7 @@ class MidiEngine:
         get_current_page: Callable[[], int] | None = None,
         on_event: Callable[[dict[str, Any], mido.Message], None] | None = None,
         publisher: Any | None = None,
+        view_publish_hz: float = 4.0,
     ) -> None:
         self.state = EngineState()
         self.plugins = plugins if plugins is not None else []
@@ -44,6 +45,9 @@ class MidiEngine:
         self.publisher = publisher
         self._lock = threading.Lock()
         self._tempo_map = TempoMap()
+        self._view_interval = 1.0 / max(0.1, float(view_publish_hz))
+        self._last_views_at = 0.0
+        self._cached_views: dict[str, Any] = {}
 
     def get_snapshot(self) -> dict[str, Any]:
         with self._lock:
@@ -58,6 +62,8 @@ class MidiEngine:
                     module_state[getattr(mod, "__name__", repr(mod))] = getter()
                 except Exception:
                     pass
+
+        views = self._collect_views()
         schema_snapshot = build_snapshot(
             timestamp=time.time(),
             tick=snap["tick_counter"],
@@ -70,6 +76,7 @@ class MidiEngine:
             confidence=snap.get("confidence", 0.0),
             active_notes=active_notes,
             module_outputs=module_state,
+            views=views,
             status_text=snap.get("status_text", ""),
         ).as_dict()
 
@@ -119,6 +126,28 @@ class MidiEngine:
                 continue
             payload[key] = value
         return payload
+
+    def _collect_views(self) -> dict[str, Any]:
+        now = time.monotonic()
+        if now - self._last_views_at < self._view_interval:
+            return dict(self._cached_views)
+
+        views: dict[str, Any] = {}
+        pianoroll = self.pages.get(8)
+        if pianoroll:
+            getter = getattr(pianoroll, "get_view_payload", None)
+            if callable(getter):
+                try:
+                    payload = getter()
+                    if payload:
+                        views["8"] = payload
+                        views["pianoroll"] = payload
+                except Exception:
+                    pass
+
+        self._cached_views = views
+        self._last_views_at = now
+        return dict(self._cached_views)
 
     def _update_transport(self, event: dict[str, Any]) -> None:
         with self._lock:

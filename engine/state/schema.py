@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 @dataclass
@@ -32,10 +32,11 @@ class StateSnapshot:
     channels: list[ChannelSnapshot] = field(default_factory=list)
     active_notes: dict[int, list[int]] = field(default_factory=dict)
     module_outputs: dict[str, Any] = field(default_factory=dict)
+    views: dict[str, Any] | None = None
     status_text: str = ""
 
     def as_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "schema_version": self.schema_version,
             "timestamp": self.timestamp,
             "transport": {
@@ -55,6 +56,9 @@ class StateSnapshot:
             "module_outputs": self.module_outputs,
             "status_text": self.status_text,
         }
+        if self.views:
+            payload["views"] = self.views
+        return payload
 
 
 def build_snapshot(
@@ -70,6 +74,7 @@ def build_snapshot(
     confidence: float = 0.0,
     active_notes: dict[int, set[int]] | None = None,
     module_outputs: dict[str, Any] | None = None,
+    views: dict[str, Any] | None = None,
     status_text: str = "",
 ) -> StateSnapshot:
     active_notes = active_notes or {}
@@ -94,5 +99,6 @@ def build_snapshot(
         channels=channels,
         active_notes=normalized,
         module_outputs=module_outputs or {},
+        views=views or None,
         status_text=status_text,
     )
