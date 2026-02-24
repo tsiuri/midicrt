@@ -2,7 +2,6 @@ import importlib
 import sys
 import types
 import unittest
-from collections import deque
 
 
 if "blessed" not in sys.modules:
@@ -56,27 +55,27 @@ class PianoRollViewSnapshotTest(unittest.TestCase):
     def test_build_roll_view_is_deterministic_for_fixed_state_and_clock(self):
         pr = importlib.import_module("pages.pianoroll")
         pr = importlib.reload(pr)
-        pr._ensure_bg = lambda: None
 
         fixed_now = 1000.0
         pr.pitch_low = 60
         pr.visible_channels.clear()
         pr.visible_channels.update(range(1, 17))
-        pr.active.clear()
-        pr.active[(1, 60)] = 100
-        pr.active[(2, 61)] = 70
-        pr.cols_buf = deque(
+        pr.roll_state.active.clear()
+        pr.roll_state.active[(1, 60)] = 100
+        pr.roll_state.active[(2, 61)] = 70
+        pr.roll_state.time_cols = 2
+        pr.roll_state.cols_buf.clear()
+        pr.roll_state.cols_buf.extend(
             [
                 [(60, 1, 100)],
                 [(61, 2, 70)],
-            ],
-            maxlen=2,
+            ]
         )
-        pr.time_cols = 2
-        pr._recent_hits = deque([(62, 3, 90, fixed_now - 0.1)], maxlen=256)
-        pr._last_tick = 48
-        pr._last_above = None
-        pr._last_below = None
+        pr.roll_state.recent_hits.clear()
+        pr.roll_state.recent_hits.append((62, 3, 90, fixed_now - 0.1))
+        pr.roll_state.last_tick = 48
+        pr.roll_state.last_above = None
+        pr.roll_state.last_below = None
 
         state = {"cols": 40, "rows": 20, "y_offset": 3, "tick": 48, "_now": fixed_now}
 

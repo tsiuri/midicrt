@@ -1,6 +1,11 @@
 """midicrt engine package."""
 
-from .core import EngineState, MidiEngine
+try:
+    from .core import EngineState, MidiEngine
+except Exception:  # optional in lightweight/test imports
+    EngineState = None
+    MidiEngine = None
+
 from .ipc import SnapshotPublisher
 
 __all__ = ["EngineState", "MidiEngine", "SnapshotPublisher"]
