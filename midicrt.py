@@ -62,6 +62,8 @@ def configure_startup_profile(profile: str):
             text_renderer = cr
             _compositor = cr
             ACTIVE_RENDER_BACKEND = "compositor"
+            global FPS
+            FPS = 30.0   # halves rendering overhead vs 60fps
         except Exception as exc:
             ACTIVE_RENDER_BACKEND = "text(fallback)"
             _compositor = None
@@ -410,7 +412,8 @@ def _ui_loop_body():
     global _header_scroll_offset, _header_scroll_last_time
     global _auto_scroll_offset, _auto_scroll_last_time, _auto_last_msg, _auto_last_window
     while not exit_flag:
-            # refresh screen size each frame so pages/plugins can use all space
+      try:
+        # refresh screen size each frame so pages/plugins can use all space
         try:
             if _compositor is None:
                 w = getattr(term, 'width', SCREEN_COLS) or SCREEN_COLS
@@ -427,132 +430,157 @@ def _ui_loop_body():
         elif current_page != last_page:
             sys.stdout.write(term.home + term.clear)
 
-        # clear on page switch
+        # Handle page switch: reset scroll state
         if current_page != last_page:
             last_page = current_page
             last_header = ""  # force header redraw after clear
 
-            snapshot = ENGINE.get_snapshot() if ENGINE else {
-                "tick_counter": tick_counter,
-                "bar_counter": bar_counter,
-                "running": running,
-                "bpm": bpm,
-            }
-            state = plugin_state_dict()
+        snapshot = ENGINE.get_snapshot() if ENGINE else {
+            "tick_counter": tick_counter,
+            "bar_counter": bar_counter,
+            "running": running,
+            "bpm": bpm,
+        }
+        state = plugin_state_dict()
 
-            # --- HEADER (row 0) — scrolling marquee when wider than screen
-            page_titles = "  ".join(
-                f"[{pid}:{p.PAGE_NAME}]" for pid, p in sorted(PAGES.items())
-            )
-            _now = time.time()
-            if page_titles != last_header:
-                last_header = page_titles
-                _header_scroll_offset = 0.0
-                _header_scroll_last_time = _now
-            if len(page_titles) <= SCREEN_COLS:
-                draw_line(0, page_titles)
-            else:
-                dt = _now - _header_scroll_last_time
-                _header_scroll_offset += HEADER_SCROLL_SPEED * dt
-                _header_scroll_last_time = _now
-                sep = "    "
-                full = page_titles + sep
-                offset = int(_header_scroll_offset) % len(full)
-                draw_line(0, (full * 2)[offset:offset + SCREEN_COLS])
+        # --- HEADER (row 0) — scrolling marquee when wider than screen
+        _now = time.time()
+        page_titles = "  ".join(
+            f"[{pid}:{p.PAGE_NAME}]" for pid, p in sorted(PAGES.items())
+        )
+        if page_titles != last_header:
+            last_header = page_titles
+            _header_scroll_offset = 0.0
+            _header_scroll_last_time = _now
+        if len(page_titles) <= SCREEN_COLS:
+            draw_line(0, page_titles)
+        else:
+            dt = _now - _header_scroll_last_time
+            _header_scroll_offset += HEADER_SCROLL_SPEED * dt
+            _header_scroll_last_time = _now
+            sep = "    "
+            full = page_titles + sep
+            offset = int(_header_scroll_offset) % len(full)
+            draw_line(0, (full * 2)[offset:offset + SCREEN_COLS])
 
-            # --- TRANSPORT (row 1)
-            status = "RUN" if snapshot["running"] else "STOP"
-            metronome = "●" if snapshot["running"] and (snapshot["tick_counter"] % 24) < 3 else "○"
-            base = f" {status:<4}  {snapshot['bpm']:6.1f} BPM   BAR {snapshot['bar_counter']:04d}   {metronome}"
-            msg = AUTOCONNECT_LOG[-1] if AUTOCONNECT_LOG else ""
-            if msg:
-                msg = msg.strip()
-                max_avail = max(1, SCREEN_COLS - 1)
-                if len(msg) <= 12:
-                    window = min(len(msg), max_avail)
-                else:
-                    window = min(max_avail, max(8, len(msg) // 2))
-                if window < 1:
-                    draw_line(1, base)
-                else:
-                    if msg != _auto_last_msg or window != _auto_last_window:
-                        _auto_last_msg = msg
-                        _auto_last_window = window
-                        _auto_scroll_offset = 0.0
-                        _auto_scroll_last_time = _now
-                    if len(msg) <= window:
-                        win_text = msg.ljust(window)
-                    else:
-                        dt = _now - _auto_scroll_last_time
-                        _auto_scroll_offset += HEADER_SCROLL_SPEED * dt
-                        _auto_scroll_last_time = _now
-                        sep = "    "
-                        full = msg + sep
-                        offset = int(_auto_scroll_offset) % len(full)
-                        win_text = (full * 2)[offset:offset + window]
-                    left_space = max(0, SCREEN_COLS - window - 1)
-                    left = base[:left_space].ljust(left_space)
-                    line = left + " " + win_text
-                    draw_line(1, line)
+        # --- TRANSPORT (row 1)
+        status = "RUN" if snapshot["running"] else "STOP"
+        metronome = "●" if snapshot["running"] and (snapshot["tick_counter"] % 24) < 3 else "○"
+        base = f" {status:<4}  {snapshot['bpm']:6.1f} BPM   BAR {snapshot['bar_counter']:04d}   {metronome}"
+        msg = AUTOCONNECT_LOG[-1] if AUTOCONNECT_LOG else ""
+        if msg:
+            msg = msg.strip()
+            max_avail = max(1, SCREEN_COLS - 1)
+            if len(msg) <= 12:
+                window = min(len(msg), max_avail)
             else:
+                window = min(max_avail, max(8, len(msg) // 2))
+            if window < 1:
                 draw_line(1, base)
+            else:
+                if msg != _auto_last_msg or window != _auto_last_window:
+                    _auto_last_msg = msg
+                    _auto_last_window = window
+                    _auto_scroll_offset = 0.0
+                    _auto_scroll_last_time = _now
+                if len(msg) <= window:
+                    win_text = msg.ljust(window)
+                else:
+                    dt = _now - _auto_scroll_last_time
+                    _auto_scroll_offset += HEADER_SCROLL_SPEED * dt
+                    _auto_scroll_last_time = _now
+                    sep = "    "
+                    full = msg + sep
+                    offset = int(_auto_scroll_offset) % len(full)
+                    win_text = (full * 2)[offset:offset + window]
+                left_space = max(0, SCREEN_COLS - window - 1)
+                left = base[:left_space].ljust(left_space)
+                line = left + " " + win_text
+                draw_line(1, line)
+        else:
+            draw_line(1, base)
 
-            # --- STATUS (row 2): unused now; keep blank for space
+        # --- STATUS (row 2): FPS counter in compositor mode, blank otherwise
+        if _compositor is not None:
+            _frame_now = time.monotonic()
+            _frame_dt  = _frame_now - getattr(ui_loop, "_frame_last_t", _frame_now)
+            ui_loop._frame_last_t = _frame_now
+            _fps_display = f"  fps:{1.0/_frame_dt:.1f}" if _frame_dt > 0 else "  fps:--"
+            draw_line(2, _fps_display)
+        else:
             draw_line(2, "")
 
-            # --- SCREENSAVER CHECK: skip all drawing if active
-            _ss = next((m for m in PLUGINS if hasattr(m, "is_active") and hasattr(m, "deactivate")), None)
-            if _ss and _ss.is_active():
-                _ss.draw(state)
-                if _compositor is not None:
-                    _compositor.frame_flush()
-                else:
-                    sys.stdout.flush()
-                time.sleep(1.0 / FPS)
-                continue
+        # --- SCREENSAVER CHECK: skip all drawing if active
+        # In compositor mode the screensaver writes zeros directly to fb0 via
+        # its own mmap, fighting the compositor.  Skip it entirely here; the
+        # compositor's own frame_clear()/flush() cycle handles blanking.
+        _ss = next((m for m in PLUGINS if hasattr(m, "is_active") and hasattr(m, "deactivate")), None)
+        if _compositor is None and _ss and _ss.is_active():
+            _ss.draw(state)
+            sys.stdout.flush()
+            time.sleep(1.0 / FPS)
+            continue
 
-            # --- PAGE CONTENT (start row 3)
-            page = PAGES.get(current_page)
-            if page and hasattr(page, "on_tick"):
+        # --- PAGE CONTENT (start row 3)
+        page = PAGES.get(current_page)
+        if page and hasattr(page, "on_tick"):
+            try:
+                page.on_tick(state)
+            except Exception:
+                pass
+        if page and hasattr(page, "build_widget"):
+            try:
+                content_rows = max(0, SCREEN_ROWS - 3)
+                widget = page.build_widget(state)
+                rendered = text_renderer.render(widget, Frame(cols=SCREEN_COLS, rows=content_rows))
+                for idx, line in enumerate(rendered):
+                    draw_line(3 + idx, line)
+            except Exception as e:
+                draw_line(3, f"[Error {current_page}] {e}")
+        elif page and hasattr(page, "draw"):
+            if _compositor is not None:
+                # Capture ANSI output and render via compositor
+                from fb.terminal_capture import TerminalCapture
+                cap = TerminalCapture(SCREEN_COLS, SCREEN_ROWS)
+                _saved = sys.stdout
+                sys.stdout = cap
                 try:
-                    page.on_tick(state)
-                except Exception:
-                    pass
-            if page and hasattr(page, "build_widget"):
+                    page.draw(state)
+                except Exception as e:
+                    sys.stdout = _saved
+                    draw_line(3, f"[Error {current_page}] {e}")
+                else:
+                    sys.stdout = _saved
+                    for row_idx, row_text in cap.rows_with_content(start_row=3):
+                        _compositor.draw_text_line(row_idx, row_text)
+            else:
                 try:
-                    content_rows = max(0, SCREEN_ROWS - 3)
-                    widget = page.build_widget(state)
-                    rendered = text_renderer.render(widget, Frame(cols=SCREEN_COLS, rows=content_rows))
-                    for idx, line in enumerate(rendered):
-                        draw_line(3 + idx, line)
+                    page.draw(state)
                 except Exception as e:
                     draw_line(3, f"[Error {current_page}] {e}")
-            elif page and hasattr(page, "draw"):
-                if _compositor is not None:
-                    # Capture ANSI output and render via compositor
-                    from fb.terminal_capture import TerminalCapture
-                    cap = TerminalCapture(SCREEN_COLS, SCREEN_ROWS)
-                    _saved = sys.stdout
-                    sys.stdout = cap
-                    try:
-                        page.draw(state)
-                    except Exception as e:
-                        sys.stdout = _saved
-                        draw_line(3, f"[Error {current_page}] {e}")
-                    else:
-                        sys.stdout = _saved
-                        for row_idx, row_text in cap.rows_with_content(start_row=3):
-                            _compositor.draw_text_line(row_idx, row_text)
-                else:
-                    try:
-                        page.draw(state)
-                    except Exception as e:
-                        draw_line(3, f"[Error {current_page}] {e}")
-            else:
-                draw_line(3, f"No page loaded for {current_page}")
+        else:
+            draw_line(3, f"No page loaded for {current_page}")
 
-            # --- PLUGIN VISUALS (respect y_offset)
-            if not os.environ.get("MIDICRT_DISABLE_PLUGIN_DRAW"):
+        # --- PLUGIN VISUALS (respect y_offset)
+        if not os.environ.get("MIDICRT_DISABLE_PLUGIN_DRAW"):
+            if _compositor is not None:
+                from fb.terminal_capture import TerminalCapture
+                _pcap = TerminalCapture(SCREEN_COLS, SCREEN_ROWS)
+                _saved = sys.stdout
+                sys.stdout = _pcap
+                for mod in PLUGINS:
+                    if hasattr(mod, "draw"):
+                        try:
+                            if len(signature(mod.draw).parameters) == 1:
+                                mod.draw(state)
+                            else:
+                                mod.draw()
+                        except Exception:
+                            pass
+                sys.stdout = _saved
+                for row_idx, row_text in _pcap.rows_with_content():
+                    _compositor.draw_text_line(row_idx, row_text)
+            else:
                 for mod in PLUGINS:
                     if hasattr(mod, "draw"):
                         try:
@@ -563,11 +591,23 @@ def _ui_loop_body():
                         except Exception:
                             pass
 
-            if _compositor is not None:
-                _compositor.frame_flush()
-            else:
-                sys.stdout.flush()
-            time.sleep(1.0 / FPS)
+        if _compositor is not None:
+            if current_page == 1:
+                _compositor.draw_notes_badge()
+            _compositor.frame_flush()
+        else:
+            sys.stdout.flush()
+        time.sleep(1.0 / FPS)
+      except Exception:
+        import traceback as _tb
+        _exc_txt = _tb.format_exc()
+        _append_runtime_log("ui_loop exception:\n" + _exc_txt)
+        try:
+            with open("/tmp/midicrt_exc.txt", "a") as _ef:
+                _ef.write(_exc_txt)
+        except Exception:
+            pass
+        time.sleep(1.0 / FPS)
 
 # ---------------------------------------------------------------------
 # Autoconnect + keyboard listener + main

@@ -49,6 +49,10 @@ def _open_fb():
 
 
 def _blank_fb():
+    # Compositor manages fb0 directly — don't fight it with a raw write.
+    import midicrt
+    if midicrt._compositor is not None:
+        return
     if not _open_fb():
         return
     try:

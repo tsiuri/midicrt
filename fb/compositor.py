@@ -1,6 +1,6 @@
 """fb/compositor.py — Full-screen framebuffer compositor.
 
-Writes directly to /dev/fb0 (RGB565) using a PIL Image render buffer.
+Writes directly to /dev/fb0 (RGB565) using a numpy uint8 render buffer.
 All output — text and graphics — is composited in-memory and flushed
 to fb0 each frame. No KD_GRAPHICS / vt-mode switching is used because
 on vc4-fkms-v3d (Raspberry Pi Fake KMS) that call breaks x11vnc's
@@ -25,10 +25,9 @@ Typical usage:
 
 import atexit
 import mmap
-import os
 
 import numpy as np
-from PIL import Image, ImageDraw
+from PIL import Image
 
 from fb.psf_font import PSFFont
 
@@ -48,9 +47,13 @@ BLACK        = (0, 0, 0)
 class Compositor:
     """Pixel-level compositor backed by /dev/fb0.
 
-    Text is rendered using the system PSF console font (VGA 8×8) via
-    PSFFont, producing pixel-exact output identical to fbcon.  Graphics
-    primitives (rects, lines) use the PIL Image buffer directly.
+    Uses a numpy (H, W, 3) uint8 array as the primary render buffer so
+    that text, rects, and the flush RGB565 conversion all operate
+    directly on numpy memory — eliminating the costly PIL→numpy copy
+    that np.asarray(PIL.Image) previously required each frame.
+
+    PSFFont text is rendered via draw_text_buf() directly into the numpy
+    buffer using glyph bitmask indexing (no PIL paste overhead).
     flush() converts the buffer to RGB565 and writes to /dev/fb0.
     """
 
@@ -62,13 +65,24 @@ class Compositor:
         self.cols    = FB_W // self.char_w
         self.rows    = FB_H // self.char_h
 
-        # Primary render buffer
-        self._img  = Image.new("RGB", (FB_W, FB_H), bg)
-        self._draw = ImageDraw.Draw(self._img)
+        # Primary render buffer — numpy owns the memory
+        self._buf = np.zeros((FB_H, FB_W, 3), dtype=np.uint8)
+        self._buf[:, :, 0] = bg[0]
+        self._buf[:, :, 1] = bg[1]
+        self._buf[:, :, 2] = bg[2]
+        # Pre-filled template for fast clear() via np.copyto (avoids slow broadcast)
+        self._bg    = bg
+        self._clear_tpl = self._buf.copy()
 
         # Open framebuffer
         self._fb_file = open(FB_PATH, "r+b", buffering=0)
         self._fb_mm   = mmap.mmap(self._fb_file.fileno(), FB_SIZE)
+        # Writable numpy view directly into the mmap — zero-copy flush
+        self._fb_arr  = np.ndarray((FB_H, FB_W), dtype="<u2", buffer=self._fb_mm)
+        # Pre-allocated scratch arrays for RGB565 conversion — avoids per-frame malloc
+        self._r16 = np.empty((FB_H, FB_W), dtype="<u2")
+        self._g16 = np.empty((FB_H, FB_W), dtype="<u2")
+        self._b16 = np.empty((FB_H, FB_W), dtype="<u2")
 
         self._closed = False
         atexit.register(self.close)
@@ -79,15 +93,33 @@ class Compositor:
 
     def clear(self, rgb: tuple = BLACK) -> None:
         """Fill the entire buffer with a colour."""
-        self._draw.rectangle((0, 0, FB_W - 1, FB_H - 1), fill=rgb)
+        if rgb == self._bg:
+            np.copyto(self._buf, self._clear_tpl)   # fast 1.5ms memcpy
+        else:
+            self._buf[:, :, 0] = rgb[0]
+            self._buf[:, :, 1] = rgb[1]
+            self._buf[:, :, 2] = rgb[2]
 
     def rect(self, x: int, y: int, w: int, h: int, rgb: tuple) -> None:
         """Draw a filled rectangle (pixel coords)."""
-        self._draw.rectangle((x, y, x + w - 1, y + h - 1), fill=rgb)
+        x1 = min(x + w, FB_W);  x0 = max(x, 0)
+        y1 = min(y + h, FB_H);  y0 = max(y, 0)
+        if x1 > x0 and y1 > y0:
+            self._buf[y0:y1, x0:x1] = rgb
 
     def line(self, x0: int, y0: int, x1: int, y1: int, rgb: tuple, width: int = 1) -> None:
-        """Draw a line."""
-        self._draw.line((x0, y0, x1, y1), fill=rgb, width=width)
+        """Draw a line (thin wrapper — uses PIL for non-axis-aligned lines)."""
+        # Axis-aligned fast paths
+        if y0 == y1:
+            self.rect(min(x0, x1), y0 - width // 2, abs(x1 - x0) + 1, width, rgb)
+        elif x0 == x1:
+            self.rect(x0 - width // 2, min(y0, y1), width, abs(y1 - y0) + 1, rgb)
+        else:
+            # Fall back to PIL for diagonal lines (rare)
+            from PIL import ImageDraw
+            tmp = Image.fromarray(self._buf, "RGB")
+            ImageDraw.Draw(tmp).line((x0, y0, x1, y1), fill=rgb, width=width)
+            self._buf[:] = np.asarray(tmp)
 
     def text(
         self,
@@ -98,7 +130,7 @@ class Compositor:
         bg: tuple | None = None,
     ) -> None:
         """Draw text at pixel coordinates using the PSF console font."""
-        self._psf.draw_text(self._img, x, y, s, fg=fg, bg=bg)
+        self._psf.draw_text_buf(self._buf, x, y, s, fg=fg, bg=bg)
 
     def text_cell(
         self,
@@ -113,25 +145,41 @@ class Compositor:
 
     def pixel(self, x: int, y: int, rgb: tuple) -> None:
         """Set a single pixel."""
-        self._img.putpixel((x, y), rgb)
+        if 0 <= x < FB_W and 0 <= y < FB_H:
+            self._buf[y, x] = rgb
 
     def image(self, x: int, y: int, img: Image.Image) -> None:
         """Composite a PIL Image at (x, y). Supports RGBA for alpha blending."""
-        self._img.paste(img, (x, y), mask=img if img.mode == "RGBA" else None)
+        arr = np.asarray(img)
+        h = min(arr.shape[0], FB_H - y)
+        w = min(arr.shape[1], FB_W - x)
+        if h <= 0 or w <= 0:
+            return
+        if img.mode == "RGBA":
+            alpha = arr[:h, :w, 3:4].astype(np.float32) / 255.0
+            rgb   = arr[:h, :w, :3].astype(np.float32)
+            region = self._buf[y:y+h, x:x+w].astype(np.float32)
+            self._buf[y:y+h, x:x+w] = (region * (1.0 - alpha) + rgb * alpha).astype(np.uint8)
+        else:
+            self._buf[y:y+h, x:x+w] = arr[:h, :w, :3]
 
     # ------------------------------------------------------------------
     # Flush to hardware
     # ------------------------------------------------------------------
 
     def flush(self) -> None:
-        """Convert buffer to RGB565 and DMA-write to /dev/fb0."""
-        arr   = np.asarray(self._img, dtype=np.uint16)
-        rgb565 = (
-            ((arr[:, :, 0] & 0xF8) << 8) |
-            ((arr[:, :, 1] & 0xFC) << 3) |
-            (arr[:, :, 2] >> 3)
-        ).astype("<u2")
-        self._fb_mm[:] = rgb565.tobytes()
+        """Convert buffer to RGB565 and write directly into the mmap numpy view."""
+        # Cast uint8 channels into pre-allocated uint16 scratch (no per-frame malloc)
+        np.copyto(self._r16, self._buf[:, :, 0], casting="unsafe")
+        np.copyto(self._g16, self._buf[:, :, 1], casting="unsafe")
+        np.copyto(self._b16, self._buf[:, :, 2], casting="unsafe")
+        np.bitwise_and(self._r16, 0xF8, out=self._r16)
+        np.left_shift(self._r16, 8, out=self._r16)
+        np.bitwise_and(self._g16, 0xFC, out=self._g16)
+        np.left_shift(self._g16, 3, out=self._g16)
+        np.right_shift(self._b16, 3, out=self._b16)
+        np.bitwise_or(self._r16, self._g16, out=self._fb_arr)
+        np.bitwise_or(self._fb_arr, self._b16, out=self._fb_arr)
 
     # ------------------------------------------------------------------
     # Lifecycle
