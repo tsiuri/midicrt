@@ -304,3 +304,88 @@ class PSFFont:
 
         region = buf[y0:y1, x0:x1]            # (clip_h, clip_w, 3) view
         region[row_mask[by0:by1, bx0:bx1]] = fg
+
+    # ------------------------------------------------------------------
+    # Numpy-native rendering — RGB565 (uint16) buffers
+    # ------------------------------------------------------------------
+
+    def draw_char_buf16(
+        self,
+        buf: np.ndarray,
+        x: int,
+        y: int,
+        char: str,
+        fg: np.uint16,
+        bg: np.uint16 | None = None,
+    ) -> None:
+        """Draw a single character into a (H, W) uint16 RGB565 array."""
+        if char == ' ' and bg is None:
+            return
+        idx = self._glyph_idx(char)
+        if idx is None:
+            return
+        bh, bw = buf.shape[:2]
+        if y >= bh or x >= bw or y + self.height <= 0 or x + self.width <= 0:
+            return
+        gy0 = max(0, -y);  gy1 = gy0 + min(self.height - gy0, bh - max(0, y))
+        gx0 = max(0, -x);  gx1 = gx0 + min(self.width  - gx0, bw - max(0, x))
+        region = buf[max(0, y):max(0, y) + (gy1 - gy0),
+                     max(0, x):max(0, x) + (gx1 - gx0)]
+        mask = self._glyph_mask(idx)[gy0:gy1, gx0:gx1]
+        if bg is not None:
+            region[~mask] = bg
+        region[mask] = fg
+
+    def draw_text_buf16(
+        self,
+        buf: np.ndarray,
+        x: int,
+        y: int,
+        text: str,
+        fg: np.uint16,
+        bg: np.uint16 | None = None,
+    ) -> None:
+        """Draw a string into a (H, W) uint16 RGB565 array.
+
+        Same vectorised approach as draw_text_buf but assigns a scalar
+        uint16 instead of an RGB tuple — works with the native RGB565
+        compositor buffer.
+        """
+        if not text:
+            return
+        bh, bw = buf.shape[:2]
+        if y >= bh or y + self.height <= 0:
+            return
+
+        if bg is not None:
+            cx = x
+            for char in text:
+                self.draw_char_buf16(buf, cx, y, char, fg, bg)
+                cx += self.width
+            return
+
+        # Transparent text — vectorised row approach
+        self._ensure_glyph_arr()
+        fb = self._unicode_map.get(0x3F, 0)
+        indices = [self._unicode_map.get(ord(c), fb) for c in text]
+
+        n   = len(indices)
+        cw  = self.width
+        ch  = self.height
+
+        x0  = max(0, x)
+        x1  = min(x + n * cw, bw)
+        if x1 <= x0:
+            return
+        y0  = max(0, y)
+        y1  = min(y + ch, bh)
+
+        bx0 = x0 - x
+        bx1 = bx0 + (x1 - x0)
+        by0 = y0 - y
+        by1 = by0 + (y1 - y0)
+
+        row_mask = self._glyph_arr[indices].transpose(1, 0, 2).reshape(ch, n * cw)
+
+        region = buf[y0:y1, x0:x1]            # (clip_h, clip_w) view
+        region[row_mask[by0:by1, bx0:bx1]] = fg

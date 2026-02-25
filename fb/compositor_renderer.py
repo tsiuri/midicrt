@@ -19,23 +19,24 @@ import time
 import numpy as np
 
 from fb.compositor import (
-    Compositor, GREEN_BRIGHT, GREEN_MID, GREEN_DIM, BLACK,
+    Compositor, GREEN_BRIGHT, GREEN_MID, GREEN_DIM, _rgb565,
 )
 from ui.model import Column, Frame, PianoRollWidget, Spacer, TextBlock, Widget
 from ui.renderers.text import TextRenderer
 
-BG = (0, 8, 2)   # very dark green background
+BG = _rgb565(0, 8, 2)   # very dark green background
 
 # PAGE_Y_OFFSET: rows 0-2 are header / transport / blank in midicrt
 PAGE_Y_OFFSET = 3
 
 # Per-channel note-bar colours (16 MIDI channels)
-_CH_COLOURS = [
+_CH_BASE_RGB = [
     (0, 220, 80),    (0, 160, 220),  (220, 180, 0),  (220, 60, 0),
     (180, 0, 220),   (0, 220, 180),  (220, 0, 100),  (100, 220, 0),
     (220, 120, 0),   (0, 100, 220),  (160, 220, 0),  (220, 0, 160),
     (0, 220, 120),   (140, 0, 220),  (220, 140, 0),  (0, 180, 220),
 ]
+_CH_COLOURS = [_rgb565(*rgb) for rgb in _CH_BASE_RGB]
 
 
 class CompositorRenderer(TextRenderer):
@@ -53,8 +54,17 @@ class CompositorRenderer(TextRenderer):
 
     def __init__(self) -> None:
         super().__init__()
-        self.comp = Compositor()
+        self.comp = Compositor(bg=BG)
         self._badge_frames = None  # lazily pre-computed bar animation
+        # Pre-compute velocity-scaled RGB565 colours for piano roll cells.
+        self._vel_lut = []
+        for base_rgb in _CH_BASE_RGB:
+            lut = np.zeros(128, dtype=np.uint16)
+            for v in range(128):
+                scale = 0.4 + 0.6 * (v / 127.0)
+                r, g, b = (int(c * scale) for c in base_rgb)
+                lut[v] = _rgb565(r, g, b)
+            self._vel_lut.append(lut)
 
     # ------------------------------------------------------------------
     # Frame lifecycle
@@ -62,7 +72,7 @@ class CompositorRenderer(TextRenderer):
 
     def frame_clear(self) -> None:
         """Fill the PIL buffer with the background colour."""
-        self.comp.clear(BG)
+        self.comp.clear()
 
     def frame_flush(self) -> None:
         """Convert PIL buffer → RGB565 and write to /dev/fb0."""
@@ -77,12 +87,17 @@ class CompositorRenderer(TextRenderer):
         max_bar = anim_h - 2
         xi_f = np.arange(1, bw - 1, dtype=np.float32)
         rows = np.arange(anim_h)[:, np.newaxis]
+        bg = _rgb565(0, 20, 8)
+        bar_hi = _rgb565(0, 255, 80)
+        bar_mid = _rgb565(0, 180, 60)
+        bar_lo = _rgb565(0, 80, 30)
+        border = _rgb565(0, 180, 50)
 
         frames = []
         n_frames = 48  # 2 seconds at 24fps
         for fi in range(n_frames):
             t = fi * (2.0 * np.pi / 5.0) / n_frames  # one sine period
-            region = np.full((anim_h, bw, 3), [0, 20, 8], dtype=np.uint8)
+            region = np.full((anim_h, bw), bg, dtype=np.uint16)
             phase = np.float32(t * 5.0) + xi_f * np.float32(0.22)
             h_arr = np.clip(
                 np.abs(np.sin(phase))           * np.float32(0.50) +
@@ -97,13 +112,13 @@ class CompositorRenderer(TextRenderer):
             mids  = mid_arr[np.newaxis, :]
             ends  = (top_arr + h_arr)[np.newaxis, :]
             inner = region[:, 1:-1]
-            inner[rows == tops]                         = [0, 255,  80]
-            inner[(rows > tops)  & (rows < mids)]       = [0, 180,  60]
-            inner[(rows >= mids) & (rows < ends)]       = [0,  80,  30]
-            region[0,  :]  = [0, 180, 50]
-            region[-1, :]  = [0, 180, 50]
-            region[:,  0]  = [0, 180, 50]
-            region[:, -1]  = [0, 180, 50]
+            inner[rows == tops]                         = bar_hi
+            inner[(rows > tops)  & (rows < mids)]       = bar_mid
+            inner[(rows >= mids) & (rows < ends)]       = bar_lo
+            region[0,  :]  = border
+            region[-1, :]  = border
+            region[:,  0]  = border
+            region[:, -1]  = border
             frames.append(region)
         self._badge_frames = frames
         self._badge_idx = 0
@@ -127,7 +142,7 @@ class CompositorRenderer(TextRenderer):
         self._badge_idx = (self._badge_idx + 1) % len(self._badge_frames)
 
         # --- Badge box ---
-        comp.rect(x, badge_y, bw, bh, (0, 30, 10))
+        comp.rect(x, badge_y, bw, bh, _rgb565(0, 30, 10))
         comp.rect(x, badge_y, bw, 1, GREEN_MID)
         comp.rect(x, badge_y + bh - 1, bw, 1, GREEN_MID)
         comp.rect(x, badge_y, 1, bh, GREEN_MID)
@@ -236,9 +251,7 @@ class CompositorRenderer(TextRenderer):
             for i, cell in enumerate(row_cells):
                 if cell.velocity > 0:
                     ch_idx = (int(cell.channel) - 1) if cell.channel is not None else 0
-                    base = _CH_COLOURS[ch_idx % len(_CH_COLOURS)]
-                    scale = 0.4 + 0.6 * (cell.velocity / 127.0)
-                    color = tuple(int(c * scale) for c in base)
+                    color = self._vel_lut[ch_idx % 16][min(cell.velocity, 127)]
                     # Inset 1 px to keep a visible grid gap
                     comp.rect(x0 + i * cw + 1, px_y + 1, cw - 1, ch - 2, color)
 
