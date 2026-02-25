@@ -63,7 +63,7 @@ def configure_startup_profile(profile: str):
             _compositor = cr
             ACTIVE_RENDER_BACKEND = "compositor"
             global FPS
-            FPS = 30.0   # halves rendering overhead vs 60fps
+            FPS = 20.0   # match achievable framerate on Pi 3B ARM
         except Exception as exc:
             ACTIVE_RENDER_BACKEND = "text(fallback)"
             _compositor = None
@@ -411,8 +411,23 @@ def _ui_loop_body():
     global last_page, current_page, exit_flag, last_header, SCREEN_COLS, SCREEN_ROWS
     global _header_scroll_offset, _header_scroll_last_time
     global _auto_scroll_offset, _auto_scroll_last_time, _auto_last_msg, _auto_last_window
+    _frame_budget = 1.0 / FPS
+    _do_plugin_draw = not os.environ.get("MIDICRT_DISABLE_PLUGIN_DRAW")
+    if _compositor is not None:
+        from fb.terminal_capture import TerminalCapture as _TerminalCapture
+    else:
+        _TerminalCapture = None
+    # Cache plugin draw signatures once (avoid per-frame inspect overhead)
+    _plugin_draw_takes_state = {}
+    for _mod in PLUGINS:
+        if hasattr(_mod, "draw"):
+            try:
+                _plugin_draw_takes_state[id(_mod)] = len(signature(_mod.draw).parameters) == 1
+            except Exception:
+                _plugin_draw_takes_state[id(_mod)] = False
     while not exit_flag:
       try:
+        _frame_t0 = time.monotonic()
         # refresh screen size each frame so pages/plugins can use all space
         try:
             if _compositor is None:
@@ -518,7 +533,7 @@ def _ui_loop_body():
         if _compositor is None and _ss and _ss.is_active():
             _ss.draw(state)
             sys.stdout.flush()
-            time.sleep(1.0 / FPS)
+            time.sleep(max(0, _frame_budget - (time.monotonic() - _frame_t0)))
             continue
 
         # --- PAGE CONTENT (start row 3)
@@ -532,27 +547,24 @@ def _ui_loop_body():
             try:
                 content_rows = max(0, SCREEN_ROWS - 3)
                 widget = page.build_widget(state)
-                rendered = text_renderer.render(widget, Frame(cols=SCREEN_COLS, rows=content_rows))
-                for idx, line in enumerate(rendered):
-                    draw_line(3 + idx, line)
+                if _compositor is not None:
+                    # Render directly to compositor buffer (skip text roundtrip)
+                    _compositor.render(widget, Frame(cols=SCREEN_COLS, rows=content_rows))
+                else:
+                    rendered = text_renderer.render(widget, Frame(cols=SCREEN_COLS, rows=content_rows))
+                    for idx, line in enumerate(rendered):
+                        draw_line(3 + idx, line)
             except Exception as e:
                 draw_line(3, f"[Error {current_page}] {e}")
         elif page and hasattr(page, "draw"):
             if _compositor is not None:
-                # Capture ANSI output and render via compositor
-                from fb.terminal_capture import TerminalCapture
-                cap = TerminalCapture(SCREEN_COLS, SCREEN_ROWS)
-                _saved = sys.stdout
-                sys.stdout = cap
+                # draw_line() calls go directly to compositor — no capture needed.
+                # ANSI formatting (reverse text etc.) is not supported by compositor
+                # and would only add TerminalCapture overhead (~5ms).
                 try:
                     page.draw(state)
                 except Exception as e:
-                    sys.stdout = _saved
                     draw_line(3, f"[Error {current_page}] {e}")
-                else:
-                    sys.stdout = _saved
-                    for row_idx, row_text in cap.rows_with_content(start_row=3):
-                        _compositor.draw_text_line(row_idx, row_text)
             else:
                 try:
                     page.draw(state)
@@ -562,16 +574,15 @@ def _ui_loop_body():
             draw_line(3, f"No page loaded for {current_page}")
 
         # --- PLUGIN VISUALS (respect y_offset)
-        if not os.environ.get("MIDICRT_DISABLE_PLUGIN_DRAW"):
+        if _do_plugin_draw:
             if _compositor is not None:
-                from fb.terminal_capture import TerminalCapture
-                _pcap = TerminalCapture(SCREEN_COLS, SCREEN_ROWS)
+                _pcap = _TerminalCapture(SCREEN_COLS, SCREEN_ROWS)
                 _saved = sys.stdout
                 sys.stdout = _pcap
                 for mod in PLUGINS:
                     if hasattr(mod, "draw"):
                         try:
-                            if len(signature(mod.draw).parameters) == 1:
+                            if _plugin_draw_takes_state.get(id(mod), False):
                                 mod.draw(state)
                             else:
                                 mod.draw()
@@ -584,7 +595,7 @@ def _ui_loop_body():
                 for mod in PLUGINS:
                     if hasattr(mod, "draw"):
                         try:
-                            if len(signature(mod.draw).parameters) == 1:
+                            if _plugin_draw_takes_state.get(id(mod), False):
                                 mod.draw(state)
                             else:
                                 mod.draw()
@@ -597,7 +608,7 @@ def _ui_loop_body():
             _compositor.frame_flush()
         else:
             sys.stdout.flush()
-        time.sleep(1.0 / FPS)
+        time.sleep(max(0, _frame_budget - (time.monotonic() - _frame_t0)))
       except Exception:
         import traceback as _tb
         _exc_txt = _tb.format_exc()
@@ -607,7 +618,7 @@ def _ui_loop_body():
                 _ef.write(_exc_txt)
         except Exception:
             pass
-        time.sleep(1.0 / FPS)
+        time.sleep(max(0, _frame_budget - (time.monotonic() - _frame_t0)))
 
 # ---------------------------------------------------------------------
 # Autoconnect + keyboard listener + main

@@ -79,10 +79,6 @@ class Compositor:
         self._fb_mm   = mmap.mmap(self._fb_file.fileno(), FB_SIZE)
         # Writable numpy view directly into the mmap — zero-copy flush
         self._fb_arr  = np.ndarray((FB_H, FB_W), dtype="<u2", buffer=self._fb_mm)
-        # Pre-allocated scratch arrays for RGB565 conversion — avoids per-frame malloc
-        self._r16 = np.empty((FB_H, FB_W), dtype="<u2")
-        self._g16 = np.empty((FB_H, FB_W), dtype="<u2")
-        self._b16 = np.empty((FB_H, FB_W), dtype="<u2")
 
         self._closed = False
         atexit.register(self.close)
@@ -169,17 +165,10 @@ class Compositor:
 
     def flush(self) -> None:
         """Convert buffer to RGB565 and write directly into the mmap numpy view."""
-        # Cast uint8 channels into pre-allocated uint16 scratch (no per-frame malloc)
-        np.copyto(self._r16, self._buf[:, :, 0], casting="unsafe")
-        np.copyto(self._g16, self._buf[:, :, 1], casting="unsafe")
-        np.copyto(self._b16, self._buf[:, :, 2], casting="unsafe")
-        np.bitwise_and(self._r16, 0xF8, out=self._r16)
-        np.left_shift(self._r16, 8, out=self._r16)
-        np.bitwise_and(self._g16, 0xFC, out=self._g16)
-        np.left_shift(self._g16, 3, out=self._g16)
-        np.right_shift(self._b16, 3, out=self._b16)
-        np.bitwise_or(self._r16, self._g16, out=self._fb_arr)
-        np.bitwise_or(self._fb_arr, self._b16, out=self._fb_arr)
+        r = self._buf[:, :, 0].astype("<u2")
+        g = self._buf[:, :, 1].astype("<u2")
+        b = self._buf[:, :, 2].astype("<u2")
+        self._fb_arr[:] = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
 
     # ------------------------------------------------------------------
     # Lifecycle

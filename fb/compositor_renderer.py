@@ -54,6 +54,7 @@ class CompositorRenderer(TextRenderer):
     def __init__(self) -> None:
         super().__init__()
         self.comp = Compositor()
+        self._badge_frames = None  # lazily pre-computed bar animation
 
     # ------------------------------------------------------------------
     # Frame lifecycle
@@ -67,50 +68,63 @@ class CompositorRenderer(TextRenderer):
         """Convert PIL buffer → RGB565 and write to /dev/fb0."""
         self.comp.flush()
 
+    def _build_badge_frames(self) -> None:
+        """Pre-compute 48 frames (2s loop) of the scrolling bar animation."""
+        cw, ch = self.comp.char_w, self.comp.char_h
+        label = "welcome to the jungle ^_^"
+        bw = (len(label) + 2) * cw
+        anim_h = 5 * ch
+        max_bar = anim_h - 2
+        xi_f = np.arange(1, bw - 1, dtype=np.float32)
+        rows = np.arange(anim_h)[:, np.newaxis]
+
+        frames = []
+        n_frames = 48  # 2 seconds at 24fps
+        for fi in range(n_frames):
+            t = fi * (2.0 * np.pi / 5.0) / n_frames  # one sine period
+            region = np.full((anim_h, bw, 3), [0, 20, 8], dtype=np.uint8)
+            phase = np.float32(t * 5.0) + xi_f * np.float32(0.22)
+            h_arr = np.clip(
+                np.abs(np.sin(phase))           * np.float32(0.50) +
+                np.abs(np.sin(phase * np.float32(2.3) + np.float32(1.1))) * np.float32(0.30) +
+                np.abs(np.sin(phase * np.float32(0.7) + np.float32(2.5))) * np.float32(0.20),
+                np.float32(1.0 / max_bar), np.float32(1.0)
+            )
+            h_arr = np.maximum(1, (h_arr * max_bar).astype(np.int32))
+            top_arr = (1 + max_bar - h_arr)
+            mid_arr = top_arr + np.maximum(1, h_arr // 2)
+            tops  = top_arr[np.newaxis, :]
+            mids  = mid_arr[np.newaxis, :]
+            ends  = (top_arr + h_arr)[np.newaxis, :]
+            inner = region[:, 1:-1]
+            inner[rows == tops]                         = [0, 255,  80]
+            inner[(rows > tops)  & (rows < mids)]       = [0, 180,  60]
+            inner[(rows >= mids) & (rows < ends)]       = [0,  80,  30]
+            region[0,  :]  = [0, 180, 50]
+            region[-1, :]  = [0, 180, 50]
+            region[:,  0]  = [0, 180, 50]
+            region[:, -1]  = [0, 180, 50]
+            frames.append(region)
+        self._badge_frames = frames
+        self._badge_idx = 0
+
     def draw_notes_badge(self) -> None:
         """Animated scrolling bars + 'welcome to the jungle ^_^' badge, bottom-right."""
         comp = self.comp
         cw, ch = comp.char_w, comp.char_h
         label = "welcome to the jungle ^_^"
-        bw = (len(label) + 2) * cw   # 1-char padding each side
-        bh = 3 * ch                   # badge height
-        anim_h = 5 * ch               # bars section height (40 px)
+        bw = (len(label) + 2) * cw
+        bh = 3 * ch
+        anim_h = 5 * ch
         x = 800 - bw - 4
         badge_y = 475 - bh - 4
-        anim_y = badge_y - anim_h     # sits directly above badge
+        anim_y = badge_y - anim_h
 
-        # --- Scrolling bars (fully vectorised numpy → single paste) ---
-        t = time.monotonic()
-        max_bar = anim_h - 2          # usable pixels inside border
-        region = np.full((anim_h, bw, 3), [0, 20, 8], dtype=np.uint8)
-
-        xi_f  = np.arange(1, bw - 1, dtype=np.float64)
-        phase = t * 5.0 + xi_f * 0.22
-        h_arr = np.clip(
-            np.abs(np.sin(phase))           * 0.50 +
-            np.abs(np.sin(phase * 2.3 + 1.1)) * 0.30 +
-            np.abs(np.sin(phase * 0.7 + 2.5)) * 0.20,
-            1.0 / max_bar, 1.0
-        )
-        h_arr = np.maximum(1, (h_arr * max_bar).astype(np.int32))
-        top_arr = (1 + max_bar - h_arr)                    # (bw-2,)
-        mid_arr = top_arr + np.maximum(1, h_arr // 2)
-
-        rows  = np.arange(anim_h)[:, np.newaxis]           # (H, 1)
-        tops  = top_arr[np.newaxis, :]                     # (1, W)
-        mids  = mid_arr[np.newaxis, :]
-        ends  = (top_arr + h_arr)[np.newaxis, :]
-
-        inner = region[:, 1:-1]                            # (H, bw-2, 3) view
-        inner[rows == tops]                         = [0, 255,  80]
-        inner[(rows > tops)  & (rows < mids)]       = [0, 180,  60]
-        inner[(rows >= mids) & (rows < ends)]       = [0,  80,  30]
-        # Borders for the bars section
-        region[0,  :]  = [0, 180, 50]   # top
-        region[-1, :]  = [0, 180, 50]   # bottom (visually joins badge top)
-        region[:,  0]  = [0, 180, 50]   # left
-        region[:, -1]  = [0, 180, 50]   # right
-        comp._buf[anim_y:anim_y + anim_h, x:x + bw] = region
+        # --- Scrolling bars (pre-computed, just copy) ---
+        if self._badge_frames is None:
+            self._build_badge_frames()
+        comp._buf[anim_y:anim_y + anim_h, x:x + bw] = self._badge_frames[self._badge_idx]
+        self._badge_idx = (self._badge_idx + 1) % len(self._badge_frames)
 
         # --- Badge box ---
         comp.rect(x, badge_y, bw, bh, (0, 30, 10))
@@ -126,7 +140,11 @@ class CompositorRenderer(TextRenderer):
 
     def draw_text_line(self, row: int, text: str) -> None:
         """Render a plain text line at character-row 'row'."""
-        plain = self.term.strip_seqs(text).rstrip()
+        # Fast path: skip regex for text with no ANSI escape sequences
+        if '\x1b' in text:
+            plain = self.term.strip_seqs(text).rstrip()
+        else:
+            plain = text.rstrip()
         if plain:
             self.comp.text(0, row * self.comp.char_h, plain, fg=GREEN_BRIGHT)
 
