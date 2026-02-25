@@ -11,17 +11,34 @@ class PianoRollState:
         self.idle_scroll_bpm = float(idle_scroll_bpm)
         self.out_range_hold = float(out_range_hold)
 
-        self.active: dict[tuple[int, int], int] = {}
+        # active[(ch, pitch)] = (velocity, start_tick)
+        self.active: dict[tuple[int, int], tuple[int, int]] = {}
         self.cols_buf: deque[list[tuple[int, int, int]]] = deque()
         self.time_cols = 0
+        # completed spans: (start_tick, end_tick, pitch, ch, vel)
+        self.spans: deque[tuple[int, int, int, int, int]] = deque()
 
         self.last_tick = 0
+        self.last_raw_tick = 0.0
         self.last_time: float | None = None
+        self.last_raw_time: float | None = None
         self.last_run_bpm = float(idle_scroll_bpm)
 
         self.recent_hits: deque[tuple[int, int, int, float]] = deque(maxlen=256)
         self.last_above: tuple[int, int, float] | None = None
         self.last_below: tuple[int, int, float] | None = None
+
+    def _close_active(self, ch: int, note: int, end_tick: int) -> None:
+        active = self.active.pop((ch, note), None)
+        if not active:
+            return
+        vel, start_tick = active
+        if end_tick < start_tick:
+            end_tick = start_tick
+        self.spans.append((start_tick, end_tick, note, ch, vel))
+
+    def _tick_now(self) -> int:
+        return int(round(self.last_raw_tick))
 
     def on_midi_event(self, msg: Any, pitch_low: int, pitch_high: int, now: float | None = None) -> None:
         now = time.time() if now is None else float(now)
@@ -32,31 +49,36 @@ class PianoRollState:
             note = int(getattr(msg, "note", -1))
             vel = int(getattr(msg, "velocity", 0))
             if vel > 0:
-                self.active[(ch, note)] = vel
+                # retrigger closes previous span first
+                now_tick = self._tick_now()
+                self._close_active(ch, note, end_tick=now_tick)
+                self.active[(ch, note)] = (vel, now_tick)
                 self.recent_hits.append((note, ch, vel, now))
                 if note > pitch_high:
                     self.last_above = (note, ch, now)
                 elif note < pitch_low:
                     self.last_below = (note, ch, now)
             else:
-                self.active.pop((ch, note), None)
+                self._close_active(ch, note, end_tick=self._tick_now())
             return
 
         if kind == "note_off":
             ch = int(getattr(msg, "channel", 0)) + 1
             note = int(getattr(msg, "note", -1))
-            self.active.pop((ch, note), None)
+            self._close_active(ch, note, end_tick=self._tick_now())
             return
 
         if kind == "control_change" and int(getattr(msg, "control", -1)) == 123:
             ch = int(getattr(msg, "channel", 0)) + 1
             keys = [k for k in self.active.keys() if k[0] == ch]
             for key in keys:
-                self.active.pop(key, None)
+                self._close_active(key[0], key[1], end_tick=self._tick_now())
             return
 
         if kind == "stop":
-            self.active.clear()
+            keys = list(self.active.keys())
+            for key in keys:
+                self._close_active(key[0], key[1], end_tick=self._tick_now())
 
     def on_tick(
         self,
@@ -80,6 +102,8 @@ class PianoRollState:
         steps = 0
         if running:
             tick = int(tick)
+            self.last_raw_tick = float(tick)
+            self.last_raw_time = now
             if tick < self.last_tick:
                 self.last_tick = tick
             moved = tick - self.last_tick
@@ -92,6 +116,12 @@ class PianoRollState:
         else:
             eff_bpm = self.last_run_bpm if self.last_run_bpm else self.idle_scroll_bpm
             ticks_per_sec = (eff_bpm * 24.0) / 60.0
+            if self.last_raw_time is None:
+                self.last_raw_time = now
+            raw_elapsed = now - self.last_raw_time
+            if raw_elapsed > 0:
+                self.last_raw_tick += raw_elapsed * ticks_per_sec
+                self.last_raw_time = now
             elapsed = now - float(self.last_time)
             virtual_ticks = elapsed * ticks_per_sec
             if virtual_ticks >= self.ticks_per_col:
@@ -103,7 +133,7 @@ class PianoRollState:
         overlay_window = max(0.05, min(0.25, col_secs))
 
         for _ in range(steps):
-            now_col = [(pitch, ch, vel) for (ch, pitch), vel in self.active.items()]
+            now_col = [(pitch, ch, vel) for (ch, pitch), (vel, _start) in self.active.items()]
             cutoff = now - overlay_window
             recent = [(p, ch, v) for (p, ch, v, ts) in list(self.recent_hits) if ts >= cutoff]
             if recent:
@@ -132,7 +162,7 @@ class PianoRollState:
 
         active_notes_payload = [
             [ch, pitch, vel]
-            for (ch, pitch), vel in sorted(self.active.items(), key=lambda item: (item[0][1], item[0][0]))[:max_active_notes]
+            for (ch, pitch), (vel, _start) in sorted(self.active.items(), key=lambda item: (item[0][1], item[0][0]))[:max_active_notes]
         ]
 
         recent_hits_payload = []
@@ -149,18 +179,43 @@ class PianoRollState:
             for (note, _ch, _vel, ts) in list(self.recent_hits)
             if (now - ts) <= self.out_range_hold and note < pitch_low
         }
-        for (_ch, note), _vel in self.active.items():
+        for (_ch, note), (_vel, _start) in self.active.items():
             if note > pitch_high:
                 above_pitches.add(note)
             elif note < pitch_low:
                 below_pitches.add(note)
 
+        tick_right = int(self.last_tick)
+        tick_now = self._tick_now()
+        tick_left = tick_now - max(1, int(roll_cols) - 1) * self.ticks_per_col
+        tick_right_edge = tick_now + self.ticks_per_col
+        prune_before = tick_left - self.ticks_per_col
+        while self.spans and self.spans[0][1] < prune_before:
+            self.spans.popleft()
+
+        spans: list[list[int]] = []
+        for start, end, pitch, ch, vel in list(self.spans):
+            if pitch < pitch_low or pitch > pitch_high:
+                continue
+            if end < tick_left or start > tick_right_edge:
+                continue
+            spans.append([int(start), int(end), int(pitch), int(ch), int(vel)])
+        for (ch, pitch), (vel, start) in self.active.items():
+            if pitch < pitch_low or pitch > pitch_high:
+                continue
+            end = tick_now
+            if end < tick_left or start > tick_right_edge:
+                continue
+            spans.append([int(start), int(end), int(pitch), int(ch), int(vel)])
+
         return {
             "time_cols": int(self.time_cols),
-            "tick_right": int(self.last_tick),
+            "tick_right": tick_right,
+            "tick_now": tick_now,
             "active_count": int(len(self.active)),
             "active_notes": active_notes_payload,
             "recent_hits": recent_hits_payload,
+            "spans": spans,
             "overflow_flags": {
                 "above": self.last_above is not None,
                 "below": self.last_below is not None,

@@ -45,13 +45,13 @@ def _rgb565(r: int, g: int, b: int) -> np.uint16:
 # --- CRT green palette (RGB565) ---
 GREEN_BRIGHT = _rgb565(0, 255, 80)
 GREEN_MID    = _rgb565(0, 180, 50)
-GREEN_DIM    = _rgb565(0, 100, 30)
+GREEN_DIM    = _rgb565(0, 140, 45)
 BLACK        = _rgb565(0, 0, 0)
 
 # Legacy RGB888 tuples for callers that still need them
 GREEN_BRIGHT_RGB = (0, 255, 80)
 GREEN_MID_RGB    = (0, 180, 50)
-GREEN_DIM_RGB    = (0, 100, 30)
+GREEN_DIM_RGB    = (0, 140, 45)
 BLACK_RGB        = (0, 0, 0)
 
 

@@ -254,11 +254,13 @@ def _coerce_pianoroll_payload(payload, roll_cols, pitch_low_val, pitch_high_val)
     normalized = {
         "time_cols": int(payload.get("time_cols", roll_cols)),
         "tick_right": int(payload.get("tick_right", 0)),
+        "tick_now": int(payload.get("tick_now", payload.get("tick_right", 0))),
         "active_count": int(payload.get("active_count", 0)),
         "pitch_low": int(payload.get("pitch_low", pitch_low_val)),
         "pitch_high": int(payload.get("pitch_high", pitch_high_val)),
         "active_notes": payload.get("active_notes", []),
         "recent_hits": payload.get("recent_hits", []),
+        "spans": payload.get("spans", []),
         "overflow_flags": payload.get("overflow_flags", {}),
         "overflow": payload.get("overflow", {}),
         "columns": payload.get("columns", []),
@@ -297,9 +299,11 @@ def _payload_from_direct_state(state, roll_cols, now):
     return {
         "time_cols": roll_cols,
         "tick_right": int(state.get("tick", 0)),
+        "tick_now": int(state.get("tick", 0)),
         "active_count": len(payload_active),
         "active_notes": payload_active,
         "recent_hits": [],
+        "spans": [],
         "overflow_flags": {"above": False, "below": False},
         "overflow": {
             "above": None,
@@ -332,7 +336,22 @@ def _resolve_pianoroll_payload(state, roll_cols, pitch_low_val, pitch_high_val, 
     return _coerce_pianoroll_payload(payload, roll_cols, pitch_low_val, pitch_high_val)
 
 
-def build_roll_view(state):
+def _best_visible_columns(columns):
+    """Return per-column maps {pitch: (channel, velocity)} filtered by visibility."""
+    best_cols = []
+    for col_events in columns:
+        best: dict[int, tuple[int, int]] = {}
+        for (p, ch, v) in col_events:
+            if ch not in visible_channels:
+                continue
+            prev = best.get(p)
+            if prev is None or v >= prev[1]:
+                best[p] = (int(ch), int(v))
+        best_cols.append(best)
+    return best_cols
+
+
+def build_roll_view(state, build_grid: bool = True):
     """Canonical logical frame view for page 8.
 
     Optional override: state['_now'] for deterministic tests/rendering.
@@ -362,6 +381,7 @@ def build_roll_view(state):
     )
     visible_cols = payload["columns"]
     tick_right = payload.get("tick_right", state.get("tick", 0))
+    tick_now = payload.get("tick_now", state.get("tick", tick_right))
     bar_ticks = 24 * 4
     beat_ticks = 24
     timeline_chars = []
@@ -375,18 +395,29 @@ def build_roll_view(state):
         timeline_chars.append(mark)
 
     pitches = list(range(pitch_high, pitch_low - 1, -1))
+    best_cols = _best_visible_columns(visible_cols)
+    spans = [
+        span for span in payload.get("spans", [])
+        if isinstance(span, (list, tuple)) and len(span) >= 5 and span[3] in visible_channels
+    ]
+
     grid = []
-    for pitch in pitches:
-        row_cells = []
-        for col_events in visible_cols:
-            best_vel = 0
-            best_ch = None
-            for (p, ch, v) in col_events:
-                if p == pitch and ch in visible_channels and v >= best_vel:
-                    best_vel = v
-                    best_ch = ch
-            row_cells.append(PianoRollCell(velocity=int(best_vel), channel=best_ch))
-        grid.append(row_cells)
+    if build_grid:
+        for pitch in pitches:
+            row_cells = []
+            for col_best in best_cols:
+                match = col_best.get(pitch)
+                if match is None:
+                    row_cells.append(PianoRollCell())
+                else:
+                    ch, vel = match
+                    row_cells.append(PianoRollCell(velocity=int(vel), channel=ch))
+            grid.append(row_cells)
+
+    columns = [
+        [(pitch, ch, vel) for pitch, (ch, vel) in col_best.items()]
+        for col_best in best_cols
+    ]
 
     header_left = f"--- {PAGE_NAME} ---"
     overflow = payload.get("overflow", {})
@@ -409,6 +440,10 @@ def build_roll_view(state):
         "timeline": "".join(timeline_chars).ljust(roll_cols)[:roll_cols],
         "pitches": pitches,
         "grid": grid,
+        "columns": columns,
+        "spans": spans,
+        "tick_right": int(tick_right),
+        "tick_now": int(tick_now),
         "footer_left": footer_left,
         "footer_right": footer_right,
         "overflow": {
@@ -424,7 +459,8 @@ def build_frame_snapshot(state):
 
 
 def build_widget(state):
-    view = build_roll_view(state)
+    use_sparse = state.get("render_backend") == "compositor"
+    view = build_roll_view(state, build_grid=not use_sparse)
     cols = view["cols"]
     header = _merge_left_right(view["header_left"], view["header_right"], cols)
     header_line = Line.plain(header)
@@ -443,6 +479,13 @@ def build_widget(state):
             PianoRollWidget(
                 pitches=view["pitches"],
                 cells=view["grid"],
+                columns=view["columns"],
+                spans=view["spans"],
+                pitch_low=pitch_low,
+                pitch_high=pitch_high,
+                ticks_per_col=TICKS_PER_COL,
+                tick_right=view["tick_right"],
+                tick_now=view["tick_now"],
                 timeline=view["timeline"],
                 left_margin=LEFT_MARGIN,
                 style_mode=PIXEL_STYLE,

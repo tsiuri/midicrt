@@ -85,6 +85,13 @@ class PianoRollWidget(Widget):
 
     pitches: List[int] = field(default_factory=list)
     cells: List[List[PianoRollCell]] = field(default_factory=list)
+    columns: List[List[tuple[int, int, int]]] = field(default_factory=list)
+    spans: List[tuple[int, int, int, int, int]] = field(default_factory=list)
+    pitch_low: int = 0
+    pitch_high: int = 0
+    ticks_per_col: int = 1
+    tick_right: int = 0
+    tick_now: int = 0
     timeline: str = ""
     left_margin: int = 10
     style_mode: str = "text"

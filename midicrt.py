@@ -63,7 +63,7 @@ def configure_startup_profile(profile: str):
             _compositor = cr
             ACTIVE_RENDER_BACKEND = "compositor"
             global FPS
-            FPS = 20.0   # match achievable framerate on Pi 3B ARM
+            FPS = 60.0   # target full refresh; may drop if workload exceeds budget
         except Exception as exc:
             ACTIVE_RENDER_BACKEND = "text(fallback)"
             _compositor = None
@@ -188,7 +188,10 @@ def draw_line(row, text):
 
 def plugin_state_dict():
     if ENGINE:
-        return ENGINE.make_plugin_state(SCREEN_COLS, SCREEN_ROWS, y_offset=3)
+        state = ENGINE.make_plugin_state(SCREEN_COLS, SCREEN_ROWS, y_offset=3)
+        if isinstance(state, dict):
+            state["render_backend"] = ACTIVE_RENDER_BACKEND
+        return state
     return {
         "tick": tick_counter,
         "bar": bar_counter,
@@ -197,6 +200,7 @@ def plugin_state_dict():
         "cols": SCREEN_COLS,
         "rows": SCREEN_ROWS,
         "y_offset": 3,
+        "render_backend": ACTIVE_RENDER_BACKEND,
     }
 
 # ---------------------------------------------------------------------

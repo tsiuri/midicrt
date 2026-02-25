@@ -315,7 +315,9 @@ class MidiEngine:
             for pid, pg in self.pages.items():
                 if not hasattr(pg, "on_tick"):
                     continue
-                if pid != current_page and not getattr(pg, "BACKGROUND", False):
+                if pid == current_page:
+                    continue
+                if not getattr(pg, "BACKGROUND", False):
                     continue
                 try:
                     if plugin_state is None:

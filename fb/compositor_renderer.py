@@ -30,12 +30,7 @@ BG = _rgb565(0, 8, 2)   # very dark green background
 PAGE_Y_OFFSET = 3
 
 # Per-channel note-bar colours (16 MIDI channels)
-_CH_BASE_RGB = [
-    (0, 220, 80),    (0, 160, 220),  (220, 180, 0),  (220, 60, 0),
-    (180, 0, 220),   (0, 220, 180),  (220, 0, 100),  (100, 220, 0),
-    (220, 120, 0),   (0, 100, 220),  (160, 220, 0),  (220, 0, 160),
-    (0, 220, 120),   (140, 0, 220),  (220, 140, 0),  (0, 180, 220),
-]
+_CH_BASE_RGB = [(0, 255, 80)] * 16
 _CH_COLOURS = [_rgb565(*rgb) for rgb in _CH_BASE_RGB]
 
 
@@ -90,7 +85,7 @@ class CompositorRenderer(TextRenderer):
         bg = _rgb565(0, 20, 8)
         bar_hi = _rgb565(0, 255, 80)
         bar_mid = _rgb565(0, 180, 60)
-        bar_lo = _rgb565(0, 80, 30)
+        bar_lo = _rgb565(0, 120, 40)
         border = _rgb565(0, 180, 50)
 
         frames = []
@@ -220,42 +215,149 @@ class CompositorRenderer(TextRenderer):
     ) -> int:
         """Render the piano roll with pixel-resolution coloured note bars."""
         comp = self.comp
-        cw, ch = comp.char_w, comp.char_h
+        cw, cell_h = comp.char_w, comp.char_h
         LEFT_CHARS = 10   # matches pianoroll.py LEFT_MARGIN
 
         # --- Timeline row ---
-        px_y = (PAGE_Y_OFFSET + y_row) * ch
+        px_y = (PAGE_Y_OFFSET + y_row) * cell_h
         comp.text(0, px_y, f"{'Bars':>7} \u2502", fg=GREEN_DIM)
-        for i, mark in enumerate(widget.timeline):
-            if mark.strip():
-                fg = GREEN_MID if mark == "|" else GREEN_DIM
-                comp.text(LEFT_CHARS * cw + i * cw, px_y, mark, fg=fg)
+        roll_cols = len(widget.timeline)
+        ticks_per_col = max(1, int(getattr(widget, "ticks_per_col", 1)))
+        tick_anchor = int(getattr(widget, "tick_now", getattr(widget, "tick_right", 0)))
+        tick_left = tick_anchor - max(1, roll_cols - 1) * ticks_per_col
+        tick_right_edge = tick_anchor + ticks_per_col
+        if roll_cols > 0:
+            px_per_tick = cw / ticks_per_col
+            x_left = LEFT_CHARS * cw
+            x_right = x_left + roll_cols * cw
+            bar_ticks = 24 * 4
+            beat_ticks = 24
+            first_bar = ((tick_left + bar_ticks - 1) // bar_ticks) * bar_ticks
+            first_beat = ((tick_left + beat_ticks - 1) // beat_ticks) * beat_ticks
+            t = first_bar
+            while t <= tick_right_edge:
+                px_x = x_left + int(round((t - tick_left) * px_per_tick))
+                if x_left <= px_x < x_right:
+                    comp.rect(px_x, px_y, 1, cell_h, GREEN_MID)
+                t += bar_ticks
+            t = first_beat
+            while t <= tick_right_edge:
+                if t % bar_ticks != 0:
+                    px_x = x_left + int(round((t - tick_left) * px_per_tick))
+                    if x_left <= px_x < x_right:
+                        comp.rect(px_x, px_y, 1, cell_h, GREEN_DIM)
+                t += beat_ticks
         y_row += 1
+
+        pitch_high = widget.pitch_high if widget.pitch_high else (widget.pitches[0] if widget.pitches else None)
+        pitch_low = widget.pitch_low if widget.pitch_low else (widget.pitches[-1] if widget.pitches else None)
+        roll_top_px = (PAGE_Y_OFFSET + y_row) * cell_h
+        x0 = LEFT_CHARS * cw
+
+        spans = getattr(widget, "spans", None) or []
+        columns = getattr(widget, "columns", None) or []
+
+        # Pitches that currently have any visible bar get reverse labels.
+        highlight_pitches = set()
+        if pitch_high is not None and pitch_low is not None:
+            if spans:
+                for start_tick, end_tick, pitch, _channel, velocity in spans:
+                    if velocity <= 0:
+                        continue
+                    if pitch > pitch_high or pitch < pitch_low:
+                        continue
+                    if end_tick < tick_left or start_tick > tick_right_edge:
+                        continue
+                    highlight_pitches.add(int(pitch))
+            elif columns:
+                for col_events in columns:
+                    for pitch, _channel, velocity in col_events:
+                        if velocity <= 0:
+                            continue
+                        if pitch_high >= pitch >= pitch_low:
+                            highlight_pitches.add(int(pitch))
 
         # --- Note rows ---
         NOTE_NAMES = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"]
-        for pitch, row_cells in zip(widget.pitches, widget.cells):
+        for pitch in widget.pitches:
             if y_row >= frame.rows:
                 break
-            px_y = (PAGE_Y_OFFSET + y_row) * ch
+            px_y = (PAGE_Y_OFFSET + y_row) * cell_h
 
             note_name = f"{NOTE_NAMES[pitch % 12]}{(pitch // 12) - 1}"
             is_c = (pitch % 12 == 0)
-            comp.text(
-                0, px_y,
-                f"{note_name:>7} \u2502",
-                fg=GREEN_BRIGHT if is_c else GREEN_DIM,
-            )
-
-            x0 = LEFT_CHARS * cw
-            for i, cell in enumerate(row_cells):
-                if cell.velocity > 0:
-                    ch_idx = (int(cell.channel) - 1) if cell.channel is not None else 0
-                    color = self._vel_lut[ch_idx % 16][min(cell.velocity, 127)]
-                    # Inset 1 px to keep a visible grid gap
-                    comp.rect(x0 + i * cw + 1, px_y + 1, cw - 1, ch - 2, color)
-
+            label = f"{note_name:>7} \u2502"
+            if int(pitch) in highlight_pitches:
+                comp.rect(0, px_y, LEFT_CHARS * cw, cell_h, GREEN_MID)
+                comp.text(0, px_y, label, fg=BG)
+            else:
+                comp.text(
+                    0, px_y,
+                    label,
+                    fg=GREEN_BRIGHT if is_c else GREEN_DIM,
+                )
             y_row += 1
+
+        # --- Note bars (continuous spans preferred) ---
+        roll_top_px = (PAGE_Y_OFFSET + (y_row - len(widget.pitches))) * cell_h
+        if spans and pitch_high is not None and pitch_low is not None:
+            roll_cols = len(widget.timeline)
+            ticks_per_col = max(1, int(getattr(widget, "ticks_per_col", 1)))
+            tick_anchor = int(getattr(widget, "tick_now", getattr(widget, "tick_right", 0)))
+            tick_left = tick_anchor - max(1, roll_cols - 1) * ticks_per_col
+            tick_right_edge = tick_anchor + ticks_per_col
+            px_per_tick = cw / ticks_per_col
+            x_left = x0
+            x_right = x0 + roll_cols * cw
+
+            for start_tick, end_tick, pitch, channel, velocity in spans:
+                if velocity <= 0:
+                    continue
+                if pitch > pitch_high or pitch < pitch_low:
+                    continue
+                if end_tick < tick_left or start_tick > tick_right_edge:
+                    continue
+                row_idx = pitch_high - pitch
+                px_y = roll_top_px + row_idx * cell_h + 1
+                px_start = x_left + int(round((start_tick - tick_left) * px_per_tick))
+                px_end = x_left + int(round((end_tick - tick_left) * px_per_tick))
+                if px_end < px_start:
+                    px_start, px_end = px_end, px_start
+                px_start = max(x_left, min(x_right, px_start))
+                px_end = max(x_left, min(x_right, px_end))
+                width = max(5, px_end - px_start)
+                if px_start >= x_right or px_end <= x_left:
+                    continue
+                if px_start + width > x_right:
+                    width = max(1, x_right - px_start)
+                ch_idx = (int(channel) - 1) if channel is not None else 0
+                color = self._vel_lut[ch_idx % 16][min(int(velocity), 127)]
+                comp.rect(px_start, px_y, width, cell_h - 2, color)
+        else:
+            if columns and pitch_high is not None and pitch_low is not None:
+                for i, col_events in enumerate(columns):
+                    if not col_events:
+                        continue
+                    px_x = x0 + i * cw + 1
+                    for pitch, channel, velocity in col_events:
+                        if velocity <= 0:
+                            continue
+                        if pitch > pitch_high or pitch < pitch_low:
+                            continue
+                        row_idx = pitch_high - pitch
+                        px_y = roll_top_px + row_idx * cell_h + 1
+                        ch_idx = (int(channel) - 1) if channel is not None else 0
+                        color = self._vel_lut[ch_idx % 16][min(int(velocity), 127)]
+                        comp.rect(px_x, px_y, cw - 1, cell_h - 2, color)
+            else:
+                # Fallback: dense grid rendering (legacy widget.cells)
+                for row_idx, row_cells in enumerate(widget.cells):
+                    px_y = roll_top_px + row_idx * cell_h
+                    for i, cell in enumerate(row_cells):
+                        if cell.velocity > 0:
+                            ch_idx = (int(cell.channel) - 1) if cell.channel is not None else 0
+                            color = self._vel_lut[ch_idx % 16][min(cell.velocity, 127)]
+                            comp.rect(x0 + i * cw + 1, px_y + 1, cw - 1, cell_h - 2, color)
 
         return y_row
 
