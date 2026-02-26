@@ -1,0 +1,30 @@
+{
+  "name": "stacked_dense",
+  "schema_version": 4,
+  "event": {
+    "kind": "note_off"
+  },
+  "transport": {
+    "tick": 31,
+    "bar": 3,
+    "running": true,
+    "bpm": 132.0
+  },
+  "active_notes": {
+    "0": [
+      48,
+      52,
+      55
+    ],
+    "1": [
+      60,
+      64,
+      67
+    ]
+  },
+  "expected": {
+    "motif_span": 20,
+    "note_density": "dense",
+    "active_note_total": 6
+  }
+}
