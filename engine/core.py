@@ -10,6 +10,7 @@ from typing import Any, Callable
 import mido
 
 from engine.modules.interfaces import EngineModule
+from engine.scheduler import ModuleScheduler
 from engine.state.schema import build_snapshot
 from engine.state.tempo_map import TempoMap
 
@@ -26,6 +27,7 @@ class EngineState:
     jitter_rms: float = 0.0
     meter_estimate: str = "4/4"
     confidence: float = 0.0
+    diagnostics: dict[str, Any] = field(default_factory=dict)
 
 
 class MidiEngine:
@@ -37,6 +39,8 @@ class MidiEngine:
         on_event: Callable[[dict[str, Any], mido.Message], None] | None = None,
         publisher: Any | None = None,
         command_hooks: dict[str, Callable[..., Any]] | None = None,
+        module_policies: dict[str, dict[str, Any]] | None = None,
+        overload_cost_ms: float = 6.0,
     ) -> None:
         self.state = EngineState()
         self.modules = modules if modules is not None else []
@@ -54,6 +58,7 @@ class MidiEngine:
         self._capture_events = deque()
         self._capture_seq = 0
         self._command_hooks = command_hooks if isinstance(command_hooks, dict) else {}
+        self._scheduler = ModuleScheduler(module_policies=module_policies, overload_cost_ms=overload_cost_ms)
 
     def get_snapshot(self) -> dict[str, Any]:
         with self._lock:
@@ -75,6 +80,7 @@ class MidiEngine:
             module_outputs=module_state,
             views=views,
             status_text=snap.get("status_text", ""),
+            diagnostics=snap.get("diagnostics", {}),
         ).as_dict()
 
         # Backward-compat fields while old callsites migrate.
@@ -271,6 +277,10 @@ class MidiEngine:
             if outputs:
                 module_state[name] = dict(outputs)
 
+            diag = self._scheduler.module_diag(name)
+            if diag:
+                module_state.setdefault(name, {})["timing"] = diag
+
             mod_views = outputs.get("views")
             if isinstance(mod_views, dict):
                 for key, payload in mod_views.items():
@@ -327,7 +337,13 @@ class MidiEngine:
 
     def _run_modules(self, event: dict[str, Any]) -> None:
         kind = event["kind"]
+        names: list[str] = []
         for mod in self.modules:
+            name = getattr(mod, "name", mod.__class__.__name__)
+            names.append(name)
+            if not self._scheduler.should_run(name, kind):
+                continue
+            start_ts = self._scheduler.begin(name)
             try:
                 mod.on_event(event)
             except Exception:
@@ -337,6 +353,14 @@ class MidiEngine:
                     mod.on_clock(self.get_snapshot())
                 except Exception:
                     pass
+            self._scheduler.end(name, start_ts)
+
+        diag = self._scheduler.diagnostics(names)
+        overloaded = diag.get("scheduler", {}).get("overloaded_modules", [])
+        with self._lock:
+            self.state.diagnostics = diag
+            if overloaded:
+                self.state.status_text = f"overload:{','.join(overloaded[:3])}"
 
     def _capture_event(self, event: dict[str, Any], msg: mido.Message) -> None:
         if event["kind"] in ("clock", "start", "stop", "continue", "active_sensing"):

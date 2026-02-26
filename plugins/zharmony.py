@@ -21,6 +21,9 @@ KEY_CONFIDENCE_THRESHOLD = 0.72
 KEY_HYSTERESIS_MARGIN = 0.06
 KEY_UPDATE_EVERY_NOTES = 2
 KEY_ALT_MARGIN = 0.04
+EXTRAS_INTERVAL_HZ = 8.0
+MOTIF_INTERVAL_HZ = 4.0
+RHYTHM_ON_CHORD_CHANGE = True
 
 _cfg = load_section("harmony")
 if _cfg is None:
@@ -37,6 +40,9 @@ try:
     KEY_HYSTERESIS_MARGIN = float(_cfg.get("key_hysteresis_margin", KEY_HYSTERESIS_MARGIN))
     KEY_UPDATE_EVERY_NOTES = int(_cfg.get("key_update_every_notes", KEY_UPDATE_EVERY_NOTES))
     KEY_ALT_MARGIN = float(_cfg.get("key_alt_margin", KEY_ALT_MARGIN))
+    EXTRAS_INTERVAL_HZ = float(_cfg.get("extras_interval_hz", EXTRAS_INTERVAL_HZ))
+    MOTIF_INTERVAL_HZ = float(_cfg.get("motif_interval_hz", MOTIF_INTERVAL_HZ))
+    RHYTHM_ON_CHORD_CHANGE = bool(_cfg.get("rhythm_on_chord_change", RHYTHM_ON_CHORD_CHANGE))
 except Exception:
     pass
 
@@ -53,6 +59,9 @@ try:
         "key_hysteresis_margin": float(KEY_HYSTERESIS_MARGIN),
         "key_update_every_notes": int(KEY_UPDATE_EVERY_NOTES),
         "key_alt_margin": float(KEY_ALT_MARGIN),
+        "extras_interval_hz": float(EXTRAS_INTERVAL_HZ),
+        "motif_interval_hz": float(MOTIF_INTERVAL_HZ),
+        "rhythm_on_chord_change": bool(RHYTHM_ON_CHORD_CHANGE),
     })
 except Exception:
     pass
@@ -78,6 +87,15 @@ _function_history = deque(maxlen=6)
 _chord_change_times = deque(maxlen=16)   # timestamps of chord label changes
 _last_note_for_iv = None                 # previous note for interval computation
 _interval_history = deque(maxlen=64)     # signed semitone intervals, newest first
+
+_last_tension = (0.0, "silent", "")
+_last_tension_ts = 0.0
+_last_tension_key = ()
+_last_harmonic_rhythm = (None, "")
+_last_harmonic_rhythm_ts = 0.0
+_harmonic_rhythm_dirty = True
+_last_motif = (False, "", 0)
+_last_motif_ts = 0.0
 
 CHORD_HISTORY = deque(maxlen=4)
 SCALE_HISTORY = deque(maxlen=4)  # list of dicts: {label, pcs, in, total, uniq_in, uniq_total}
@@ -204,6 +222,8 @@ def get_harmony():
                 CHORD_HISTORY.appendleft(chord_label)
             _last_chord_label = chord_label
             _chord_change_times.appendleft(time.time())
+            global _harmonic_rhythm_dirty
+            _harmonic_rhythm_dirty = True
             _update_function_label(chord)
         if scale_label:
             _last_scale_label = scale_label
@@ -391,16 +411,32 @@ _TENSION_LABELS = [
 ]
 
 
+
+def _min_interval_sec(hz, fallback=8.0):
+    try:
+        return 1.0 / max(0.1, float(hz))
+    except Exception:
+        return 1.0 / fallback
+
+
 def get_tension(active_pcs):
     """Return (score 0.0–10.0, label, worst_ic_name) for a set of pitch classes.
 
     active_pcs — iterable of MIDI pitch-class ints (0–11).
     Works on the *currently sounding* notes so the caller controls the window.
     """
-    pcs = list(set(active_pcs))
+    global _last_tension, _last_tension_ts, _last_tension_key
+    pcs = tuple(sorted(set(active_pcs)))
+    now = time.time()
+    min_dt = _min_interval_sec(EXTRAS_INTERVAL_HZ, fallback=8.0)
+    if pcs == _last_tension_key and (now - _last_tension_ts) < min_dt:
+        return _last_tension
     n = len(pcs)
     if n < 2:
-        return 0.0, "silent", ""
+        _last_tension = (0.0, "silent", "")
+        _last_tension_key = pcs
+        _last_tension_ts = now
+        return _last_tension
     total = 0.0
     worst_ic = 0
     worst_w  = 0.0
@@ -424,7 +460,10 @@ def get_tension(active_pcs):
             break
     # Only name the interval when it's genuinely dissonant (m2/M7, M2/m7, tritone)
     worst_name = _IC_NAMES[worst_ic] if worst_w >= 0.5 else ""
-    return score, label, worst_name
+    _last_tension = (score, label, worst_name)
+    _last_tension_key = pcs
+    _last_tension_ts = now
+    return _last_tension
 
 
 def get_scale_stats_list():
@@ -452,14 +491,27 @@ def get_harmonic_rhythm(bpm=120.0):
     Assumes 4/4 (4 beats per bar).
     Returns (None, '') if fewer than 2 chord changes recorded.
     """
+    global _last_harmonic_rhythm, _last_harmonic_rhythm_ts, _harmonic_rhythm_dirty
+    now = time.time()
+    min_dt = _min_interval_sec(EXTRAS_INTERVAL_HZ, fallback=8.0)
+    if RHYTHM_ON_CHORD_CHANGE and not _harmonic_rhythm_dirty and (now - _last_harmonic_rhythm_ts) < min_dt:
+        return _last_harmonic_rhythm
+    if (not RHYTHM_ON_CHORD_CHANGE) and (now - _last_harmonic_rhythm_ts) < min_dt:
+        return _last_harmonic_rhythm
     times = list(_chord_change_times)
     if len(times) < 2:
-        return None, ""
+        _last_harmonic_rhythm = (None, "")
+        _last_harmonic_rhythm_ts = now
+        _harmonic_rhythm_dirty = False
+        return _last_harmonic_rhythm
     n = min(4, len(times) - 1)
     intervals = [times[i] - times[i + 1] for i in range(n)]
     avg_secs = sum(intervals) / len(intervals)
     if avg_secs <= 0:
-        return None, ""
+        _last_harmonic_rhythm = (None, "")
+        _last_harmonic_rhythm_ts = now
+        _harmonic_rhythm_dirty = False
+        return _last_harmonic_rhythm
     secs_per_bar = (60.0 / max(bpm, 1.0)) * 4
     cpb = secs_per_bar / avg_secs
     if cpb < 0.15:
@@ -472,7 +524,10 @@ def get_harmonic_rhythm(bpm=120.0):
         label = "fast"
     else:
         label = "very fast"
-    return cpb, label
+    _last_harmonic_rhythm = (cpb, label)
+    _last_harmonic_rhythm_ts = now
+    _harmonic_rhythm_dirty = False
+    return _last_harmonic_rhythm
 
 
 def get_motif_info(window=3):
@@ -483,15 +538,26 @@ def get_motif_info(window=3):
 
     Returns (found, pattern_str, count) where count is occurrences in history.
     """
+    global _last_motif, _last_motif_ts
+    now = time.time()
+    min_dt = _min_interval_sec(MOTIF_INTERVAL_HZ, fallback=4.0)
+    if (now - _last_motif_ts) < min_dt:
+        return _last_motif
     hist = list(_interval_history)
     if len(hist) < window * 2:
-        return False, "", 0
+        _last_motif = (False, "", 0)
+        _last_motif_ts = now
+        return _last_motif
     current = tuple(hist[:window])
     count = 0
     for i in range(window, len(hist) - window + 1):
         if tuple(hist[i:i + window]) == current:
             count += 1
     if count == 0:
-        return False, "", 0
+        _last_motif = (False, "", 0)
+        _last_motif_ts = now
+        return _last_motif
     pat = " ".join(f"{'+' if x > 0 else ''}{x}" for x in current)
-    return True, pat, count
+    _last_motif = (True, pat, count)
+    _last_motif_ts = now
+    return _last_motif

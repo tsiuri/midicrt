@@ -85,7 +85,10 @@
     "key_confidence_threshold": 0.72,
     "key_hysteresis_margin": 0.06,
     "key_update_every_notes": 2,
-    "key_alt_margin": 0.04
+    "key_alt_margin": 0.04,
+    "extras_interval_hz": 8.0,
+    "motif_interval_hz": 4.0,
+    "rhythm_on_chord_change": true
   },
   "tuner": {
     "pitch_method": "yin",
@@ -129,6 +132,31 @@
       "enabled": true,
       "socket_path": "/tmp/midicrt.sock",
       "publish_hz": 20.0
+    },
+    "module_scheduler": {
+      "overload_cost_ms": 6.0,
+      "modules": {
+        "plugins.zharmony": {
+          "enabled": true,
+          "policy": "interval_hz",
+          "interval_hz": 12.0
+        },
+        "plugins.ztimesig": {
+          "enabled": true,
+          "policy": "clock_driven",
+          "interval_hz": 12.0
+        },
+        "plugins.ztimesig_exp": {
+          "enabled": true,
+          "policy": "interval_hz",
+          "interval_hz": 8.0
+        },
+        "plugins.zvoicemonitor": {
+          "enabled": true,
+          "policy": "event_driven",
+          "interval_hz": 10.0
+        }
+      }
     }
   },
   "panic": {

@@ -126,6 +126,9 @@ def render_snapshot(snapshot: dict[str, Any], cols: int = 80) -> list[str]:
     channels = snapshot.get("channels", [])
     mods = snapshot.get("module_outputs", {})
     views = snapshot.get("views", {}) if isinstance(snapshot.get("views"), dict) else {}
+    diagnostics = snapshot.get("diagnostics", {}) if isinstance(snapshot.get("diagnostics"), dict) else {}
+    sched = diagnostics.get("scheduler", {}) if isinstance(diagnostics.get("scheduler"), dict) else {}
+    overloaded = sched.get("overloaded_modules", []) if isinstance(sched.get("overloaded_modules"), list) else []
 
     lines = [
         f"schema v{snapshot.get('schema_version', '?')}  t={snapshot.get('timestamp', 0):.3f}",
@@ -143,6 +146,7 @@ def render_snapshot(snapshot: dict[str, Any], cols: int = 80) -> list[str]:
         ),
         "modules " + ", ".join(sorted(mods.keys())),
         "views " + ", ".join(sorted(views.keys())) if views else "views (none)",
+        ("scheduler overload=" + ",".join(overloaded[:3])) if overloaded else "scheduler ok",
     ]
 
     return [ln[:cols].ljust(cols) for ln in lines]
