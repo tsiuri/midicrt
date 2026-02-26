@@ -235,12 +235,36 @@ Legacy page/plugin event hooks now flow through a single engine path in `engine/
 
 ### Incremental migration targets
 
-Parity is being proved in stages:
+Page/widget migration status (current):
 
-1. Pixel parity milestone #1: Piano Roll widget + pixel presentation (implemented)
-2. Transport (migrated)
-3. Notes (next)
-4. Event Log (next)
+1. ✅ Page widget migration: complete for all built-in pages (0–15 now expose `build_widget(state)`).
+2. ✅ Pixel parity milestone #1: Piano Roll widget + pixel presentation (implemented).
+3. ✅ Core parity pages completed: Transport, Notes, and Event Log are on the widget/render pipeline.
+4. 🔄 Remaining migration effort is now integration hardening (engine/UI boundaries, tests, observer robustness), not new page ports.
+
+### Current phase: integration hardening
+
+Aligned with `deep-research-report.md`, the project has moved from architecture bring-up into integration hardening. Current focus areas are:
+
+- finish remaining decoupling between engine internals and page-specific behavior,
+- expand contract-level and tempo/IPC regression coverage,
+- harden observer behavior for long-running multi-client use.
+
+### Hardening checklist (remaining)
+
+- [~] **Decoupling:** move residual page-specific compatibility shims out of core scheduling paths and into explicit adapters.
+- [~] **Tests:** broaden schema/IPC/tempo-map contract tests and add failure-mode coverage for renderer/runtime fallback.
+- [~] **Observer hardening:** validate reconnect/backpressure behavior under sustained snapshot fan-out and document operational limits.
+
+Status tags: `[ ]` not started, `[~]` in progress, `[x]` done.
+
+### Integration roadmap (owner + estimate)
+
+Future roadmap entries should include both owner and rough estimate in days for planning reliability.
+
+1. `[~]` Engine/page decoupling pass — **Owner:** core/engine — **Estimate:** 3–4 days
+2. `[~]` Contract + IPC + tempo-map test expansion — **Owner:** qa/infrastructure — **Estimate:** 2–3 days
+3. `[ ]` Observer hardening and runbook updates — **Owner:** runtime/ops — **Estimate:** 1–2 days
 
 
 ## Pixel parity milestones
