@@ -8,6 +8,7 @@ from blessed import Terminal
 import mido
 from engine.core import MidiEngine
 from engine.ipc import SnapshotPublisher
+from engine.modules import LegacyPluginModule, PianoRollViewModule
 from ui.model import Frame
 from ui.renderers.text import TextRenderer
 
@@ -320,6 +321,8 @@ def _sync_transport_globals(snapshot):
 
 
 def handle_engine_event(event, msg: mido.Message):
+    _dispatch_legacy_page_events(event, msg)
+
     # wake screensaver on note/CC/prog activity (mirrors keypress path)
     if event["kind"] in ("note_on", "note_off", "control_change", "program_change"):
         _ss = next((m for m in PLUGINS if hasattr(m, "is_active") and hasattr(m, "deactivate")), None)
@@ -328,6 +331,42 @@ def handle_engine_event(event, msg: mido.Message):
         polydisplay.handle(msg)
 
     _sync_transport_globals(ENGINE.get_snapshot())
+
+
+def _dispatch_legacy_page_events(event, msg: mido.Message) -> None:
+    """Temporary UI-side compatibility shim while pages migrate off plugin-style hooks."""
+    kind = event.get("kind")
+    bg_msg_kinds = ("note_on", "note_off", "control_change", "program_change")
+
+    if kind == "clock":
+        plugin_state = None
+        for pid, pg in PAGES.items():
+            if pid == current_page:
+                continue
+            if not getattr(pg, "BACKGROUND", False) or not hasattr(pg, "on_tick"):
+                continue
+            try:
+                if plugin_state is None:
+                    plugin_state = plugin_state_dict()
+                pg.on_tick(plugin_state)
+            except Exception:
+                pass
+
+    page = PAGES.get(current_page)
+    if page and hasattr(page, "handle") and kind in bg_msg_kinds:
+        try:
+            page.handle(msg)
+        except Exception:
+            pass
+
+    for pid, pg in PAGES.items():
+        if pid == current_page:
+            continue
+        if getattr(pg, "BACKGROUND", False) and hasattr(pg, "handle") and kind in bg_msg_kinds:
+            try:
+                pg.handle(msg)
+            except Exception:
+                pass
 
 
 # ---------------------------------------------------------------------
@@ -371,13 +410,12 @@ SNAPSHOT_PUBLISHER = SnapshotPublisher(
 )
 SNAPSHOT_PUBLISHER.start()
 
-ENGINE = MidiEngine(
-    plugins=PLUGINS,
-    pages=PAGES,
-    get_current_page=lambda: current_page,
-    on_event=handle_engine_event,
-    publisher=SNAPSHOT_PUBLISHER,
-)
+ENGINE_MODULES = [LegacyPluginModule(mod) for mod in PLUGINS]
+_pianoroll_page = PAGES.get(8)
+if _pianoroll_page and hasattr(_pianoroll_page, "get_view_payload"):
+    ENGINE_MODULES.append(PianoRollViewModule(_pianoroll_page.get_view_payload))
+
+ENGINE = MidiEngine(modules=ENGINE_MODULES, on_event=handle_engine_event, publisher=SNAPSHOT_PUBLISHER)
 ENGINE.configure_capture({
     "bars_to_keep": CAPTURE_BARS_TO_KEEP,
     "dump_bars": CAPTURE_DUMP_BARS,

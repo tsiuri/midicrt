@@ -9,6 +9,7 @@ from typing import Any, Callable
 
 import mido
 
+from engine.modules.interfaces import EngineModule
 from engine.state.schema import build_snapshot
 from engine.state.tempo_map import TempoMap
 
@@ -28,28 +29,20 @@ class EngineState:
 
 
 class MidiEngine:
-    """In-process MIDI engine for transport state + event dispatch."""
+    """In-process MIDI engine for transport state + analysis module execution."""
 
     def __init__(
         self,
-        plugins: list[Any] | None = None,
-        pages: dict[int, Any] | None = None,
-        get_current_page: Callable[[], int] | None = None,
+        modules: list[EngineModule] | None = None,
         on_event: Callable[[dict[str, Any], mido.Message], None] | None = None,
         publisher: Any | None = None,
-        view_publish_hz: float = 4.0,
     ) -> None:
         self.state = EngineState()
-        self.plugins = plugins if plugins is not None else []
-        self.pages = pages if pages is not None else {}
-        self.get_current_page = get_current_page or (lambda: 1)
+        self.modules = modules if modules is not None else []
         self.on_event = on_event
         self.publisher = publisher
         self._lock = threading.Lock()
         self._tempo_map = TempoMap()
-        self._view_interval = 1.0 / max(0.1, float(view_publish_hz))
-        self._last_views_at = 0.0
-        self._cached_views: dict[str, Any] = {}
         self._capture_cfg = {
             "bars_to_keep": 16,
             "dump_bars": 4,
@@ -65,16 +58,7 @@ class MidiEngine:
             snap = asdict(self.state)
             active_notes = {ch: set(notes) for ch, notes in self.state.active_notes.items()}
 
-        module_state = {}
-        for mod in self.plugins:
-            getter = getattr(mod, "get_state", None)
-            if callable(getter):
-                try:
-                    module_state[getattr(mod, "__name__", repr(mod))] = getter()
-                except Exception:
-                    pass
-
-        views = self._collect_views()
+        module_state, views = self._collect_module_outputs()
         schema_snapshot = build_snapshot(
             timestamp=time.time(),
             tick=snap["tick_counter"],
@@ -112,7 +96,7 @@ class MidiEngine:
         event = self._normalize_event(msg)
         self._update_transport(event)
         self._capture_event(event, msg)
-        self._dispatch(event, msg)
+        self._run_modules(event)
         if self.on_event:
             try:
                 self.on_event(event, msg)
@@ -220,27 +204,27 @@ class MidiEngine:
             payload[key] = value
         return payload
 
-    def _collect_views(self) -> dict[str, Any]:
-        now = time.monotonic()
-        if now - self._last_views_at < self._view_interval:
-            return dict(self._cached_views)
-
+    def _collect_module_outputs(self) -> tuple[dict[str, Any], dict[str, Any]]:
+        module_state: dict[str, Any] = {}
         views: dict[str, Any] = {}
-        pianoroll = self.pages.get(8)
-        if pianoroll:
-            getter = getattr(pianoroll, "get_view_payload", None)
-            if callable(getter):
-                try:
-                    payload = getter()
-                    if payload:
-                        views["8"] = payload
-                        views["pianoroll"] = payload
-                except Exception:
-                    pass
+        for mod in self.modules:
+            try:
+                outputs = mod.get_outputs()
+            except Exception:
+                continue
+            if not isinstance(outputs, dict):
+                continue
 
-        self._cached_views = views
-        self._last_views_at = now
-        return dict(self._cached_views)
+            name = getattr(mod, "name", mod.__class__.__name__)
+            if outputs:
+                module_state[name] = dict(outputs)
+
+            mod_views = outputs.get("views")
+            if isinstance(mod_views, dict):
+                for key, payload in mod_views.items():
+                    if payload is not None:
+                        views[str(key)] = payload
+        return module_state, views
 
     def _update_transport(self, event: dict[str, Any]) -> None:
         with self._lock:
@@ -276,74 +260,29 @@ class MidiEngine:
 
     def _collect_meter_candidates(self) -> list[dict[str, Any]]:
         candidates: list[dict[str, Any]] = []
-        for mod in self.plugins:
-            for getter_name in ("get_timesig", "get_timesig_exp"):
-                getter = getattr(mod, getter_name, None)
-                if not callable(getter):
-                    continue
-                try:
-                    value = getter()
-                except Exception:
-                    continue
+        for mod in self.modules:
+            try:
+                outputs = mod.get_outputs()
+            except Exception:
+                continue
+            if not isinstance(outputs, dict):
+                continue
+            for field in ("timesig", "timesig_exp"):
+                value = outputs.get(field)
                 if isinstance(value, dict) and value.get("labels"):
                     candidates.append(value)
         return candidates
 
-    def _dispatch(self, event: dict[str, Any], msg: mido.Message) -> None:
+    def _run_modules(self, event: dict[str, Any]) -> None:
         kind = event["kind"]
-        current_page = self.get_current_page()
-
-        for mod in self.plugins:
-            if hasattr(mod, "on_event"):
-                try:
-                    mod.on_event(event)
-                except Exception:
-                    pass
-            if kind == "clock" and hasattr(mod, "on_tick"):
-                try:
-                    mod.on_tick(self.get_snapshot())
-                except Exception:
-                    pass
-            if kind in ("sysex", "note_on", "note_off", "control_change", "program_change") and hasattr(mod, "handle"):
-                try:
-                    mod.handle(msg)
-                except Exception:
-                    pass
-
-        if kind == "clock":
-            plugin_state = None
-            for pid, pg in self.pages.items():
-                if not hasattr(pg, "on_tick"):
-                    continue
-                if pid == current_page:
-                    continue
-                if not getattr(pg, "BACKGROUND", False):
-                    continue
-                try:
-                    if plugin_state is None:
-                        plugin_state = self.make_plugin_state(cols=80, rows=24, y_offset=3)
-                    pg.on_tick(plugin_state)
-                except Exception:
-                    pass
-
-        page = self.pages.get(current_page)
-        if page and hasattr(page, "handle") and kind in ("note_on", "note_off", "control_change", "program_change"):
+        for mod in self.modules:
             try:
-                page.handle(msg)
+                mod.on_event(event)
             except Exception:
                 pass
-
-        for pid, pg in self.pages.items():
-            if pid == current_page:
-                continue
-            if getattr(pg, "BACKGROUND", False) and hasattr(pg, "handle") and kind in (
-                "note_on",
-                "note_off",
-                "control_change",
-                "program_change",
-            ):
+            if kind == "clock":
                 try:
-                    pg.handle(msg)
+                    mod.on_clock(self.get_snapshot())
                 except Exception:
                     pass
 
