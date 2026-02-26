@@ -424,20 +424,94 @@ is not enough space.
 - `Motif:  +4 -2  [x3]` — interval pattern and how many times it has recurred.
 - Shows `--` when no repetition detected yet.
 
+## Session Notes (2026-02-26)
+
+Changes and fixes made during the compositor sprint + follow-up tuning.
+
+### RGB565 migration completion
+
+- `fb/compositor.py` now uses native RGB565 end-to-end with a `(475, 800)` `np.uint16` back buffer and memcpy flush.
+- `fb/psf_font.py` renders directly into RGB565 via `draw_text_buf16()` / `draw_char_buf16()`.
+- `fb/compositor_renderer.py` migrated fully:
+  - RGB constants converted to module-level RGB565.
+  - velocity LUT precomputed (`16 x 128`) for piano-roll note colors.
+  - badge animation frames are `(H, W)` `uint16`.
+  - compositor calls and direct buffer writes are RGB565/`uint16` only.
+
+### Piano roll + notes-page visual overhaul
+
+- Continuous note spans on compositor path use real MIDI tick duration, converted to pixel width (sub-cell), with a minimum width clamp of 5 px.
+- Note labels on the left render in reverse text while the note has a visible active/held span.
+- Notes badge (Page 1) became a stacked composite:
+  - top: mini piano roll overview,
+  - middle: live spectrum panel (fed from page 9),
+  - bottom: 12-note piano graphic with active pitch-class key lighting.
+- Mini-roll out-of-range indicators added as top/bottom flare tracks (increased height per request).
+- Palette was retuned toward monochrome-CRT-friendly green values; dim text/graphics brightened for legibility.
+
+### Smooth motion + timing behavior
+
+- Header and piano-roll movement switched to smooth pixel motion in compositor path (no glyph-step scrolling artifacts).
+- Transport pause/resume ghosting cleanup improved by resetting/refreshing visual buffers in the compositor-driven path.
+
+### Performance tuning
+
+- `pages/audiospectrum.py` background consumers are throttled:
+  - background spectrum update rate cap (`_BG_SPECTRUM_HZ = 12`),
+  - background bin cap (`_BG_SPECTRUM_BINS = 48`).
+- Notes badge render loop throttled/cached in compositor renderer:
+  - badge redraw target 24 Hz with cached region blits between updates.
+- Notes badge payload collection in `midicrt.py` throttled to 24 Hz.
+- Full notes-page compositor content caching added:
+  - page/plugin content region recomputed at 30 Hz and reused between updates.
+- Several badge draw paths were converted to direct numpy region writes to reduce per-frame `rect()` call overhead.
+
+### MIDI input/runtime stability
+
+- Startup now prefers direct hardware MIDI input (`USB MIDI Interface...`) when available.
+  - Falls back to virtual `GreenCRT Monitor` only when no matching hardware input is found.
+- Added RtMidi error callback filtering for noisy transient ALSA EAGAIN (`Resource temporarily unavailable`) messages in virtual mode.
+- MIDI input close remains non-blocking (threaded close) to avoid RtMidi shutdown hangs.
+
+### Display/layout fixes
+
+- `pages/ccmonitor.py` now respects `y_offset` and no longer writes into the global header area.
+- Removed duplicate BAR/BEAT/TICK overlay by turning `plugins/beat_counter.py` into a no-op placeholder.
+- `plugins/timeclock.py` footer line now includes `TICK`.
+- Top-row FPS text was removed; FPS is exported as shared status (`midicrt.fps_status`) for footer renderers.
+
+### Experiments and rollback notes
+
+- Overlap-note diagonal crosshatching was prototyped but showed analog CRT-specific artifacts (apparent global diagonal pattern on monitor, not always visible over VNC). This path was rolled back to stable rendering.
+- Additional exploratory rendering changes were reset to last known-good states during troubleshooting before landing the current stable set.
+
+### Config updates observed
+
+- `config/settings.json` currently reflects:
+  - `core.fps ~= 60`,
+  - `pagecycle.user_pause = 1800.0` (30 minutes),
+  - page cycle includes page 9 (`[1, 6, 8, 9]`).
+
 ## Testing SysEx (page switch)
 
-midicrt listens on the ALSA sequencer input (`RtMidiIn Client`), not the raw
-hardware port. Use `aseqsend` to send SysEx to that sequencer port.
+Current runtime has two input modes:
 
-1. Find the target port:
-   - aseqsend -l
-   - Expect a line like: `128:0    RtMidiIn Client  GreenCRT Monitor`
-2. Send a page-switch SysEx (example: page 5 = CC Dashboard):
-   - Legacy frame: `aseqsend -p 128:0 "F0 7D 6D 63 01 05 F7"`
-   - Versioned v1 frame: `aseqsend -p 128:0 "F0 7D 6D 63 41 01 05 F7"`
-   - Version negotiation + capabilities query: `aseqsend -p 128:0 "F0 7D 6D 63 40 10 F7"`
+1. **Preferred/default**: direct hardware input (`USB MIDI Interface...`).
+   - SysEx should be sent to the hardware/connected source path.
+2. **Fallback**: virtual monitor input (`GreenCRT Monitor` / `RtMidiIn Client`).
+   - Use `aseqsend` to that sequencer port.
+
+If running in virtual mode:
+
+1. Find target port:
+   - `aseqsend -l`
+   - Typical: `128:0    RtMidiIn Client  GreenCRT Monitor`
+2. Send page switch (example page 5):
+   - Legacy: `aseqsend -p 128:0 "F0 7D 6D 63 01 05 F7"`
+   - Versioned v1: `aseqsend -p 128:0 "F0 7D 6D 63 41 01 05 F7"`
+   - Capabilities query: `aseqsend -p 128:0 "F0 7D 6D 63 40 10 F7"`
 3. Confirm in tmux:
-   - tmux capture-pane -t midicrt:0 -p
+   - `tmux capture-pane -t midicrt:0 -p`
 
-If you instead use `amidi -p hw:...`, the message goes to the raw hardware
-device and will NOT reach midicrt’s sequencer input.
+When using direct hardware input mode, `aseqsend` to `RtMidiIn Client` will not
+reach midicrt because no virtual input is active.

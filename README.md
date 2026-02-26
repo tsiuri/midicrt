@@ -43,10 +43,11 @@ being quit — after quitting you land at a zsh prompt and can relaunch.
 
 ## Startup profiles
 
-midicrt now supports two startup profiles:
+midicrt now supports three startup profiles:
 
 - `run_tui` (default): terminal-safe Blessed/ANSI path used for tty1/autostart.
 - `run_pixel` (optional): pixel path behind runtime feature flags and optional deps.
+- `run_compositor` (optional): direct RGB565 framebuffer compositor path.
 
 ### Operational policy
 
@@ -63,6 +64,8 @@ midicrt now supports two startup profiles:
   - `pip install '.[pixel]'`
   - `MIDICRT_ENABLE_PIXEL=1 MIDICRT_PIXEL_RENDERER=sdl2 ./run_pixel`
   - `python midicrt.py --profile run_pixel`
+- Compositor (optional):
+  - `python midicrt.py --profile run_compositor`
 
 ### Pixel renderer runtime controls
 
@@ -170,7 +173,7 @@ order. Each can implement handle(msg), draw(state), and other hooks.
 
 | File               | Purpose                                         |
 |--------------------|-------------------------------------------------|
-| beat_counter.py    | Beat counter display                            |
+| beat_counter.py    | Legacy placeholder (no-op; kept for load order) |
 | beatflash.py       | Visual beat flash on bottom line                |
 | loopprogress.py    | Loop progress bar                               |
 | pagecycle.py       | Automatic page rotation (configurable)          |
@@ -241,6 +244,10 @@ where status is `00=ok`, `01=error`.
 Received commands are logged in the footer/status area and to `sysex.log`
 (+ split files in `sysex.d/`) so you can see what arrived. Unknown commands
 are logged with their raw bytes.
+
+Note: current startup prefers direct hardware MIDI input when available.
+In that mode there may be no virtual `GreenCRT Monitor` input port exposed for
+sequencer-loopback testing.
 
 **Example — switch to page 8 (Piano Roll):**
 ```
