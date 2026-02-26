@@ -21,7 +21,18 @@ import numpy as np
 from fb.compositor import (
     Compositor, GREEN_BRIGHT, GREEN_MID, GREEN_DIM, _rgb565,
 )
-from ui.model import Column, Frame, PianoRollWidget, Spacer, TextBlock, Widget
+from ui.model import (
+    Column,
+    EventLogWidget,
+    FooterStatusWidget,
+    Frame,
+    NotesWidget,
+    PianoRollWidget,
+    Spacer,
+    TextBlock,
+    TransportWidget,
+    Widget,
+)
 from ui.renderers.text import TextRenderer
 
 BG = _rgb565(0, 8, 2)   # very dark green background
@@ -486,6 +497,13 @@ class CompositorRenderer(TextRenderer):
         self._render_widget(widget, frame, y_row=0)
         return [""] * frame.rows
 
+
+    @staticmethod
+    def _line_plain(text: str):
+        from ui.model import Line
+
+        return Line.plain(text)
+
     # ------------------------------------------------------------------
     # Widget rendering
     # ------------------------------------------------------------------
@@ -497,6 +515,30 @@ class CompositorRenderer(TextRenderer):
         the header block, i.e. pixel row PAGE_Y_OFFSET * char_h).
         Returns the next free y_row.
         """
+        if isinstance(widget, TransportWidget):
+            block = TextBlock(lines=[
+                self._line_plain(f"Running: {widget.running}"),
+                self._line_plain(f"Bar Counter: {widget.bar}"),
+                self._line_plain(f"BPM: {widget.bpm:5.1f}"),
+                self._line_plain(f"Ticks: {widget.tick}"),
+                self._line_plain(widget.time_signature or "Time Signature: (no lock)"),
+            ])
+            return self._render_widget(block, frame, y_row)
+
+        if isinstance(widget, NotesWidget):
+            return self._render_widget(TextBlock(lines=list(widget.lines)), frame, y_row)
+
+        if isinstance(widget, EventLogWidget):
+            lines = [self._line_plain(widget.title), self._line_plain(widget.filter_summary)]
+            lines.extend(self._line_plain(e) for e in widget.entries)
+            if widget.marker:
+                lines.append(self._line_plain(widget.marker))
+            return self._render_widget(TextBlock(lines=lines), frame, y_row)
+
+        if isinstance(widget, FooterStatusWidget):
+            txt = f"{widget.left} {widget.right}".strip() if widget.right else widget.left
+            return self._render_widget(TextBlock(lines=[self._line_plain(txt)]), frame, y_row)
+
         if isinstance(widget, TextBlock):
             for line in widget.lines:
                 if y_row >= frame.rows:

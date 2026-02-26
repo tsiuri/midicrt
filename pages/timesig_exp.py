@@ -4,6 +4,7 @@ PAGE_ID = 15
 PAGE_NAME = "TimeSig Exp"
 
 from midicrt import draw_line
+from ui.adapters import build_widget_from_legacy_draw
 try:
     import plugins.ztimesig_exp as ztimesig_exp
 except Exception:
@@ -51,3 +52,7 @@ def draw(state):
         return
     for i, (label, score) in enumerate(top[:3]):
         draw_line(y0 + 5 + i, f"{i+1}) {label:<5}  score:{score:0.3f}"[:cols])
+
+
+def build_widget(state):
+    return build_widget_from_legacy_draw(draw, state, draw_line)

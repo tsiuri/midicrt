@@ -9,6 +9,7 @@ from collections import deque
 from blessed import Terminal
 import mido
 from midicrt import draw_line
+from ui.adapters import build_widget_from_legacy_draw
 
 term = Terminal()
 
@@ -142,3 +143,7 @@ def draw(state):
 def update(state):
     _expire_notes()
 
+
+
+def build_widget(state):
+    return build_widget_from_legacy_draw(draw, state, draw_line)

@@ -2,7 +2,7 @@
 PAGE_ID = 3
 PAGE_NAME = "Transport"
 
-from ui.model import Column, Line, TextBlock
+from ui.model import Column, Line, TextBlock, TransportWidget
 
 try:
     import plugins.ztimesig as ztimesig
@@ -32,12 +32,13 @@ def _timesig_line():
 def build_widget(state):
     return Column(
         children=[
-            TextBlock(lines=[Line.plain(f"[{PAGE_ID}] {PAGE_NAME}")]),
-            TextBlock(lines=[Line.plain("")]),
-            TextBlock(lines=[Line.plain(f"Running: {state['running']}")]),
-            TextBlock(lines=[Line.plain(f"Bar Counter: {state['bar']}")]),
-            TextBlock(lines=[Line.plain(f"BPM: {state['bpm']:5.1f}")]),
-            TextBlock(lines=[Line.plain(f"Ticks: {state['tick']}")]),
-            TextBlock(lines=[Line.plain(_timesig_line())]),
+            TextBlock(lines=[Line.plain(f"[{PAGE_ID}] {PAGE_NAME}"), Line.plain("")]),
+            TransportWidget(
+                running=bool(state["running"]),
+                bar=int(state["bar"]),
+                bpm=float(state["bpm"]),
+                tick=int(state["tick"]),
+                time_signature=_timesig_line(),
+            ),
         ]
     )

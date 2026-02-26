@@ -7,6 +7,7 @@ from midicrt import draw_line
 from collections import OrderedDict
 import time
 from blessed import Terminal
+from ui.adapters import build_widget_from_legacy_draw
 
 term = Terminal()
 
@@ -57,3 +58,7 @@ def draw(state):
 
     if not _recent:
         draw_line(y, "(no CC activity)")
+
+
+def build_widget(state):
+    return build_widget_from_legacy_draw(draw, state, draw_line)

@@ -95,3 +95,39 @@ class PianoRollWidget(Widget):
     timeline: str = ""
     left_margin: int = 10
     style_mode: str = "text"
+
+
+@dataclass(frozen=True)
+class TransportWidget(Widget):
+    """Stable transport payload shared by all renderers."""
+
+    running: bool = False
+    bpm: float = 0.0
+    bar: int = 0
+    tick: int = 0
+    time_signature: str = ""
+
+
+@dataclass(frozen=True)
+class NotesWidget(Widget):
+    """Renderer-facing notes-page payload (line-semantics contract)."""
+
+    lines: List[Line] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class EventLogWidget(Widget):
+    """Structured event log payload shared across renderers."""
+
+    title: str = ""
+    filter_summary: str = ""
+    entries: List[str] = field(default_factory=list)
+    marker: str = ""
+
+
+@dataclass(frozen=True)
+class FooterStatusWidget(Widget):
+    """Footer/status line payload."""
+
+    left: str = ""
+    right: str = ""

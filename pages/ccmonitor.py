@@ -4,6 +4,7 @@ PAGE_NAME = "CC Monitor"
 
 from midicrt import draw_line
 from collections import defaultdict, deque
+from ui.adapters import build_widget_from_legacy_draw
 
 # Store last few CC messages per channel
 _recent_ccs = defaultdict(lambda: deque(maxlen=6))
@@ -29,3 +30,7 @@ def draw(state):
         line = f"{ch:02d}  {cc_str}"
         draw_line(y, line[:cols])
         y += 1
+
+
+def build_widget(state):
+    return build_widget_from_legacy_draw(draw, state, draw_line)

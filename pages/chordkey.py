@@ -6,6 +6,7 @@ PAGE_NAME = "Chord+Key"
 from midicrt import draw_line
 from harmony import NOTE_NAMES, CHORDS
 import plugins.zharmony as zharmony
+from ui.adapters import build_widget_from_legacy_draw
 
 
 def _note_name(pc):
@@ -114,3 +115,7 @@ def draw(state):
         draw_line(yk + 3, f"Function: {func}"[:cols])
     else:
         draw_line(yk + 3, "Function: ?"[:cols])
+
+
+def build_widget(state):
+    return build_widget_from_legacy_draw(draw, state, draw_line)
