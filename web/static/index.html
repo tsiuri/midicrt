@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>midicrt observer</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 1rem; background:#0a0f0a; color:#d6ffd6; }
+    .grid { display:grid; gap:1rem; grid-template-columns: repeat(auto-fit,minmax(280px,1fr)); }
+    .card { border:1px solid #2f5f2f; border-radius:8px; padding:.75rem; background:#101910; }
+    h1,h2 { margin:.2rem 0 .6rem; }
+    .muted { opacity:.8; font-size:.9rem; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; }
+    ul { margin: .3rem 0 0 1rem; }
+  </style>
+</head>
+<body>
+  <h1>midicrt web observer</h1>
+  <div class="muted">Read-only dashboard from engine snapshot feed (<code>/ws</code>).</div>
+  <div class="grid">
+    <section class="card">
+      <h2>Transport</h2>
+      <div id="transport" class="mono">Waiting for snapshot…</div>
+    </section>
+    <section class="card">
+      <h2>Active notes</h2>
+      <ul id="notes"></ul>
+    </section>
+    <section class="card">
+      <h2>Module outputs</h2>
+      <div id="modules" class="mono">--</div>
+    </section>
+  </div>
+
+<script>
+const transportEl = document.getElementById('transport');
+const notesEl = document.getElementById('notes');
+const modulesEl = document.getElementById('modules');
+
+function render(snapshot) {
+  const t = snapshot.transport || {};
+  transportEl.textContent = [
+    `tick: ${t.tick ?? 0}`,
+    `bar: ${t.bar ?? 0}`,
+    `running: ${Boolean(t.running)}`,
+    `bpm: ${(t.bpm ?? 0).toFixed ? t.bpm.toFixed(2) : t.bpm}`,
+    `meter: ${t.meter_estimate ?? '--'} (${(t.confidence ?? 0).toFixed ? (t.confidence ?? 0).toFixed(2) : t.confidence})`,
+    `status: ${snapshot.status_text || ''}`,
+  ].join('\n');
+
+  notesEl.innerHTML = '';
+  const channels = Array.isArray(snapshot.channels) ? snapshot.channels : [];
+  if (!channels.length) {
+    const li = document.createElement('li');
+    li.textContent = 'No active notes';
+    notesEl.appendChild(li);
+  }
+  channels.forEach((ch) => {
+    const li = document.createElement('li');
+    const notes = Array.isArray(ch.active_notes) ? ch.active_notes.join(', ') : '';
+    li.textContent = `ch ${ch.channel}: [${notes}]`;
+    notesEl.appendChild(li);
+  });
+
+  const mod = snapshot.module_outputs || {};
+  modulesEl.textContent = JSON.stringify(mod, null, 2) || '{}';
+}
+
+const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
+ws.onmessage = (event) => {
+  const payload = JSON.parse(event.data);
+  if (payload.snapshot) {
+    render(payload.snapshot);
+  }
+};
+ws.onclose = () => { transportEl.textContent = 'Connection closed.'; };
+</script>
+</body>
+</html>
