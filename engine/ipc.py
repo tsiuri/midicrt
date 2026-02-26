@@ -5,27 +5,51 @@ import os
 import socket
 import threading
 import time
-from typing import Any
+from typing import Any, Callable
+
+PROTOCOL_VERSION = 1
+ENVELOPE_SNAPSHOT = "snapshot"
+ENVELOPE_COMMAND = "command"
+ENVELOPE_ACK = "ack"
+ENVELOPE_ERROR = "error"
+
+
+def make_envelope(envelope_type: str, payload: dict[str, Any] | None = None, **extra: Any) -> dict[str, Any]:
+    env: dict[str, Any] = {
+        "protocol_version": PROTOCOL_VERSION,
+        "type": envelope_type,
+        "payload": payload if isinstance(payload, dict) else {},
+    }
+    env.update(extra)
+    return env
 
 
 class SnapshotPublisher:
-    """Publish state snapshots to local UI clients via Unix domain socket."""
+    """Publish snapshots and accept JSON commands via Unix domain socket."""
 
     def __init__(
         self,
         socket_path: str,
         enabled: bool = True,
         publish_hz: float = 20.0,
+        command_handler: Callable[[str, dict[str, Any] | None], tuple[bool, dict[str, Any]]] | None = None,
     ) -> None:
         self.socket_path = socket_path
         self.enabled = enabled
         self.publish_hz = max(0.1, float(publish_hz))
+        self.command_handler = command_handler
         self._server: socket.socket | None = None
         self._clients: list[socket.socket] = []
         self._lock = threading.Lock()
         self._accept_thread: threading.Thread | None = None
         self._running = False
         self._last_publish = 0.0
+
+    def set_command_handler(
+        self,
+        command_handler: Callable[[str, dict[str, Any] | None], tuple[bool, dict[str, Any]]] | None,
+    ) -> None:
+        self.command_handler = command_handler
 
     def start(self) -> None:
         if not self.enabled or self._running:
@@ -73,7 +97,8 @@ class SnapshotPublisher:
             return False
         self._last_publish = now
 
-        payload = (json.dumps(snapshot, separators=(",", ":")) + "\n").encode("utf-8")
+        envelope = make_envelope(ENVELOPE_SNAPSHOT, snapshot)
+        payload = (json.dumps(envelope, separators=(",", ":")) + "\n").encode("utf-8")
         stale: list[socket.socket] = []
         with self._lock:
             for client in self._clients:
@@ -90,6 +115,70 @@ class SnapshotPublisher:
                         pass
         return True
 
+    def _send(self, client: socket.socket, envelope: dict[str, Any]) -> None:
+        client.sendall((json.dumps(envelope, separators=(",", ":")) + "\n").encode("utf-8"))
+
+    def _handle_command(self, envelope: dict[str, Any]) -> dict[str, Any]:
+        request_id = envelope.get("request_id")
+        cmd = envelope.get("command")
+        payload = envelope.get("payload")
+        if not isinstance(cmd, str) or not cmd:
+            return make_envelope(
+                ENVELOPE_ERROR,
+                {"code": "invalid-command", "message": "missing command"},
+                request_id=request_id,
+            )
+        if self.command_handler is None:
+            return make_envelope(
+                ENVELOPE_ERROR,
+                {"code": "unsupported", "message": "command handler unavailable"},
+                request_id=request_id,
+                command=cmd,
+            )
+        try:
+            ok, data = self.command_handler(cmd, payload if isinstance(payload, dict) else None)
+        except Exception as exc:
+            return make_envelope(
+                ENVELOPE_ERROR,
+                {"code": "exception", "message": str(exc)},
+                request_id=request_id,
+                command=cmd,
+            )
+        if ok:
+            return make_envelope(ENVELOPE_ACK, data, request_id=request_id, command=cmd)
+        return make_envelope(ENVELOPE_ERROR, data, request_id=request_id, command=cmd)
+
+    def _client_loop(self, client: socket.socket) -> None:
+        try:
+            with client.makefile("r", encoding="utf-8", newline="\n") as reader:
+                while self._running:
+                    line = reader.readline()
+                    if not line:
+                        break
+                    try:
+                        env = json.loads(line)
+                    except Exception:
+                        try:
+                            self._send(client, make_envelope(ENVELOPE_ERROR, {"code": "invalid-json", "message": "malformed JSON"}))
+                        except OSError:
+                            break
+                        continue
+                    if not isinstance(env, dict) or env.get("type") != ENVELOPE_COMMAND:
+                        continue
+                    try:
+                        self._send(client, self._handle_command(env))
+                    except OSError:
+                        break
+        except OSError:
+            pass
+        finally:
+            with self._lock:
+                self._clients = [c for c in self._clients if c is not client]
+            try:
+                client.close()
+            except OSError:
+                pass
+
     def _accept_loop(self) -> None:
         assert self._server is not None
         while self._running:
@@ -98,6 +187,7 @@ class SnapshotPublisher:
                 client.setblocking(True)
                 with self._lock:
                     self._clients.append(client)
+                threading.Thread(target=self._client_loop, args=(client,), daemon=True, name="snapshot-ipc-client").start()
             except TimeoutError:
                 continue
             except OSError:
