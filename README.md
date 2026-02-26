@@ -198,6 +198,23 @@ Notes:
 - vars.txt: SDL/framebuffer environment settings for optional pixel runs
 - log.txt and midicrt_autoconnect.log: startup/autoconnect logs
 
+## CI test lanes
+
+Pull requests use split test lanes so independent agent PRs do not queue behind unrelated suites:
+
+- `track_a_tests`: scheduler, freshness, and contract-build tests.
+- `track_b_tests`: fixture replay and deterministic logic tests.
+- `integration_observer_tests`: web observer and snapshot-bridge integration tests.
+
+Path filters gate each lane on pull requests so only relevant lanes run. A nightly scheduled workflow runs the full matrix (all three lanes) together.
+
+### Runtime targets
+
+- Per-lane target: **under 3 minutes**.
+- Nightly full matrix target: **under 9 minutes** total wall-clock.
+
+Each run publishes a `ci-lane-summary` artifact with lane status and runtime so bottlenecks are visible.
+
 ## Contribution workflow
 
 - Parallel multi-agent workflow and handoff protocol:
