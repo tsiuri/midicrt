@@ -1,0 +1,226 @@
+name: Test Lanes
+
+on:
+  pull_request:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+jobs:
+  detect_changes:
+    runs-on: ubuntu-latest
+    outputs:
+      track_a: ${{ steps.filter.outputs.track_a }}
+      track_b: ${{ steps.filter.outputs.track_b }}
+      observer: ${{ steps.filter.outputs.observer }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Detect changed paths
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            track_a:
+              - 'engine/deep_research/platform.py'
+              - 'engine/deep_research/mock_module.py'
+              - 'engine/scheduler.py'
+              - 'engine/state/schema.py'
+              - 'tests/test_scheduler_overload.py'
+              - 'tests/test_schema_contract.py'
+              - 'tests/test_deep_research_replay_contracts.py'
+              - '.github/workflows/test-lanes.yml'
+            track_b:
+              - 'engine/deep_research/logic.py'
+              - 'tests/fixtures/deep_research_sequences.json'
+              - 'tests/test_deep_research_tracks.py'
+              - 'tests/test_engine_replay_determinism.py'
+              - '.github/workflows/test-lanes.yml'
+            observer:
+              - 'web/**'
+              - 'engine/ipc.py'
+              - 'scripts/run_web_observer.py'
+              - 'tests/test_web_observer_bridge.py'
+              - 'tests/test_ipc_pubsub.py'
+              - '.github/workflows/test-lanes.yml'
+
+  track_a_tests:
+    name: track_a_tests
+    runs-on: ubuntu-latest
+    needs: detect_changes
+    if: github.event_name != 'pull_request' || needs.detect_changes.outputs.track_a == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest
+          pip install -e .
+
+      - name: Run track A lane
+        run: |
+          start_ts=$(date +%s)
+          set +e
+          PYTHONPATH=. pytest -q \
+            tests/test_scheduler_overload.py \
+            tests/test_schema_contract.py \
+            tests/test_deep_research_replay_contracts.py
+          exit_code=$?
+          end_ts=$(date +%s)
+          duration=$((end_ts - start_ts))
+          status="success"
+          if [ "$exit_code" -ne 0 ]; then
+            status="failed"
+          fi
+          printf '{"lane":"track_a_tests","status":"%s","runtime_seconds":%s}\n' "$status" "$duration" > lane_result_track_a_tests.json
+          exit "$exit_code"
+
+      - name: Upload lane result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lane-result-track-a
+          path: lane_result_track_a_tests.json
+
+  track_b_tests:
+    name: track_b_tests
+    runs-on: ubuntu-latest
+    needs: detect_changes
+    if: github.event_name != 'pull_request' || needs.detect_changes.outputs.track_b == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest
+          pip install -e .
+
+      - name: Run track B lane
+        run: |
+          start_ts=$(date +%s)
+          set +e
+          PYTHONPATH=. pytest -q \
+            tests/test_deep_research_tracks.py \
+            tests/test_engine_replay_determinism.py
+          exit_code=$?
+          end_ts=$(date +%s)
+          duration=$((end_ts - start_ts))
+          status="success"
+          if [ "$exit_code" -ne 0 ]; then
+            status="failed"
+          fi
+          printf '{"lane":"track_b_tests","status":"%s","runtime_seconds":%s}\n' "$status" "$duration" > lane_result_track_b_tests.json
+          exit "$exit_code"
+
+      - name: Upload lane result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lane-result-track-b
+          path: lane_result_track_b_tests.json
+
+  integration_observer_tests:
+    name: integration_observer_tests
+    runs-on: ubuntu-latest
+    needs: detect_changes
+    if: github.event_name != 'pull_request' || needs.detect_changes.outputs.observer == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest
+          pip install -e '.[web]'
+
+      - name: Run observer integration lane
+        run: |
+          start_ts=$(date +%s)
+          set +e
+          PYTHONPATH=. pytest -q \
+            tests/test_web_observer_bridge.py \
+            tests/test_ipc_pubsub.py
+          exit_code=$?
+          end_ts=$(date +%s)
+          duration=$((end_ts - start_ts))
+          status="success"
+          if [ "$exit_code" -ne 0 ]; then
+            status="failed"
+          fi
+          printf '{"lane":"integration_observer_tests","status":"%s","runtime_seconds":%s}\n' "$status" "$duration" > lane_result_integration_observer_tests.json
+          exit "$exit_code"
+
+      - name: Upload lane result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lane-result-observer
+          path: lane_result_integration_observer_tests.json
+
+  ci_lane_summary:
+    runs-on: ubuntu-latest
+    needs:
+      - track_a_tests
+      - track_b_tests
+      - integration_observer_tests
+    if: always()
+    steps:
+      - name: Download lane artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: lane-result-*
+          merge-multiple: true
+          path: lane-results
+
+      - name: Build lane summary
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          rows = []
+          for path in sorted(Path("lane-results").glob("lane_result_*.json")):
+            with path.open() as fh:
+              rows.append(json.load(fh))
+
+          if not rows:
+            summary = "No lane results were produced in this run.\n"
+          else:
+            lines = [
+              "| Lane | Status | Runtime (s) |",
+              "|---|---|---:|",
+            ]
+            for row in rows:
+              lines.append(f"| {row['lane']} | {row['status']} | {row['runtime_seconds']} |")
+            summary = "\n".join(lines) + "\n"
+
+          Path("ci_lane_summary.md").write_text(summary)
+          print(summary)
+          PY
+
+      - name: Upload CI lane summary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-lane-summary
+          path: ci_lane_summary.md
+
+      - name: Add job summary
+        run: cat ci_lane_summary.md >> "$GITHUB_STEP_SUMMARY"
