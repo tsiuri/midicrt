@@ -1,0 +1,36 @@
+{
+  "cases": [
+    {
+      "name": "modern-with-views",
+      "input": {
+        "schema_version": 4,
+        "transport": {"tick": 12, "bar": 1, "running": true, "bpm": 120.0},
+        "views": {"pianoroll": {"tick_right": 12, "columns": [[], []]}}
+      },
+      "expected": {
+        "schema_version": 4,
+        "transport": {"tick": 12, "bar": 1, "running": true, "bpm": 120.0},
+        "views": {"pianoroll": {"tick_right": 12, "columns": [[], []]}}
+      }
+    },
+    {
+      "name": "legacy-envelope-wrapped-schema",
+      "input": {
+        "type": "snapshot",
+        "payload": {
+          "tick_counter": 44,
+          "schema": {
+            "schema_version": 4,
+            "transport": {"tick": 44, "bar": 2, "running": false, "bpm": 0.0},
+            "views": {"notes": {"active": [60, 64]}}
+          }
+        }
+      },
+      "expected": {
+        "schema_version": 4,
+        "transport": {"tick": 44, "bar": 2, "running": false, "bpm": 0.0},
+        "views": {"notes": {"active": [60, 64]}}
+      }
+    }
+  ]
+}

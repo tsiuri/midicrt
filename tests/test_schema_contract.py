@@ -1,7 +1,12 @@
+import json
+import pathlib
 import unittest
 
 from engine.state.schema import SCHEMA_VERSION, build_snapshot
 from ui.client import normalize_snapshot
+
+
+FIXTURE = pathlib.Path(__file__).parent / "fixtures" / "schema_normalization_cases.json"
 
 
 class SchemaContractTest(unittest.TestCase):
@@ -28,6 +33,13 @@ class SchemaContractTest(unittest.TestCase):
         self.assertEqual(normalize_snapshot(modern), modern)
         self.assertEqual(normalize_snapshot(wrapped), modern)
         self.assertEqual(normalize_snapshot(legacy), legacy)
+
+
+    def test_schema_normalization_regression_fixtures(self):
+        payload = json.loads(FIXTURE.read_text())
+        for case in payload.get("cases", []):
+            with self.subTest(case=case.get("name")):
+                self.assertEqual(normalize_snapshot(case["input"]), case["expected"])
 
     def test_normalize_snapshot_tolerates_unknown_fields(self):
         modern = {
