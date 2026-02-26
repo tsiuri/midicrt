@@ -26,6 +26,10 @@ class SnapshotBridge:
         self._lock = threading.Lock()
         self._latest: dict[str, Any] | None = None
         self._seq = 0
+        self._last_update_monotonic = 0.0
+        self._connected = False
+        self._reconnect_attempts = 0
+        self._last_error = ""
         self._running = False
         self._thread: threading.Thread | None = None
 
@@ -41,15 +45,24 @@ class SnapshotBridge:
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=1.0)
 
-    def current(self) -> tuple[int, dict[str, Any] | None]:
+    def current(self) -> tuple[int, dict[str, Any] | None, dict[str, Any]]:
         with self._lock:
-            return self._seq, self._latest
+            age_ms = max(0.0, (time.monotonic() - self._last_update_monotonic) * 1000.0) if self._last_update_monotonic else None
+            meta = {
+                "connected": self._connected,
+                "reconnect_attempts": self._reconnect_attempts,
+                "reconnect_delay_s": self.reconnect_delay_s,
+                "last_error": self._last_error,
+                "last_update_age_ms": age_ms,
+            }
+            return self._seq, self._latest, meta
 
     def _publish(self, snapshot: dict[str, Any]) -> None:
         normalized = normalize_snapshot(snapshot)
         with self._lock:
             self._latest = normalized
             self._seq += 1
+            self._last_update_monotonic = time.monotonic()
 
     def _run_loop(self) -> None:
         while self._running:
@@ -57,26 +70,37 @@ class SnapshotBridge:
             try:
                 _LOG.info("connecting to snapshot socket: %s", self.socket_path)
                 client.connect()
+                with self._lock:
+                    self._connected = True
+                    self._last_error = ""
                 while self._running:
                     snapshot = client.recv_snapshot()
                     if snapshot is None:
                         break
                     self._publish(snapshot)
             except OSError as exc:
+                with self._lock:
+                    self._last_error = str(exc)
                 _LOG.warning("snapshot bridge connection error: %s", exc)
             except Exception:
+                with self._lock:
+                    self._last_error = "unexpected snapshot bridge error"
                 _LOG.exception("unexpected snapshot bridge error")
             finally:
+                with self._lock:
+                    self._connected = False
+                    self._reconnect_attempts += 1
                 client.close()
             if self._running:
                 time.sleep(self.reconnect_delay_s)
 
 
 class DashboardServer:
-    def __init__(self, socket_path: str, host: str, port: int) -> None:
+    def __init__(self, socket_path: str, host: str, port: int, max_broadcast_hz: float = 20.0) -> None:
         self.socket_path = socket_path
         self.host = host
         self.port = int(port)
+        self.max_broadcast_hz = max(1.0, float(max_broadcast_hz))
         self.bridge = SnapshotBridge(socket_path=socket_path)
         self.clients: set[web.WebSocketResponse] = set()
         self.static_dir = Path(__file__).with_name("static")
@@ -85,17 +109,31 @@ class DashboardServer:
         return web.FileResponse(self.static_dir / "index.html")
 
     async def _healthz(self, request: web.Request) -> web.Response:
-        seq, snapshot = self.bridge.current()
-        return web.json_response({"ok": True, "seq": seq, "has_snapshot": bool(snapshot)})
+        seq, snapshot, meta = self.bridge.current()
+        return web.json_response({"ok": True, "seq": seq, "has_snapshot": bool(snapshot), "bridge": meta, "max_broadcast_hz": self.max_broadcast_hz})
+
+    @staticmethod
+    def _payload_for(seq: int, snapshot: dict[str, Any], bridge_meta: dict[str, Any], last_seq: int | None) -> str:
+        sequence_gap = 0 if last_seq is None else max(0, seq - last_seq - 1)
+        payload = {
+            "seq": seq,
+            "snapshot": snapshot,
+            "bridge": bridge_meta,
+            "metrics": {
+                "sequence_gap": sequence_gap,
+                "last_update_age_ms": bridge_meta.get("last_update_age_ms"),
+            },
+        }
+        return json.dumps(payload, separators=(",", ":"))
 
     async def _ws(self, request: web.Request) -> web.StreamResponse:
         ws = web.WebSocketResponse(heartbeat=30.0)
         await ws.prepare(request)
         self.clients.add(ws)
 
-        seq, snapshot = self.bridge.current()
+        seq, snapshot, bridge_meta = self.bridge.current()
         if snapshot is not None:
-            await ws.send_str(json.dumps({"seq": seq, "snapshot": snapshot}, separators=(",", ":")))
+            await ws.send_str(self._payload_for(seq, snapshot, bridge_meta, last_seq=None))
 
         try:
             async for msg in ws:
@@ -109,20 +147,27 @@ class DashboardServer:
 
     async def _broadcast_loop(self, app: web.Application) -> None:
         last_seq = -1
+        client_last_seq: dict[web.WebSocketResponse, int] = {}
+        interval_s = 1.0 / self.max_broadcast_hz
         while True:
-            seq, snapshot = self.bridge.current()
+            seq, snapshot, bridge_meta = self.bridge.current()
             if snapshot is not None and seq != last_seq and self.clients:
-                payload = json.dumps({"seq": seq, "snapshot": snapshot}, separators=(",", ":"))
                 stale: list[web.WebSocketResponse] = []
                 for ws in self.clients:
+                    if getattr(ws, "closed", False):
+                        stale.append(ws)
+                        continue
                     try:
+                        payload = self._payload_for(seq, snapshot, bridge_meta, last_seq=client_last_seq.get(ws))
                         await ws.send_str(payload)
+                        client_last_seq[ws] = seq
                     except Exception:
                         stale.append(ws)
                 for ws in stale:
                     self.clients.discard(ws)
+                    client_last_seq.pop(ws, None)
                 last_seq = seq
-            await asyncio.sleep(0.05)
+            await asyncio.sleep(interval_s)
 
     async def _on_startup(self, app: web.Application) -> None:
         self.bridge.start()
@@ -155,6 +200,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--socket-path", default="/tmp/midicrt.sock", help="Unix socket path for engine snapshots")
     parser.add_argument("--host", default="127.0.0.1", help="HTTP bind host (default: loopback only)")
     parser.add_argument("--port", default=8765, type=int, help="HTTP/WebSocket bind port")
+    parser.add_argument("--max-broadcast-hz", default=20.0, type=float, help="Maximum websocket broadcast rate (samples latest snapshot)")
     parser.add_argument("--log-level", default="INFO", help="Python logging level")
     return parser.parse_args(argv)
 
@@ -162,7 +208,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     logging.basicConfig(level=getattr(logging, str(args.log_level).upper(), logging.INFO), format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    DashboardServer(socket_path=args.socket_path, host=args.host, port=args.port).run()
+    DashboardServer(socket_path=args.socket_path, host=args.host, port=args.port, max_broadcast_hz=args.max_broadcast_hz).run()
     return 0
 
 

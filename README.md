@@ -116,17 +116,73 @@ pip install '.[web]'
 python scripts/run_web_observer.py --socket-path /tmp/midicrt.sock --host 127.0.0.1 --port 8765
 
 # or if installed as a package
-midicrt-web-observer --socket-path /tmp/midicrt.sock --host 127.0.0.1 --port 8765
+midicrt-web-observer --socket-path /tmp/midicrt.sock --host 127.0.0.1 --port 8765 --max-broadcast-hz 15
 ```
+
+`--max-broadcast-hz` limits websocket fanout frequency and samples only the latest
+snapshot, reducing CPU cost when many browsers are connected.
 
 ### Security assumptions
 
-- The MVP is **read-only** (no control/command API).
-- No authentication/TLS is built in; default host is loopback (`127.0.0.1`).
-- For remote access, use an SSH tunnel or reverse proxy with auth/TLS.
+- The observer remains **read-only** (no control/command API).
+- Built-in auth and TLS termination are intentionally out of scope for the app
+  process; keep the service bound to loopback (`127.0.0.1`) by default.
+- For remote access, place the observer behind a hardened boundary such as SSH
+  tunneling or a reverse proxy with auth + TLS.
 - Keep tty1 autostart unchanged: `run_tui` remains the only boot-time target.
 - tmux remains the primary operational interface; web observer is for passive
   monitoring only.
+
+### Security deployment guidance (minimal)
+
+Use one of the following patterns instead of embedding secrets in midicrt:
+
+1. **SSH tunnel (quickest, no public listener)**
+
+```bash
+ssh -N -L 8765:127.0.0.1:8765 pi@your-host
+# then browse locally: http://127.0.0.1:8765/
+```
+
+2. **Caddy reverse proxy (TLS + basic auth)**
+
+```caddy
+observer.example.com {
+  reverse_proxy 127.0.0.1:8765
+  basicauth {
+    viewer JDJhJDE0JGR1bW15aGFzaC5yZXBsYWNlLndpdGgueW91ci5oYXNo
+  }
+}
+```
+
+3. **Nginx reverse proxy (TLS + HTTP auth)**
+
+```nginx
+server {
+  listen 443 ssl;
+  server_name observer.example.com;
+
+  ssl_certificate /etc/letsencrypt/live/observer.example.com/fullchain.pem;
+  ssl_certificate_key /etc/letsencrypt/live/observer.example.com/privkey.pem;
+
+  auth_basic "midicrt observer";
+  auth_basic_user_file /etc/nginx/.htpasswd;
+
+  location / {
+    proxy_pass http://127.0.0.1:8765;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
+  }
+}
+```
+
+Notes:
+- Keep credentials and certificates in proxy-managed files or environment,
+  never committed to this repository.
+- If exposing beyond trusted LAN, add rate limits and IP allowlists at the
+  proxy layer.
 
 ## Layout
 
