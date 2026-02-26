@@ -247,5 +247,26 @@
     "output_dir": "captures",
     "file_prefix": "capture",
     "default_bpm": 120.0
+  },
+  "deepresearch": {
+    "enabled": false,
+    "cadence": {
+      "policy": "throttled_hz",
+      "hz": 2.0,
+      "trigger_events": [
+        "program_change",
+        "sysex"
+      ]
+    },
+    "budget": {
+      "max_compute_ms": 30.0,
+      "timeout_ms": 45.0,
+      "on_budget_exceeded": "skip_cycle"
+    },
+    "feature_flags": {
+      "emit_views": true,
+      "include_diagnostics": true,
+      "allow_partial_findings": true
+    }
   }
 }
