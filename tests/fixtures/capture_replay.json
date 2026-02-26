@@ -1,0 +1,64 @@
+{
+  "tick_now": 180,
+  "bpm": 120.0,
+  "bars": 1,
+  "now": 200.0,
+  "capture_events": [
+    {
+      "timestamp": 190.0,
+      "beat_tick": 80,
+      "kind": "note_on",
+      "bytes": [
+        144,
+        60,
+        100
+      ]
+    },
+    {
+      "timestamp": 190.2,
+      "beat_tick": 60,
+      "kind": "note_off",
+      "bytes": [
+        128,
+        60,
+        0
+      ]
+    },
+    {
+      "timestamp": 190.4,
+      "beat_tick": 120,
+      "kind": "note_on",
+      "bytes": [
+        145,
+        67,
+        110
+      ]
+    },
+    {
+      "timestamp": 190.6,
+      "beat_tick": 132,
+      "kind": "note_off",
+      "bytes": [
+        129,
+        67,
+        0
+      ]
+    }
+  ],
+  "expected_messages": [
+    {
+      "type": "note_on",
+      "channel": 1,
+      "note": 67,
+      "velocity": 110,
+      "time": 720
+    },
+    {
+      "type": "note_off",
+      "channel": 1,
+      "note": 67,
+      "velocity": 0,
+      "time": 240
+    }
+  ]
+}
