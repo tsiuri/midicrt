@@ -40,12 +40,17 @@
       <h2>Module outputs</h2>
       <div id="modules" class="mono">--</div>
     </section>
+    <section class="card">
+      <h2>Deep research</h2>
+      <div id="deepResearch" class="mono">Unavailable</div>
+    </section>
   </div>
 
 <script>
 const transportEl = document.getElementById('transport');
 const notesEl = document.getElementById('notes');
 const modulesEl = document.getElementById('modules');
+const deepResearchEl = document.getElementById('deepResearch');
 const staleStateEl = document.getElementById('staleState');
 const reconnectStateEl = document.getElementById('reconnectState');
 const snapshotStateEl = document.getElementById('snapshotState');
@@ -108,6 +113,26 @@ function render(payload) {
 
   const mod = snapshot.module_outputs || {};
   modulesEl.textContent = JSON.stringify(mod, null, 2) || '{}';
+
+  const deepMeta = payload.deep_research || {};
+  const deep = snapshot.deep_research || null;
+  if (deep && typeof deep === 'object') {
+    deepResearchEl.textContent = [
+      `status: ${deep.stale ? 'stale' : 'ok'}`,
+      `produced_at: ${deep.produced_at ?? deep.timestamp ?? '--'}`,
+      `source_tick: ${deep.source_tick ?? '--'}`,
+      `lag_ms: ${Number(deep.lag_ms ?? 0).toFixed ? Number(deep.lag_ms ?? 0).toFixed(1) : (deep.lag_ms ?? '--')}`,
+    ].join('\n');
+  } else if (deepMeta.available) {
+    deepResearchEl.textContent = [
+      `status: ${deepMeta.stale ? 'stale' : 'ok'}`,
+      `produced_at: ${deepMeta.produced_at ?? '--'}`,
+      `source_tick: ${deepMeta.source_tick ?? '--'}`,
+      `lag_ms: ${deepMeta.lag_ms ?? '--'}`,
+    ].join('\n');
+  } else {
+    deepResearchEl.textContent = 'Unavailable (module disabled or no payload yet)';
+  }
 }
 
 function connect() {

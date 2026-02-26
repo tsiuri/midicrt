@@ -72,13 +72,17 @@ class StateSnapshot:
 def normalize_deep_research_payload(payload: dict[str, Any] | None) -> dict[str, Any]:
     """Normalize deep-research metadata without dropping unknown forward fields."""
     source = payload if isinstance(payload, dict) else {}
+    timestamp = float(source.get("timestamp", 0.0))
     normalized = {
         "version": int(source.get("version", 0)),
-        "timestamp": float(source.get("timestamp", 0.0)),
+        "timestamp": timestamp,
+        "produced_at": float(source.get("produced_at", timestamp)),
         "source_snapshot_version": int(source.get("source_snapshot_version", 0)),
         "source_snapshot_timestamp": float(source.get("source_snapshot_timestamp", 0.0)),
+        "source_tick": int(source.get("source_tick", 0)),
         "late_policy": str(source.get("late_policy", "drop")),
         "stale": bool(source.get("stale", False)),
+        "lag_ms": float(source.get("lag_ms", 0.0)),
         "applied": bool(source.get("applied", False)),
         "dropped": bool(source.get("dropped", False)),
         "drop_reason": str(source.get("drop_reason", "")),

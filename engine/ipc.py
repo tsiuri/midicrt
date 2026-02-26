@@ -5,6 +5,7 @@ import os
 import socket
 import threading
 import time
+from copy import deepcopy
 from typing import Any, Callable
 
 PROTOCOL_VERSION = 1
@@ -12,6 +13,31 @@ ENVELOPE_SNAPSHOT = "snapshot"
 ENVELOPE_COMMAND = "command"
 ENVELOPE_ACK = "ack"
 ENVELOPE_ERROR = "error"
+
+
+def _normalize_deep_research_metadata(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Attach stable deep-research metadata without breaking optional semantics."""
+    if not isinstance(snapshot, dict):
+        return snapshot
+
+    raw = snapshot.get("deep_research")
+    if not isinstance(raw, dict):
+        return snapshot
+
+    deep_research = deepcopy(raw)
+    produced_at = float(deep_research.get("produced_at", deep_research.get("timestamp", 0.0)))
+    transport = snapshot.get("transport") if isinstance(snapshot.get("transport"), dict) else {}
+    source_tick = int(deep_research.get("source_tick", transport.get("tick", 0)))
+    lag_ms = float(deep_research.get("lag_ms", max(0.0, (time.time() - produced_at) * 1000.0) if produced_at > 0 else 0.0))
+
+    deep_research["produced_at"] = produced_at
+    deep_research["source_tick"] = source_tick
+    deep_research["lag_ms"] = lag_ms
+    deep_research["stale"] = bool(deep_research.get("stale", False) or lag_ms > 2000.0)
+
+    normalized = dict(snapshot)
+    normalized["deep_research"] = deep_research
+    return normalized
 
 
 def make_envelope(envelope_type: str, payload: dict[str, Any] | None = None, **extra: Any) -> dict[str, Any]:
@@ -97,7 +123,7 @@ class SnapshotPublisher:
             return False
         self._last_publish = now
 
-        envelope = make_envelope(ENVELOPE_SNAPSHOT, snapshot)
+        envelope = make_envelope(ENVELOPE_SNAPSHOT, _normalize_deep_research_metadata(snapshot))
         payload = (json.dumps(envelope, separators=(",", ":")) + "\n").encode("utf-8")
         stale: list[socket.socket] = []
         with self._lock:

@@ -257,6 +257,7 @@ Aligned with `deep-research-report.md`, the project has moved from architecture 
 - required root keys: `schema_version`, `timestamp`, `transport`, `active_notes`, `module_outputs`, `diagnostics`, `ui_context`
 - required transport keys: `tick`, `bar`, `running`, `bpm`
 - output path: `modules.deepresearch` (optional `views.deepresearch`)
+- snapshot transport contract for remote observers uses optional `deep_research` metadata fields: `produced_at` (unix seconds), `source_tick` (transport tick), `lag_ms` (freshness lag), `stale` (freshness boolean)
 
 Cadence and budget policy are intentionally explicit in the interface and mirrored in `config/settings.json` under `deepresearch`:
 

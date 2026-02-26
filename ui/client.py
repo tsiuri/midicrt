@@ -107,28 +107,46 @@ class SnapshotClient:
         return False, {"code": "no-reply", "message": "no command reply received"}
 
 
+def _maybe_attach_schema2_deep_research(snapshot: dict[str, Any], source: dict[str, Any] | None) -> dict[str, Any]:
+    """Attach deep_research payload from schema-v2 envelopes when root field is absent."""
+    if not isinstance(snapshot, dict):
+        return {}
+    if not isinstance(source, dict):
+        return snapshot
+    if isinstance(snapshot.get("deep_research"), dict):
+        return snapshot
+    deep = source.get("deep_research")
+    if isinstance(deep, dict):
+        merged = dict(snapshot)
+        merged["deep_research"] = deep
+        return merged
+    return snapshot
+
+
 def normalize_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
-    """Return a schema snapshot across modern, legacy, and envelope payload shapes."""
+    """Return a schema snapshot across modern, legacy, schema-v2 envelope payload shapes."""
     if not isinstance(snapshot, dict):
         return {}
 
+    envelope_payload = None
     if snapshot.get("type") == ENVELOPE_SNAPSHOT and isinstance(snapshot.get("payload"), dict):
-        snapshot = snapshot["payload"]
+        envelope_payload = snapshot.get("payload")
+        snapshot = envelope_payload
 
     if "transport" in snapshot and "schema_version" in snapshot:
-        return snapshot
+        return _maybe_attach_schema2_deep_research(snapshot, envelope_payload)
 
     nested = snapshot.get("schema")
     if isinstance(nested, dict):
-        return nested
+        return _maybe_attach_schema2_deep_research(nested, snapshot)
 
     payload = snapshot.get("payload")
     if isinstance(payload, dict):
         nested = payload.get("schema")
         if isinstance(nested, dict):
-            return nested
+            return _maybe_attach_schema2_deep_research(nested, payload)
         if "transport" in payload and "schema_version" in payload:
-            return payload
+            return _maybe_attach_schema2_deep_research(payload, snapshot)
 
     return snapshot
 
