@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from blessed import Terminal
 
 from configutil import load_section, save_section
-from ui.model import Frame, Line, PianoRollWidget, Segment, Style, Widget
+from ui.model import EventLogWidget, FooterStatusWidget, Frame, Line, NotesWidget, PianoRollWidget, Segment, Style, TransportWidget, Widget
 from ui.renderers.text import TextRenderer
 
 

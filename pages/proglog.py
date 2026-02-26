@@ -7,6 +7,7 @@ from collections import deque
 import time
 from blessed import Terminal
 from midicrt import draw_line
+from ui.adapters import build_widget_from_legacy_draw
 
 term = Terminal()
 
@@ -99,3 +100,7 @@ def draw(state):
     space = max(0, usable_cols - len(base) - len(marker))
     merged = (base[:usable_cols] + " " * space + marker)[:cols - 1]
     draw_line(last_y, merged)
+
+
+def build_widget(state):
+    return build_widget_from_legacy_draw(draw, state, draw_line)

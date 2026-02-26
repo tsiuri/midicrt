@@ -7,6 +7,7 @@ import time
 import midicrt
 from midicrt import draw_line
 import plugins.zvoicemonitor as zvoice
+from ui.adapters import build_widget_from_legacy_draw
 
 NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 
@@ -107,3 +108,7 @@ def draw(state):
             draw_line(y0 + 12 + i, line[:cols])
         for j in range(len(events), 3):
             draw_line(y0 + 12 + j, "".ljust(cols))
+
+
+def build_widget(state):
+    return build_widget_from_legacy_draw(draw, state, draw_line)

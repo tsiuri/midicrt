@@ -11,6 +11,7 @@ from engine.ipc import SnapshotPublisher
 from engine.modules import LegacyPluginModule, PianoRollViewModule
 from ui.model import Frame
 from ui.renderers.text import TextRenderer
+from ui.adapters import build_widget_from_legacy_draw
 
 # Ensure the running script is importable as `midicrt` so plugin/page imports do
 # not re-execute this module under a different name.
@@ -624,12 +625,18 @@ def _ui_loop_body():
                 except Exception:
                     _use_notes_page_cache = False
 
-        if not _use_notes_page_cache and page and hasattr(page, "build_widget"):
+        if not _use_notes_page_cache and page:
             try:
                 content_rows = max(0, SCREEN_ROWS - 3)
-                widget = page.build_widget(state)
-                if _compositor is not None:
-                    # Render directly to compositor buffer (skip text roundtrip)
+                if hasattr(page, "build_widget"):
+                    widget = page.build_widget(state)
+                elif hasattr(page, "draw"):
+                    widget = build_widget_from_legacy_draw(page.draw, state, draw_line)
+                else:
+                    widget = None
+                if widget is None:
+                    draw_line(3, f"No page loaded for {current_page}")
+                elif _compositor is not None:
                     _compositor.render(widget, Frame(cols=SCREEN_COLS, rows=content_rows))
                 else:
                     rendered = text_renderer.render(widget, Frame(cols=SCREEN_COLS, rows=content_rows))
@@ -637,20 +644,6 @@ def _ui_loop_body():
                         draw_line(3 + idx, line)
             except Exception as e:
                 draw_line(3, f"[Error {current_page}] {e}")
-        elif not _use_notes_page_cache and page and hasattr(page, "draw"):
-            if _compositor is not None:
-                # draw_line() calls go directly to compositor — no capture needed.
-                # ANSI formatting (reverse text etc.) is not supported by compositor
-                # and would only add TerminalCapture overhead (~5ms).
-                try:
-                    page.draw(state)
-                except Exception as e:
-                    draw_line(3, f"[Error {current_page}] {e}")
-            else:
-                try:
-                    page.draw(state)
-                except Exception as e:
-                    draw_line(3, f"[Error {current_page}] {e}")
         elif not _use_notes_page_cache:
             draw_line(3, f"No page loaded for {current_page}")
 

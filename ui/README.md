@@ -100,3 +100,20 @@ Compatibility path:
 View payload generation is intentionally throttled in the engine (`view_publish_hz`)
 so heavier page data does not regenerate on every MIDI event. The publisher
 frequency cap (`publish_hz`) still bounds outgoing snapshot rate.
+
+
+## Renderer parity matrix
+
+| Page | Widget contract | Text renderer | Pixel renderer | Compositor renderer | Notes |
+|---|---|---|---|---|---|
+| 1 Notes | `NotesWidget` | ✅ | ✅ | ✅ | Built via adapter capture; reverse-text emphasis may degrade in adapter mode. |
+| 3 Transport | `TransportWidget` | ✅ | ✅ | ✅ | Structured fields (`running`, `bpm`, `bar`, `tick`, `time_signature`). |
+| 6 Event Log | `EventLogWidget` | ✅ | ✅ | ✅ | Structured title/filter/entries/marker contract. |
+| 8 Piano Roll | `PianoRollWidget` | ✅ | ✅ | ✅ | Primary parity target already migrated. |
+| Footer/Status | `FooterStatusWidget` | ✅ | ✅ | ✅ | Contract defined; integration in plugin/footer path pending. |
+| Remaining pages | `TextBlock` via adapter | ✅ | ✅ | ✅ | `build_widget(state)` delegates to legacy `draw(state)` capture. |
+
+### Known parity gaps
+
+- ANSI styling emitted directly by legacy pages during draw capture (e.g. reverse text via terminal control writes) is not fully preserved in adapter-based widgets.
+- Plugin draw overlays still use terminal-capture integration and are not yet expressed as first-class widget nodes.

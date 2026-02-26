@@ -8,6 +8,8 @@ import time
 from blessed import Terminal
 from midicrt import draw_line
 from configutil import load_section, save_section
+from ui.model import EventLogWidget
+from ui.adapters import build_widget_from_legacy_draw
 
 term = Terminal()
 
@@ -262,3 +264,38 @@ def scroll_home():
 def scroll_end():
     global scroll_offset
     scroll_offset = 0
+
+
+def build_widget(state):
+    cols = state["cols"]
+    rows = state["rows"]
+    if filter_input_mode:
+        filter_summary = f"[Filter: CC {filter_input_text or '?'}]  (Enter=apply, Esc=cancel)"
+    else:
+        active = []
+        if filters["type"]:
+            active.append(filters["type"])
+        if filters["channel"]:
+            active.append(f"Ch{filters['channel']}")
+        if filters["control"]:
+            active.append(f"CC{filters['control']}")
+        filter_summary = ("Filter: " + ", ".join(active)) if active else "(no filters) — press 'f' to enter CC# filter, '*' to clear"
+
+    y0 = state.get("y_offset", 3)
+    top = y0 + 2
+    bottom = rows - 2
+    visible_rows = max(5, min(VISIBLE_ROWS_TARGET, bottom - top))
+
+    if len(log_buffer) == 0:
+        return EventLogWidget(title=f"--- {PAGE_NAME} ---", filter_summary=filter_summary, entries=["(no events yet)"], marker="")
+
+    start_index = max(0, len(log_buffer) - visible_rows - scroll_offset)
+    end_index = start_index + visible_rows
+    visible = list(log_buffer)[start_index:end_index]
+    marker = f"⟵ offset {scroll_offset}" if scroll_offset else "⟵ end of log"
+    return EventLogWidget(
+        title=f"--- {PAGE_NAME} ---",
+        filter_summary=filter_summary[:cols],
+        entries=[v[:cols] for v in visible],
+        marker=marker,
+    )

@@ -12,6 +12,7 @@ from math import log10
 from collections import deque
 from blessed import Terminal
 from midicrt import draw_line
+from ui.adapters import build_widget_from_legacy_draw
 
 term = Terminal()
 
@@ -699,3 +700,7 @@ def draw(state):
             draw_line(top + idx, pad + row)
     else:
         _draw_bars(top, bottom, left, right, levels)
+
+
+def build_widget(state):
+    return build_widget_from_legacy_draw(draw, state, draw_line)

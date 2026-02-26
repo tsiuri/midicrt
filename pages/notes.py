@@ -9,6 +9,8 @@ import harmony as _harmony
 from midicrt import draw_line, INSTRUMENT_NAMES
 from plugins import polydisplay
 from plugins import zharmony
+from ui.adapters import capture_legacy_lines
+from ui.model import Line, NotesWidget
 
 term = midicrt.term
 
@@ -183,3 +185,8 @@ def draw(state):
             else:
                 motif_line = "Motif:  --"
             draw_line(info_y + 11, motif_line[:cols])
+
+
+def build_widget(state):
+    lines = capture_legacy_lines(draw, state, draw_line)
+    return NotesWidget(lines=[Line.plain(t) for t in lines])

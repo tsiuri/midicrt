@@ -3,6 +3,7 @@ PAGE_ID = 0
 PAGE_NAME = "Help / Keys"
 
 from midicrt import draw_line
+from ui.adapters import build_widget_from_legacy_draw
 
 def draw(state):
     lines = [
@@ -24,3 +25,7 @@ def draw(state):
     ]
     for i, l in enumerate(lines):
         draw_line(2 + i, l)
+
+
+def build_widget(state):
+    return build_widget_from_legacy_draw(draw, state, draw_line)

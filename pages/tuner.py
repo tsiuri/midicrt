@@ -9,6 +9,7 @@ import sys
 from blessed import Terminal
 from midicrt import draw_line
 from configutil import load_section, save_section
+from ui.adapters import build_widget_from_legacy_draw
 
 audio = sys.modules.get("pages.audiospectrum")
 if audio is None:
@@ -184,3 +185,7 @@ def draw(state):
         line = f"Listening...  Conf:{_last_conf:.2f}  Level:{_last_db:5.1f} dB"
         draw_line(y0 + 2, line[:cols])
         draw_line(y0 + 3, "".ljust(cols))
+
+
+def build_widget(state):
+    return build_widget_from_legacy_draw(draw, state, draw_line)

@@ -7,6 +7,7 @@ import os
 import time
 from midicrt import draw_line, term
 from configutil import load_settings, save_settings, config_path
+from ui.adapters import build_widget_from_legacy_draw
 
 _ROOT = {}
 _PATH = []  # list of keys/indices
@@ -346,3 +347,7 @@ def draw(state):
     if _EDIT_MODE:
         edit_line = f"Edit: {_EDIT_BUFFER}"
         draw_line(2, edit_line[:cols])
+
+
+def build_widget(state):
+    return build_widget_from_legacy_draw(draw, state, draw_line)

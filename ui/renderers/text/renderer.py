@@ -5,7 +5,20 @@ TTY-only renderer: no framebuffer or X dependencies.
 
 from blessed import Terminal
 
-from ui.model import Column, Frame, Line, PianoRollWidget, Segment, Spacer, TextBlock, Widget
+from ui.model import (
+    Column,
+    EventLogWidget,
+    FooterStatusWidget,
+    Frame,
+    Line,
+    NotesWidget,
+    PianoRollWidget,
+    Segment,
+    Spacer,
+    TextBlock,
+    TransportWidget,
+    Widget,
+)
 
 
 class TextRenderer:
@@ -45,6 +58,27 @@ class TextRenderer:
             for child in widget.children:
                 out.extend(self._flatten(child))
             return out
+
+        if isinstance(widget, TransportWidget):
+            return [
+                Line.plain(f"Running: {widget.running}"),
+                Line.plain(f"Bar Counter: {widget.bar}"),
+                Line.plain(f"BPM: {widget.bpm:5.1f}"),
+                Line.plain(f"Ticks: {widget.tick}"),
+                Line.plain(widget.time_signature or "Time Signature: (no lock)"),
+            ]
+        if isinstance(widget, NotesWidget):
+            return widget.lines
+        if isinstance(widget, EventLogWidget):
+            out = [Line.plain(widget.title), Line.plain(widget.filter_summary)]
+            out.extend(Line.plain(e) for e in widget.entries)
+            if widget.marker:
+                out.append(Line.plain(widget.marker))
+            return out
+        if isinstance(widget, FooterStatusWidget):
+            if widget.right:
+                return [Line.plain(f"{widget.left} {widget.right}".strip())]
+            return [Line.plain(widget.left)]
         if isinstance(widget, PianoRollWidget):
             lines: list[Line] = []
             timeline_label = f"{'Bars':>7} │"

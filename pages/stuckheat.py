@@ -5,6 +5,7 @@ PAGE_NAME = "Stuck Heatmap"
 
 from midicrt import draw_line
 import plugins.zstucknotes as zstucknotes
+from ui.adapters import build_widget_from_legacy_draw
 
 NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 
@@ -55,3 +56,7 @@ def draw(state):
         draw_line(y0 + 6, line[:cols])
         draw_line(y0 + 7, "".ljust(cols))
         draw_line(y0 + 8, "".ljust(cols))
+
+
+def build_widget(state):
+    return build_widget_from_legacy_draw(draw, state, draw_line)
