@@ -36,6 +36,7 @@ class MidiEngine:
         modules: list[EngineModule] | None = None,
         on_event: Callable[[dict[str, Any], mido.Message], None] | None = None,
         publisher: Any | None = None,
+        command_hooks: dict[str, Callable[..., Any]] | None = None,
     ) -> None:
         self.state = EngineState()
         self.modules = modules if modules is not None else []
@@ -52,6 +53,7 @@ class MidiEngine:
         }
         self._capture_events = deque()
         self._capture_seq = 0
+        self._command_hooks = command_hooks if isinstance(command_hooks, dict) else {}
 
     def get_snapshot(self) -> dict[str, Any]:
         with self._lock:
@@ -127,6 +129,56 @@ class MidiEngine:
     def set_status_text(self, text: str) -> None:
         with self._lock:
             self.state.status_text = str(text)
+
+    def handle_command(self, command: str, args: dict[str, Any] | None = None) -> tuple[bool, dict[str, Any]]:
+        """Dispatch IPC/local commands and return a structured result payload."""
+        cmd = str(command or "").strip()
+        payload = args if isinstance(args, dict) else {}
+
+        if cmd == "capture_recent":
+            bars = payload.get("bars")
+            if bars is not None:
+                try:
+                    bars = max(1, int(bars))
+                except Exception:
+                    return False, {"code": "invalid-args", "message": "bars must be an integer >= 1"}
+            ok, message, out_path = self.capture_recent_to_file(bars=bars, trigger="ipc:capture_recent")
+            if not ok:
+                return False, {"code": "capture-failed", "message": message}
+            return True, {"message": message, "path": out_path, "bars": bars}
+
+        if cmd == "set_page":
+            hook = self._command_hooks.get("set_page")
+            if not callable(hook):
+                return False, {"code": "unsupported", "message": "set_page unavailable"}
+            if "page" not in payload:
+                return False, {"code": "invalid-args", "message": "missing page"}
+            ok, resolved = hook(payload.get("page"))
+            if not ok:
+                return False, {"code": "invalid-page", "message": f"invalid page {resolved}", "page": resolved}
+            return True, {"message": f"page->{resolved}", "page": resolved}
+
+        if cmd == "wake_screensaver":
+            hook = self._command_hooks.get("wake_screensaver")
+            if not callable(hook):
+                return False, {"code": "unsupported", "message": "wake_screensaver unavailable"}
+            active = bool(hook())
+            return True, {"message": "screen-on", "was_active": active}
+
+        if cmd == "set_config":
+            hook = self._command_hooks.get("set_config")
+            if not callable(hook):
+                return False, {"code": "unsupported", "message": "set_config unavailable"}
+            section = payload.get("section")
+            value = payload.get("value")
+            if not isinstance(section, str) or not section:
+                return False, {"code": "invalid-args", "message": "section must be a non-empty string"}
+            if not isinstance(value, dict):
+                return False, {"code": "invalid-args", "message": "value must be an object"}
+            hook(section, value)
+            return True, {"message": f"config[{section}] updated", "section": section}
+
+        return False, {"code": "unknown-command", "message": f"unknown command {cmd}"}
 
     def capture_recent_to_file(self, bars: int | None = None, trigger: str = "manual") -> tuple[bool, str, str | None]:
         cfg = dict(self._capture_cfg)

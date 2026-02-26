@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import json
 import socket
+import time
 from typing import Any, Callable
+
+from engine.ipc import ENVELOPE_ACK, ENVELOPE_COMMAND, ENVELOPE_ERROR, ENVELOPE_SNAPSHOT, make_envelope
 
 
 class SnapshotClient:
-    """Read newline-delimited snapshots from an engine IPC socket.
-
-    If IPC is disabled, it can fall back to polling an in-process engine.
-    """
+    """Read snapshots and optionally send commands over engine IPC sockets."""
 
     def __init__(
         self,
@@ -17,8 +17,10 @@ class SnapshotClient:
         enabled: bool = True,
         engine_snapshot_fn: Callable[[], dict[str, Any]] | None = None,
         timeout_s: float = 0.25,
+        command_socket_path: str | None = None,
     ) -> None:
         self.socket_path = socket_path
+        self.command_socket_path = command_socket_path or socket_path
         self.enabled = enabled
         self.engine_snapshot_fn = engine_snapshot_fn
         self.timeout_s = timeout_s
@@ -50,10 +52,59 @@ class SnapshotClient:
                 return None
             if not line:
                 return None
-            return normalize_snapshot(json.loads(line))
+            msg = json.loads(line)
+            if isinstance(msg, dict) and msg.get("type") == ENVELOPE_SNAPSHOT:
+                return normalize_snapshot(msg.get("payload", {}))
+            return normalize_snapshot(msg)
         if self.engine_snapshot_fn:
             return normalize_snapshot(self.engine_snapshot_fn())
         return None
+
+    def send_command(
+        self,
+        command: str,
+        payload: dict[str, Any] | None = None,
+        timeout_s: float | None = None,
+    ) -> tuple[bool, dict[str, Any]]:
+        if not self.enabled:
+            return False, {"code": "ipc-disabled", "message": "IPC disabled"}
+        timeout = self.timeout_s if timeout_s is None else float(timeout_s)
+        request_id = f"{int(time.time() * 1000)}"
+        request = make_envelope(
+            ENVELOPE_COMMAND,
+            payload if isinstance(payload, dict) else {},
+            request_id=request_id,
+            command=str(command or ""),
+        )
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(timeout)
+        try:
+            sock.connect(self.command_socket_path)
+            sock.sendall((json.dumps(request, separators=(",", ":")) + "\n").encode("utf-8"))
+            with sock.makefile("r", encoding="utf-8", newline="\n") as reader:
+                deadline = time.monotonic() + timeout
+                while time.monotonic() < deadline:
+                    line = reader.readline()
+                    if not line:
+                        break
+                    env = json.loads(line)
+                    if not isinstance(env, dict):
+                        continue
+                    if env.get("request_id") != request_id:
+                        continue
+                    etype = env.get("type")
+                    data = env.get("payload", {})
+                    if etype == ENVELOPE_ACK:
+                        return True, data if isinstance(data, dict) else {}
+                    if etype == ENVELOPE_ERROR:
+                        return False, data if isinstance(data, dict) else {"code": "error", "message": "command failed"}
+        except TimeoutError:
+            return False, {"code": "timeout", "message": "command timed out"}
+        except OSError as exc:
+            return False, {"code": "io-error", "message": str(exc)}
+        finally:
+            sock.close()
+        return False, {"code": "no-reply", "message": "no command reply received"}
 
 
 def normalize_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:

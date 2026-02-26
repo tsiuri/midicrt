@@ -403,6 +403,20 @@ def switch_page(page):
     current_page = page_id
     return True, page_id
 
+
+def wake_screensaver() -> bool:
+    ss = next((m for m in PLUGINS if hasattr(m, "is_active") and hasattr(m, "deactivate")), None)
+    if not ss:
+        return False
+    was_active = bool(ss.is_active())
+    ss.deactivate()
+    return was_active
+
+
+def set_config_section(section: str, value: dict):
+    save_section(section, value)
+
+
 SNAPSHOT_PUBLISHER = SnapshotPublisher(
     socket_path=IPC_SOCKET_PATH,
     enabled=IPC_ENABLED,
@@ -415,7 +429,16 @@ _pianoroll_page = PAGES.get(8)
 if _pianoroll_page and hasattr(_pianoroll_page, "get_view_payload"):
     ENGINE_MODULES.append(PianoRollViewModule(_pianoroll_page.get_view_payload))
 
-ENGINE = MidiEngine(modules=ENGINE_MODULES, on_event=handle_engine_event, publisher=SNAPSHOT_PUBLISHER)
+ENGINE = MidiEngine(
+    modules=ENGINE_MODULES,
+    on_event=handle_engine_event,
+    publisher=SNAPSHOT_PUBLISHER,
+    command_hooks={
+        "set_page": switch_page,
+        "wake_screensaver": wake_screensaver,
+        "set_config": set_config_section,
+    },
+)
 ENGINE.configure_capture({
     "bars_to_keep": CAPTURE_BARS_TO_KEEP,
     "dump_bars": CAPTURE_DUMP_BARS,
@@ -423,6 +446,7 @@ ENGINE.configure_capture({
     "file_prefix": CAPTURE_FILE_PREFIX,
     "default_bpm": CAPTURE_DEFAULT_BPM,
 })
+SNAPSHOT_PUBLISHER.set_command_handler(ENGINE.handle_command)
 
 def ui_loop():
     global last_page, current_page, exit_flag, last_header, SCREEN_COLS, SCREEN_ROWS
