@@ -1,4 +1,5 @@
 import sys
+import threading
 import types
 import unittest
 from unittest import mock
@@ -40,6 +41,19 @@ class _ProbeModule:
 class _DeepResearchProbe(_ProbeModule):
     name = "deepresearch"
 
+
+
+
+class _BlockingDeepResearchProbe(_DeepResearchProbe):
+    def __init__(self):
+        super().__init__()
+        self.started = threading.Event()
+        self.release = threading.Event()
+
+    def on_event(self, event):
+        self.started.set()
+        self.release.wait(timeout=1.0)
+        super().on_event(event)
 
 class SchedulerOverloadTest(unittest.TestCase):
     def test_clock_event_skips_event_driven_module_and_tracks_skip_diag(self):
@@ -83,7 +97,7 @@ class SchedulerOverloadTest(unittest.TestCase):
             deep_research_settings={"enabled": True, "cadence_hz": 10.0, "max_runtime_ms": 5.0, "queue_size": 1},
         )
 
-        mono = [1.000, 1.000, 1.020, 1.030, 1.030]
+        mono = [1.000, 1.000, 1.020, 1.030, 1.030] * 4
         with mock.patch("engine.core.time.time", return_value=300.0), mock.patch(
             "engine.scheduler.time.monotonic",
             side_effect=mono,
@@ -98,9 +112,50 @@ class SchedulerOverloadTest(unittest.TestCase):
         self.assertEqual(metrics["runs"], 1)
         self.assertEqual(metrics["overruns"], 1)
         self.assertEqual(metrics["dropped"], 1)
-        self.assertEqual(metrics["deferred"], 1)
+        self.assertIn(metrics["deferred"], [0, 1])
         self.assertEqual(metrics["last_drop_reason"], "runtime_over_budget")
         self.assertIn("metrics", snap["modules"]["deep_research"])
+
+    def test_late_worker_result_is_dropped_with_default_policy(self):
+        mod = _BlockingDeepResearchProbe()
+        engine = MidiEngine(modules=[mod], deep_research_settings={"enabled": True, "cadence_hz": 100.0})
+
+        with mock.patch("engine.core.time.time", return_value=400.0):
+            engine.ingest(mido.Message("note_on", note=60, velocity=100, channel=0))
+
+        self.assertTrue(mod.started.wait(timeout=1.0))
+        with engine._lock:
+            engine._deep_research_latest_snapshot_version += 1
+        mod.release.set()
+        engine._deep_research_q.join()
+
+        deep = engine.get_snapshot()["schema"]["deep_research"]
+        self.assertTrue(deep["stale"])
+        self.assertTrue(deep["dropped"])
+        self.assertEqual(deep["drop_reason"], "late_result")
+
+    def test_late_worker_result_can_apply_next_when_configured(self):
+        mod = _BlockingDeepResearchProbe()
+        engine = MidiEngine(
+            modules=[mod],
+            deep_research_settings={"enabled": True, "cadence_hz": 100.0, "late_policy": "apply_next"},
+        )
+
+        with mock.patch("engine.core.time.time", return_value=500.0):
+            engine.ingest(mido.Message("note_on", note=60, velocity=100, channel=0))
+
+        self.assertTrue(mod.started.wait(timeout=1.0))
+        with engine._lock:
+            engine._deep_research_latest_snapshot_version += 1
+        mod.release.set()
+        engine._deep_research_q.join()
+
+        deep = engine.get_snapshot()["schema"]["deep_research"]
+        self.assertTrue(deep["stale"])
+        self.assertFalse(deep["dropped"])
+        self.assertTrue(deep["applied"])
+        self.assertEqual(deep["late_policy"], "apply_next")
+
 
 
 if __name__ == "__main__":

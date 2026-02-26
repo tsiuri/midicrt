@@ -4,6 +4,8 @@ import threading
 import time
 import os
 import queue
+from copy import deepcopy
+from types import MappingProxyType
 from collections import deque
 from dataclasses import asdict, dataclass, field
 from typing import Any, Callable
@@ -12,7 +14,7 @@ import mido
 
 from engine.modules.interfaces import EngineModule
 from engine.scheduler import ModuleScheduler
-from engine.state.schema import build_snapshot
+from engine.state.schema import build_snapshot, normalize_deep_research_payload
 from engine.state.tempo_map import TempoMap
 
 
@@ -82,7 +84,7 @@ class MidiEngine:
         }
         if not self._deep_research_modules:
             self._deep_research_modules = {"deepresearch", "deep_research"}
-        self._deep_research_q: queue.Queue[tuple[Any, dict[str, Any], bool]] = queue.Queue(
+        self._deep_research_q: queue.Queue[tuple[Any, dict[str, Any], bool, dict[str, Any]]] = queue.Queue(
             maxsize=max(1, int(self._deep_research_cfg.get("queue_size", 1)))
         )
         self._deep_research_stop = threading.Event()
@@ -98,6 +100,82 @@ class MidiEngine:
         self._midi_activity_handler = midi_activity_handler
         self._legacy_event_shim_enabled = bool(legacy_event_shim_enabled)
         self._ui_context: dict[str, Any] = {"cols": 0, "rows": 0, "y_offset": 3, "current_page": 0}
+        self._deep_research_late_policy = str(self._deep_research_cfg.get("late_policy", "drop")).strip().lower() or "drop"
+        if self._deep_research_late_policy not in {"drop", "apply_next"}:
+            self._deep_research_late_policy = "drop"
+        self._deep_research_latest_snapshot_version = 0
+        self._deep_research_outgoing: dict[str, Any] = {}
+        self._deep_research_pending: dict[str, Any] | None = None
+
+    def _freeze_snapshot_payload(self, payload: Any) -> Any:
+        if isinstance(payload, dict):
+            frozen = {str(key): self._freeze_snapshot_payload(value) for key, value in payload.items()}
+            return MappingProxyType(frozen)
+        if isinstance(payload, list):
+            return tuple(self._freeze_snapshot_payload(value) for value in payload)
+        if isinstance(payload, set):
+            return tuple(sorted(self._freeze_snapshot_payload(value) for value in payload))
+        if isinstance(payload, tuple):
+            return tuple(self._freeze_snapshot_payload(value) for value in payload)
+        return payload
+
+    def _thaw_snapshot_payload(self, payload: Any) -> Any:
+        if isinstance(payload, MappingProxyType):
+            return {key: self._thaw_snapshot_payload(value) for key, value in payload.items()}
+        if isinstance(payload, dict):
+            return {key: self._thaw_snapshot_payload(value) for key, value in payload.items()}
+        if isinstance(payload, tuple):
+            return [self._thaw_snapshot_payload(value) for value in payload]
+        return payload
+
+    def _make_research_snapshot(self, event: dict[str, Any]) -> dict[str, Any]:
+        snapshot = self.get_snapshot()["schema"]
+        with self._lock:
+            self._deep_research_latest_snapshot_version += 1
+            version = self._deep_research_latest_snapshot_version
+        timestamp = time.time()
+        snapshot["deep_research"] = normalize_deep_research_payload(
+            {
+                "version": version,
+                "timestamp": timestamp,
+                "source_snapshot_version": version,
+                "source_snapshot_timestamp": timestamp,
+                "late_policy": self._deep_research_late_policy,
+                "stale": False,
+                "applied": False,
+                "dropped": False,
+                "drop_reason": "",
+                "event_kind": str(event.get("kind", "")),
+                "result": {},
+            }
+        )
+        return {"schema": snapshot, "event": deepcopy(event)}
+
+    def _apply_deep_research_result(self, source_version: int, source_timestamp: float, result: Any) -> None:
+        payload = {
+            "version": int(source_version),
+            "timestamp": time.time(),
+            "source_snapshot_version": int(source_version),
+            "source_snapshot_timestamp": float(source_timestamp),
+            "late_policy": self._deep_research_late_policy,
+            "stale": False,
+            "applied": True,
+            "dropped": False,
+            "drop_reason": "",
+            "result": deepcopy(result) if isinstance(result, dict) else {"value": deepcopy(result)},
+        }
+        with self._lock:
+            if source_version < self._deep_research_latest_snapshot_version:
+                payload["stale"] = True
+                if self._deep_research_late_policy == "drop":
+                    payload["applied"] = False
+                    payload["dropped"] = True
+                    payload["drop_reason"] = "late_result"
+                    self._deep_research_outgoing = normalize_deep_research_payload(payload)
+                    return
+                self._deep_research_pending = normalize_deep_research_payload(payload)
+                return
+            self._deep_research_outgoing = normalize_deep_research_payload(payload)
 
     def get_snapshot(self) -> dict[str, Any]:
         with self._lock:
@@ -105,6 +183,19 @@ class MidiEngine:
             active_notes = {ch: set(notes) for ch, notes in self.state.active_notes.items()}
 
         module_state, views = self._collect_module_outputs()
+        module_names = [getattr(mod, "name", mod.__class__.__name__) for mod in self.modules]
+        scheduler_diag = self._scheduler.diagnostics(module_names)
+        with self._lock:
+            if (
+                self._deep_research_pending
+                and self._deep_research_late_policy == "apply_next"
+                and self._deep_research_pending.get("source_snapshot_version", 0)
+                <= self._deep_research_latest_snapshot_version
+            ):
+                self._deep_research_outgoing = dict(self._deep_research_pending)
+                self._deep_research_pending = None
+            deep_research_payload = dict(self._deep_research_outgoing)
+
         schema_snapshot = build_snapshot(
             timestamp=time.time(),
             tick=snap["tick_counter"],
@@ -119,8 +210,9 @@ class MidiEngine:
             module_outputs=module_state,
             views=views,
             status_text=snap.get("status_text", ""),
-            diagnostics=snap.get("diagnostics", {}),
+            diagnostics=scheduler_diag or snap.get("diagnostics", {}),
             ui_context=dict(self._ui_context),
+            deep_research=deep_research_payload,
         ).as_dict()
 
         # Backward-compat fields while old callsites migrate.
@@ -422,7 +514,9 @@ class MidiEngine:
     def _enqueue_deep_research(self, mod: Any, event: dict[str, Any], include_clock: bool) -> None:
         if not self._scheduler.should_run_deep_research():
             return
-        work_item = (mod, dict(event), bool(include_clock))
+        research_ctx = self._make_research_snapshot(event)
+        frozen_ctx = self._freeze_snapshot_payload(research_ctx)
+        work_item = (mod, dict(event), bool(include_clock), frozen_ctx)
         try:
             self._deep_research_q.put_nowait(work_item)
         except queue.Full:
@@ -431,14 +525,23 @@ class MidiEngine:
     def _deep_research_loop(self) -> None:
         while not self._deep_research_stop.is_set():
             try:
-                mod, event, include_clock = self._deep_research_q.get(timeout=0.05)
+                mod, event, include_clock, frozen_ctx = self._deep_research_q.get(timeout=0.05)
             except queue.Empty:
                 continue
             start_ts = self._scheduler.begin_deep_research()
             try:
+                research_ctx = self._thaw_snapshot_payload(frozen_ctx)
+                schema_snapshot = research_ctx.get("schema", {}) if isinstance(research_ctx, dict) else {}
+                source = schema_snapshot.get("deep_research", {}) if isinstance(schema_snapshot, dict) else {}
                 mod.on_event(event)
                 if include_clock:
-                    mod.on_clock(self.get_snapshot())
+                    mod.on_clock(schema_snapshot)
+                outputs = mod.get_outputs() if hasattr(mod, "get_outputs") else {}
+                self._apply_deep_research_result(
+                    int(source.get("source_snapshot_version", source.get("version", 0))),
+                    float(source.get("source_snapshot_timestamp", source.get("timestamp", 0.0))),
+                    outputs if isinstance(outputs, dict) else {},
+                )
             except Exception:
                 pass
             finally:

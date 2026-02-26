@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -36,6 +37,7 @@ class StateSnapshot:
     status_text: str = ""
     diagnostics: dict[str, Any] = field(default_factory=dict)
     ui_context: dict[str, Any] = field(default_factory=dict)
+    deep_research: dict[str, Any] | None = None
 
     def as_dict(self) -> dict[str, Any]:
         payload = {
@@ -62,7 +64,30 @@ class StateSnapshot:
         }
         if self.views:
             payload["views"] = self.views
+        if self.deep_research:
+            payload["deep_research"] = normalize_deep_research_payload(self.deep_research)
         return payload
+
+
+def normalize_deep_research_payload(payload: dict[str, Any] | None) -> dict[str, Any]:
+    """Normalize deep-research metadata without dropping unknown forward fields."""
+    source = payload if isinstance(payload, dict) else {}
+    normalized = {
+        "version": int(source.get("version", 0)),
+        "timestamp": float(source.get("timestamp", 0.0)),
+        "source_snapshot_version": int(source.get("source_snapshot_version", 0)),
+        "source_snapshot_timestamp": float(source.get("source_snapshot_timestamp", 0.0)),
+        "late_policy": str(source.get("late_policy", "drop")),
+        "stale": bool(source.get("stale", False)),
+        "applied": bool(source.get("applied", False)),
+        "dropped": bool(source.get("dropped", False)),
+        "drop_reason": str(source.get("drop_reason", "")),
+        "result": deepcopy(source.get("result", {})),
+    }
+    for key, value in source.items():
+        if key not in normalized:
+            normalized[key] = deepcopy(value)
+    return normalized
 
 
 def build_snapshot(
@@ -82,6 +107,7 @@ def build_snapshot(
     status_text: str = "",
     diagnostics: dict[str, Any] | None = None,
     ui_context: dict[str, Any] | None = None,
+    deep_research: dict[str, Any] | None = None,
 ) -> StateSnapshot:
     active_notes = active_notes or {}
     normalized = {ch: sorted(notes) for ch, notes in active_notes.items()}
@@ -109,4 +135,5 @@ def build_snapshot(
         status_text=status_text,
         diagnostics=diagnostics or {},
         ui_context=ui_context or {},
+        deep_research=normalize_deep_research_payload(deep_research),
     )
