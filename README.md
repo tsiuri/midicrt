@@ -274,6 +274,8 @@ Aligned with `deep-research-report.md`, the project has moved from architecture 
 - expand contract-level and tempo/IPC regression coverage,
 - harden observer behavior for long-running multi-client use.
 
+Before scaling to many simultaneous agents, use the go/no-go checklist: [`docs/parallel_readiness_checklist.md`](docs/parallel_readiness_checklist.md).
+
 ### DeepResearch module contract (schema + versioning)
 
 `engine/modules/interfaces.py` defines a `DeepResearchModule` protocol that consumes a strict snapshot subset matching `engine/state/schema.py` keys:
