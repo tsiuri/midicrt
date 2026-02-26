@@ -24,6 +24,8 @@ class SchemaContractTest(unittest.TestCase):
         self.assertEqual(snapshot["transport"]["tick"], 42)
         self.assertIn("channels", snapshot)
         self.assertIn("module_outputs", snapshot)
+        self.assertIn("deep_research", snapshot)
+        self.assertEqual(snapshot["deep_research"]["late_policy"], "drop")
 
     def test_normalize_snapshot_handles_legacy_and_schema_wrapped_payloads(self):
         modern = {"schema_version": 3, "transport": {"tick": 7}, "status_text": "ok"}
@@ -51,6 +53,21 @@ class SchemaContractTest(unittest.TestCase):
         normalized = normalize_snapshot(modern)
         self.assertIn("unknown_future_field", normalized)
         self.assertEqual(normalized["unknown_future_field"]["nested"], [1, 2, 3])
+
+    def test_build_snapshot_normalizes_deep_research_payload(self):
+        snapshot = build_snapshot(
+            timestamp=123.0,
+            tick=42,
+            bar=1,
+            running=True,
+            bpm=120.0,
+            deep_research={"version": "7", "timestamp": "9.5", "future": {"ok": True}},
+        ).as_dict()
+
+        self.assertEqual(snapshot["deep_research"]["version"], 7)
+        self.assertEqual(snapshot["deep_research"]["timestamp"], 9.5)
+        self.assertIn("future", snapshot["deep_research"])
+
 
 
 if __name__ == "__main__":
