@@ -15,8 +15,10 @@ def handle(msg):
 
 def draw(state):
     """Draw the CC summary table."""
-    draw_line(1, "Recent Control Changes (CC Monitor)")
-    y = 3
+    y0 = int(state.get("y_offset", 3))
+    cols = int(state.get("cols", 95))
+    draw_line(y0, f"--- {PAGE_NAME} ---"[:cols])
+    y = y0 + 1
     for ch in range(1, 17):
         events = list(_recent_ccs[ch])
         if events:
@@ -25,5 +27,5 @@ def draw(state):
         else:
             cc_str = ""
         line = f"{ch:02d}  {cc_str}"
-        draw_line(y, line)
+        draw_line(y, line[:cols])
         y += 1

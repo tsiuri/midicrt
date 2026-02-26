@@ -36,13 +36,16 @@ def draw(state):
 
     x_bar = (screen_cols // 2) - (len(visual) // 2)
 
-    # sysex status: shown to the left of the bar, fades after SYSEX_DISPLAY_SECS
+    # Footer status shown to the left of the bar: FPS + recent SysEx summary.
     left_width = max(0, x_bar - 1)
+    fps = (getattr(midicrt, "fps_status", "") or "").strip()
     sx = midicrt.sysex_status
+    sx_text = ""
     if sx and (time.time() - midicrt.sysex_status_time) < SYSEX_DISPLAY_SECS:
-        left_text = sx[:left_width].ljust(left_width)
-    else:
-        left_text = " " * left_width
+        sx_text = sx.strip()
+    parts = [p for p in (fps, sx_text) if p]
+    status = "  ".join(parts)
+    left_text = status[:left_width].ljust(left_width) if status else (" " * left_width)
 
     sys.stdout.write(t.move_yx(y, 0) + left_text + " " + visual)
     sys.stdout.flush()

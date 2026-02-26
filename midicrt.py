@@ -335,6 +335,7 @@ def handle_engine_event(event, msg: mido.Message):
 # ---------------------------------------------------------------------
 sysex_status = ""       # last sysex command summary, displayed in footer
 sysex_status_time = 0.0
+fps_status = ""         # rolling fps text displayed in footer
 
 # ---------------------------------------------------------------------
 # UI loop
@@ -519,15 +520,14 @@ def _ui_loop_body():
         else:
             draw_line(1, base)
 
-        # --- STATUS (row 2): FPS counter in compositor mode, blank otherwise
+        # --- STATUS (row 2): keep blank; footer plugins render status text
         if _compositor is not None:
             _frame_now = time.monotonic()
             _frame_dt  = _frame_now - getattr(ui_loop, "_frame_last_t", _frame_now)
             ui_loop._frame_last_t = _frame_now
-            _fps_display = f"  fps:{1.0/_frame_dt:.1f}" if _frame_dt > 0 else "  fps:--"
-            draw_line(2, _fps_display)
-        else:
-            draw_line(2, "")
+            global fps_status
+            fps_status = f"fps:{1.0/_frame_dt:.1f}" if _frame_dt > 0 else "fps:--"
+        draw_line(2, "")
 
         # --- SCREENSAVER CHECK: skip all drawing if active
         # In compositor mode the screensaver writes zeros directly to fb0 via
@@ -547,7 +547,22 @@ def _ui_loop_body():
                 page.on_tick(state)
             except Exception:
                 pass
-        if page and hasattr(page, "build_widget"):
+        _use_notes_page_cache = False
+        if _compositor is not None and current_page == 1:
+            cache = getattr(ui_loop, "_notes_page_cache", None)
+            cache_next = getattr(ui_loop, "_notes_page_next_t", 0.0)
+            if cache is not None and time.monotonic() < cache_next:
+                try:
+                    y0_px = 3 * _compositor.comp.char_h
+                    h_px = cache.shape[0]
+                    w_px = cache.shape[1]
+                    if w_px == _compositor.comp._buf.shape[1]:
+                        _compositor.comp._buf[y0_px:y0_px + h_px, :w_px] = cache
+                        _use_notes_page_cache = True
+                except Exception:
+                    _use_notes_page_cache = False
+
+        if not _use_notes_page_cache and page and hasattr(page, "build_widget"):
             try:
                 content_rows = max(0, SCREEN_ROWS - 3)
                 widget = page.build_widget(state)
@@ -560,7 +575,7 @@ def _ui_loop_body():
                         draw_line(3 + idx, line)
             except Exception as e:
                 draw_line(3, f"[Error {current_page}] {e}")
-        elif page and hasattr(page, "draw"):
+        elif not _use_notes_page_cache and page and hasattr(page, "draw"):
             if _compositor is not None:
                 # draw_line() calls go directly to compositor — no capture needed.
                 # ANSI formatting (reverse text etc.) is not supported by compositor
@@ -574,11 +589,11 @@ def _ui_loop_body():
                     page.draw(state)
                 except Exception as e:
                     draw_line(3, f"[Error {current_page}] {e}")
-        else:
+        elif not _use_notes_page_cache:
             draw_line(3, f"No page loaded for {current_page}")
 
         # --- PLUGIN VISUALS (respect y_offset)
-        if _do_plugin_draw:
+        if _do_plugin_draw and not _use_notes_page_cache:
             if _compositor is not None:
                 _pcap = _TerminalCapture(SCREEN_COLS, SCREEN_ROWS)
                 _saved = sys.stdout
@@ -606,9 +621,64 @@ def _ui_loop_body():
                         except Exception:
                             pass
 
+        if _compositor is not None and current_page == 1 and not _use_notes_page_cache:
+            try:
+                y0_px = 3 * _compositor.comp.char_h
+                h_px = max(0, SCREEN_ROWS - 3) * _compositor.comp.char_h
+                y1_px = min(_compositor.comp._buf.shape[0], y0_px + h_px)
+                ui_loop._notes_page_cache = _compositor.comp._buf[y0_px:y1_px, :].copy()
+                ui_loop._notes_page_next_t = time.monotonic() + (1.0 / 30.0)
+            except Exception:
+                pass
+
         if _compositor is not None:
             if current_page == 1:
-                _compositor.draw_notes_badge()
+                badge_now = time.monotonic()
+                badge_next = getattr(ui_loop, "_notes_badge_data_next_t", 0.0)
+                if badge_now >= badge_next or not hasattr(ui_loop, "_notes_badge_levels"):
+                    badge_levels = None
+                    badge_pcs = set()
+                    badge_roll = None
+                    spectrum_page = PAGES.get(9)
+                    if spectrum_page:
+                        try:
+                            if not getattr(ui_loop, "_notes_badge_spec_ready", False):
+                                if hasattr(spectrum_page, "register_spectrum_tap"):
+                                    spectrum_page.register_spectrum_tap(1)
+                                if hasattr(spectrum_page, "ensure_background"):
+                                    spectrum_page.ensure_background()
+                                ui_loop._notes_badge_spec_ready = True
+                            if hasattr(spectrum_page, "get_levels"):
+                                badge_levels = spectrum_page.get_levels()
+                        except Exception:
+                            badge_levels = None
+                    try:
+                        schema = snapshot.get("schema", {})
+                        views = schema.get("views", {}) if isinstance(schema, dict) else {}
+                        if isinstance(views, dict):
+                            cand = views.get("pianoroll") or views.get("8")
+                            if isinstance(cand, dict):
+                                badge_roll = cand
+                    except Exception:
+                        badge_roll = None
+                    try:
+                        active_by_ch = snapshot.get("active_notes", {})
+                        if isinstance(active_by_ch, dict):
+                            for notes in active_by_ch.values():
+                                if isinstance(notes, (list, tuple, set)):
+                                    for note in notes:
+                                        badge_pcs.add(int(note) % 12)
+                    except Exception:
+                        badge_pcs = set()
+                    ui_loop._notes_badge_levels = badge_levels
+                    ui_loop._notes_badge_pcs = badge_pcs
+                    ui_loop._notes_badge_roll = badge_roll
+                    ui_loop._notes_badge_data_next_t = badge_now + (1.0 / 24.0)
+                _compositor.draw_notes_badge(
+                    spectrum_levels=getattr(ui_loop, "_notes_badge_levels", None),
+                    active_pcs=getattr(ui_loop, "_notes_badge_pcs", set()),
+                    roll_payload=getattr(ui_loop, "_notes_badge_roll", None),
+                )
             _compositor.frame_flush()
         else:
             sys.stdout.flush()
@@ -635,6 +705,27 @@ def _log_autoconnect(msg: str):
     AUTOCONNECT_LOG.append(msg)
     if len(AUTOCONNECT_LOG) > 32:
         del AUTOCONNECT_LOG[0]
+
+
+def _install_midi_error_filter(port) -> None:
+    """Suppress noisy transient RtMidi ALSA warnings (EAGAIN)."""
+    try:
+        rt = getattr(port, "_rt", None)
+        if rt is None or not hasattr(rt, "set_error_callback"):
+            return
+
+        def _on_midi_error(_etype, msg, _data=None):
+            text = str(msg) if msg is not None else ""
+            if "Resource temporarily unavailable" in text:
+                return
+            if text:
+                _log_autoconnect(f"[MIDI] {text[:80]}")
+
+        # Keep callback alive for the lifetime of the port.
+        setattr(port, "_midicrt_error_cb", _on_midi_error)
+        rt.set_error_callback(_on_midi_error)
+    except Exception:
+        pass
 
 
 def _parse_aconnect(flag: str):
@@ -871,6 +962,34 @@ def _connect_pair(src_id: str, dst_id: str) -> bool:
     return False
 
 
+def _pick_midi_input_name() -> str | None:
+    """Prefer direct hardware MIDI input before creating a virtual monitor port."""
+    hints = [
+        h.strip()
+        for h in os.environ.get(
+            "MIDICRT_INPUT_HINTS",
+            "USB MIDI Interface,Cirklon,USB MIDI,MIDI 1",
+        ).split(",")
+        if h.strip()
+    ]
+    try:
+        names = list(mido.get_input_names())
+    except Exception:
+        return None
+    if not names:
+        return None
+
+    for hint in hints:
+        hint_l = hint.lower()
+        for name in names:
+            low = name.lower()
+            if "greencrt monitor" in low:
+                continue
+            if hint_l in low:
+                return name
+    return None
+
+
 def _append_runtime_log(message: str):
     log_path = os.path.join(os.path.dirname(__file__), "log.txt")
     timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -1030,21 +1149,28 @@ def main(profile="run_tui"):
     sys.stdout.flush()
     time.sleep(2)
 
+    midi_in_port = None
     try:
-        with mido.open_input("GreenCRT Monitor", virtual=True) as port:
+        direct_input_name = _pick_midi_input_name()
+        if direct_input_name:
+            midi_in_port = mido.open_input(direct_input_name)
+            print(f"[Info] Listening on '{direct_input_name}'")
+        else:
+            midi_in_port = mido.open_input("GreenCRT Monitor", virtual=True)
+            _install_midi_error_filter(midi_in_port)
             print("[Info] Listening on 'GreenCRT Monitor'")
             time.sleep(0.25)  # give ALSA time to register the new virtual ports
             try:
-                target_name = getattr(port, "name", "GreenCRT Monitor")
+                target_name = getattr(midi_in_port, "name", "GreenCRT Monitor")
             except Exception:
                 target_name = "GreenCRT Monitor"
             autoconnect_dynamic(target_name)
-            autoconnect_panic_output()
+        autoconnect_panic_output()
 
-            threading.Thread(target=ui_loop, daemon=True).start()
-            threading.Thread(target=keyboard_listener, daemon=True).start()
+        threading.Thread(target=ui_loop, daemon=True).start()
+        threading.Thread(target=keyboard_listener, daemon=True).start()
 
-            ENGINE.run_input_loop(port, lambda: exit_flag)
+        ENGINE.run_input_loop(midi_in_port, lambda: exit_flag)
     except KeyboardInterrupt:
         sys.stdout.write(term.normal)
     except Exception as e:
@@ -1055,6 +1181,16 @@ def main(profile="run_tui"):
             SNAPSHOT_PUBLISHER.stop()
         except Exception:
             pass
+        # Avoid shutdown hangs in RtMidiIn::closePort on ALSA.
+        if midi_in_port is not None:
+            try:
+                threading.Thread(
+                    target=lambda: midi_in_port.close(),
+                    daemon=True,
+                    name="midi-close",
+                ).start()
+            except Exception:
+                pass
         sys.stdout.write(term.normal)
 
 if __name__ == "__main__":

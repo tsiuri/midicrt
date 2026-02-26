@@ -65,13 +65,17 @@ def draw(state):
         s["blink_state"] = False
 
     # --- musical + wall clocks ---
+    ticks_in_bar = tick % (PPQN * BEATS_PER_BAR)
     beat_in_bar = (tick // PPQN) % BEATS_PER_BAR + 1
     lt = time.localtime(now)
     ms_now = int((now % 1) * 1000)
     realtime_str = time.strftime("%H:%M:%S", lt) + f".{ms_now:03d}"
 
     # --- full-line draw ---
-    base_text = f"BAR {bar:04d}  BEAT {beat_in_bar:02d}   {realtime_str}   TIMER {timer_str}"
+    base_text = (
+        f"BAR {bar:04d}  BEAT {beat_in_bar:02d}  TICK {ticks_in_bar:03d}   "
+        f"{realtime_str}   TIMER {timer_str}"
+    )
     x = xmid - (len(base_text) // 2)
     sys.stdout.write(t.move_yx(y, x) + base_text.ljust(midicrt.SCREEN_COLS))
 

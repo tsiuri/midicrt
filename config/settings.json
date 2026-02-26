@@ -46,14 +46,14 @@
   "audiospectrum": {
     "lowcut_hz": 160.0,
     "hpf_on": true,
-    "display_scale": 0.9964682651113557,
+    "display_scale": 0.4537994906177964,
     "floor_db": -35.0,
     "ceil_db": 30.0,
     "freq_scale": "log",
     "agg_mode": "max",
     "auto_adapt": true,
     "bins": 96,
-    "gain_db": 0.0,
+    "gain_db": 24.0,
     "smoothing": 1.3877787807814457e-17
   },
   "stuck_notes": {
@@ -106,7 +106,7 @@
       9
     ],
     "interval": 300.0,
-    "user_pause": 3600.0
+    "user_pause": 1800.0
   },
   "pianoroll": {
     "pitch_low_default": 36,

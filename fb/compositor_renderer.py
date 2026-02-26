@@ -33,6 +33,36 @@ PAGE_Y_OFFSET = 3
 _CH_BASE_RGB = [(0, 255, 80)] * 16
 _CH_COLOURS = [_rgb565(*rgb) for rgb in _CH_BASE_RGB]
 
+# Notes badge palette (RGB565, module-level to avoid per-frame conversion cost)
+_BADGE_BG = _rgb565(0, 30, 10)
+_BADGE_BORDER = GREEN_MID
+
+_SPEC_BG = _rgb565(0, 20, 8)
+_SPEC_BAR_HI = _rgb565(0, 255, 80)
+_SPEC_BAR_MID = _rgb565(0, 180, 60)
+_SPEC_BAR_LO = _rgb565(0, 120, 40)
+_SPEC_BORDER = _rgb565(0, 180, 50)
+
+_PIANO_BG = _rgb565(0, 20, 8)
+_PIANO_BORDER = _rgb565(0, 120, 40)
+_PIANO_WHITE_OFF = _rgb565(0, 55, 20)
+_PIANO_WHITE_ON = _rgb565(0, 210, 70)
+_PIANO_WHITE_TOP = _rgb565(0, 95, 35)
+_PIANO_WHITE_SHADOW = _rgb565(0, 28, 10)
+_PIANO_BLACK_OFF = _rgb565(0, 8, 3)
+_PIANO_BLACK_ON = _rgb565(0, 150, 50)
+_PIANO_BLACK_TOP = _rgb565(0, 50, 18)
+_PIANO_BLACK_SHADOW = _rgb565(0, 4, 1)
+
+_MINI_BG = _rgb565(0, 14, 6)
+_MINI_BORDER = _rgb565(0, 120, 40)
+_MINI_NOTE = _rgb565(0, 180, 60)
+_MINI_NOTE_HI = _rgb565(0, 255, 80)
+_MINI_GUIDE = _rgb565(0, 60, 20)
+_MINI_FLARE_CORE = _rgb565(0, 255, 80)
+_MINI_FLARE_GLOW = _rgb565(0, 140, 45)
+_BADGE_UPDATE_HZ = 24.0
+
 
 class CompositorRenderer(TextRenderer):
     """Routes all midicrt rendering through fb/compositor (PIL → fb0).
@@ -51,6 +81,10 @@ class CompositorRenderer(TextRenderer):
         super().__init__()
         self.comp = Compositor(bg=BG)
         self._badge_frames = None  # lazily pre-computed bar animation
+        self._badge_cache = None
+        self._badge_cache_rect = None  # (x, y, w, h)
+        self._badge_last_update_t = 0.0
+        self._badge_update_interval = 1.0 / max(1.0, float(_BADGE_UPDATE_HZ))
         # Pre-compute velocity-scaled RGB565 colours for piano roll cells.
         self._vel_lut = []
         for base_rgb in _CH_BASE_RGB:
@@ -118,31 +152,311 @@ class CompositorRenderer(TextRenderer):
         self._badge_frames = frames
         self._badge_idx = 0
 
-    def draw_notes_badge(self) -> None:
-        """Animated scrolling bars + 'welcome to the jungle ^_^' badge, bottom-right."""
+    def _draw_badge_spectrum(
+        self,
+        x: int,
+        y: int,
+        w: int,
+        h: int,
+        levels: list[float] | None,
+    ) -> None:
+        """Draw a compact RGB565 spectrum panel for the notes badge."""
+        comp = self.comp
+        region = np.full((h, w), _SPEC_BG, dtype=np.uint16)
+        inner_h = max(1, h - 2)
+        inner_w = max(1, w - 2)
+
+        vals = np.asarray(levels if levels else [], dtype=np.float32)
+        if vals.size > 0:
+            vals = np.clip(vals, 0.0, 1.0)
+            if vals.size != inner_w:
+                src_x = np.arange(vals.size, dtype=np.float32)
+                dst_x = np.linspace(0, max(0, vals.size - 1), inner_w, dtype=np.float32)
+                vals = np.interp(dst_x, src_x, vals).astype(np.float32)
+            heights = np.clip((vals * inner_h + 0.5).astype(np.int32), 0, inner_h)
+            inner = region[1:-1, 1:-1]
+            for xi, bar_h in enumerate(heights):
+                if bar_h <= 0:
+                    continue
+                y0 = inner_h - bar_h
+                y_mid = y0 + max(1, bar_h // 2)
+                inner[y0:inner_h, xi] = _SPEC_BAR_LO
+                inner[y0:y_mid, xi] = _SPEC_BAR_MID
+                inner[y0, xi] = _SPEC_BAR_HI
+
+        region[0, :] = _SPEC_BORDER
+        region[-1, :] = _SPEC_BORDER
+        region[:, 0] = _SPEC_BORDER
+        region[:, -1] = _SPEC_BORDER
+        comp._buf[y:y + h, x:x + w] = region
+
+    def _draw_badge_piano(
+        self,
+        x: int,
+        y: int,
+        w: int,
+        h: int,
+        active_pcs: set[int] | None,
+    ) -> None:
+        """Draw a 12-note octave piano (white + recessed black keys)."""
+        comp = self.comp
+        if w < 16 or h < 8:
+            return
+        pcs = {int(pc) % 12 for pc in (active_pcs or set())}
+        region = np.full((h, w), _PIANO_BG, dtype=np.uint16)
+        region[0, :] = _PIANO_BORDER
+        region[-1, :] = _PIANO_BORDER
+        region[:, 0] = _PIANO_BORDER
+        region[:, -1] = _PIANO_BORDER
+
+        ix0 = 1
+        iy0 = 1
+        iw = max(1, w - 2)
+        ih = max(1, h - 2)
+
+        white_pcs = [0, 2, 4, 5, 7, 9, 11]
+        edges = np.linspace(0, iw, 8, dtype=np.int32)
+        for idx, pc in enumerate(white_pcs):
+            kx0 = int(edges[idx])
+            kx1 = int(edges[idx + 1])
+            kw = max(1, kx1 - kx0)
+            fill = _PIANO_WHITE_ON if pc in pcs else _PIANO_WHITE_OFF
+            x0 = ix0 + kx0
+            x1 = min(w - 1, x0 + kw)
+            region[iy0:iy0 + ih, x0:x1] = fill
+            # Subtle recessed contour.
+            region[iy0, x0:x1] = _PIANO_WHITE_TOP
+            region[iy0:iy0 + ih, x0] = _PIANO_WHITE_TOP
+            region[iy0:iy0 + ih, x1 - 1] = _PIANO_WHITE_SHADOW
+            region[iy0 + ih - 1, x0:x1] = _PIANO_WHITE_SHADOW
+
+        black_keys = [(1, 0), (3, 1), (6, 3), (8, 4), (10, 5)]
+        bh = max(3, (ih * 2) // 3)
+        for pc, left_idx in black_keys:
+            boundary = int(edges[left_idx + 1])
+            lw = int(edges[left_idx + 1] - edges[left_idx])
+            rw = int(edges[left_idx + 2] - edges[left_idx + 1])
+            bw = max(2, min(lw, rw) * 2 // 3)
+            bx0 = boundary - (bw // 2)
+            bx0 = max(0, min(iw - bw, bx0))
+            fill = _PIANO_BLACK_ON if pc in pcs else _PIANO_BLACK_OFF
+            x0 = ix0 + bx0
+            x1 = min(w - 1, x0 + bw)
+            region[iy0:iy0 + bh, x0:x1] = fill
+            # Recessed top/edge
+            region[iy0, x0:x1] = _PIANO_BLACK_TOP
+            region[iy0:iy0 + bh, x1 - 1] = _PIANO_BLACK_SHADOW
+            region[iy0 + bh - 1, x0:x1] = _PIANO_BLACK_SHADOW
+
+        comp._buf[y:y + h, x:x + w] = region
+
+    def _draw_badge_mini_roll(
+        self,
+        x: int,
+        y: int,
+        w: int,
+        h: int,
+        roll_payload: dict | None,
+    ) -> None:
+        """Draw a compact piano-roll overview panel."""
+        comp = self.comp
+        if w < 8 or h < 6:
+            return
+        region = np.full((h, w), _MINI_BG, dtype=np.uint16)
+        region[0, :] = _MINI_BORDER
+        region[-1, :] = _MINI_BORDER
+        region[:, 0] = _MINI_BORDER
+        region[:, -1] = _MINI_BORDER
+        inner = region[1:-1, 1:-1]
+        ih, iw = inner.shape
+        inner[:, iw - 1] = _MINI_GUIDE
+
+        payload = roll_payload if isinstance(roll_payload, dict) else {}
+        pitch_low = int(payload.get("pitch_low", 36))
+        pitch_high = int(payload.get("pitch_high", 84))
+        if pitch_high <= pitch_low:
+            pitch_high = pitch_low + 1
+        pitch_span = float(pitch_high - pitch_low)
+
+        roll_cols = max(1, int(payload.get("time_cols", 64)))
+        tpc = max(1, int(payload.get("ticks_per_col", 6)))
+        tick_now = int(payload.get("tick_now", payload.get("tick_right", 0)))
+        tick_left = tick_now - max(1, roll_cols - 1) * tpc
+        tick_right = tick_now + tpc
+        tick_span = max(1.0, float(tick_right - tick_left))
+        x_scale = (iw - 1) / tick_span
+        y_scale = (ih - 1) / pitch_span
+
+        def _x_at(tick: float) -> int:
+            x_rel = int((float(tick) - float(tick_left)) * x_scale)
+            return 0 if x_rel < 0 else (iw - 1 if x_rel >= iw else x_rel)
+
+        def _y_at(pitch: int) -> int:
+            y_rel = int((float(pitch_high) - float(pitch)) * y_scale)
+            return 0 if y_rel < 0 else (ih - 1 if y_rel >= ih else y_rel)
+
+        top_track = [0.0] * iw
+        bot_track = [0.0] * iw
+
+        spans = payload.get("spans", [])
+        if isinstance(spans, list) and spans:
+            for item in spans:
+                if not isinstance(item, (list, tuple)) or len(item) < 5:
+                    continue
+                start_tick, end_tick, pitch, _ch, vel = item[:5]
+                try:
+                    pitch_i = int(pitch)
+                    vel_i = int(vel)
+                except Exception:
+                    continue
+                if vel_i <= 0 or pitch_i < pitch_low or pitch_i > pitch_high:
+                    continue
+                s = max(float(start_tick), float(tick_left))
+                e = min(float(end_tick), float(tick_right))
+                if e <= s:
+                    continue
+                x0 = _x_at(s)
+                x1 = _x_at(e)
+                if x1 < x0:
+                    x0, x1 = x1, x0
+                y0 = _y_at(pitch_i)
+                inner[y0, x0:x1 + 1] = _MINI_NOTE_HI if vel_i > 96 else _MINI_NOTE
+        else:
+            cols = payload.get("columns", [])
+            if isinstance(cols, list) and cols:
+                ncols = max(1, len(cols))
+                x_denom = max(1, ncols - 1)
+                for i, events in enumerate(cols):
+                    if not isinstance(events, list):
+                        continue
+                    cx = int(i * (iw - 1) / x_denom)
+                    for ev in events:
+                        if not isinstance(ev, (list, tuple)) or len(ev) < 3:
+                            continue
+                        pitch, _ch, vel = ev[:3]
+                        try:
+                            pitch_i = int(pitch)
+                            vel_i = int(vel)
+                        except Exception:
+                            continue
+                        if vel_i <= 0 or pitch_i < pitch_low or pitch_i > pitch_high:
+                            continue
+                        y0 = _y_at(pitch_i)
+                        inner[y0, cx] = _MINI_NOTE_HI if vel_i > 96 else _MINI_NOTE
+
+        cols = payload.get("columns", [])
+        if isinstance(cols, list) and cols:
+            ncols = max(1, len(cols))
+            x_denom = max(1, ncols - 1)
+            for i, events in enumerate(cols):
+                if not isinstance(events, list):
+                    continue
+                tx = int(i * (iw - 1) / x_denom)
+                for ev in events:
+                    if not isinstance(ev, (list, tuple)) or len(ev) < 3:
+                        continue
+                    pitch, _ch, vel = ev[:3]
+                    try:
+                        pitch_i = int(pitch)
+                        vel_i = max(0, int(vel))
+                    except Exception:
+                        continue
+                    if vel_i <= 0:
+                        continue
+                    amp = float(min(127, vel_i)) / 127.0
+                    if pitch_i > pitch_high:
+                        top_track[tx] = max(top_track[tx], amp)
+                    elif pitch_i < pitch_low:
+                        bot_track[tx] = max(bot_track[tx], amp)
+
+        overflow = payload.get("overflow", {})
+        if isinstance(overflow, dict):
+            if overflow.get("above") and not any(v > 0.0 for v in top_track):
+                top_track[-1] = 1.0
+            if overflow.get("below") and not any(v > 0.0 for v in bot_track):
+                bot_track[-1] = 1.0
+
+        flare_h = max(4, ih // 2)  # intentionally tall flare
+
+        def _draw_track(track: list[float], top_side: bool) -> None:
+            for tx, amp in enumerate(track):
+                if amp <= 0.0:
+                    continue
+                fh = max(2, int(round(amp * flare_h)))
+                if top_side:
+                    y1 = min(ih, fh)
+                    inner[:y1, tx] = _MINI_FLARE_GLOW
+                    inner[0, tx] = _MINI_FLARE_CORE
+                    if tx > 0:
+                        inner[:max(1, y1 // 2), tx - 1] = _MINI_FLARE_GLOW
+                    if tx + 1 < iw:
+                        inner[:max(1, y1 // 2), tx + 1] = _MINI_FLARE_GLOW
+                else:
+                    y0 = max(0, ih - fh)
+                    inner[y0:, tx] = _MINI_FLARE_GLOW
+                    inner[ih - 1, tx] = _MINI_FLARE_CORE
+                    if tx > 0:
+                        inner[ih - max(1, (ih - y0) // 2):, tx - 1] = _MINI_FLARE_GLOW
+                    if tx + 1 < iw:
+                        inner[ih - max(1, (ih - y0) // 2):, tx + 1] = _MINI_FLARE_GLOW
+
+        _draw_track(top_track, top_side=True)
+        _draw_track(bot_track, top_side=False)
+        comp._buf[y:y + h, x:x + w] = region
+
+    def draw_notes_badge(
+        self,
+        spectrum_levels: list[float] | None = None,
+        active_pcs: set[int] | None = None,
+        roll_payload: dict | None = None,
+    ) -> None:
+        """Mini-roll + spectrum + test piano graphic + title badge."""
         comp = self.comp
         cw, ch = comp.char_w, comp.char_h
         label = "welcome to the jungle ^_^"
         bw = (len(label) + 2) * cw
-        bh = 3 * ch
-        anim_h = 5 * ch
+        bh = 4 * ch
+        spec_h = 5 * ch
+        roll_h = 6 * ch
         x = 800 - bw - 4
         badge_y = 475 - bh - 4
-        anim_y = badge_y - anim_h
+        spec_y = badge_y - spec_h
+        roll_y = spec_y - roll_h
+        total_h = roll_h + spec_h + bh
+        cache_rect = (x, roll_y, bw, total_h)
+        now_t = time.monotonic()
 
-        # --- Scrolling bars (pre-computed, just copy) ---
-        if self._badge_frames is None:
-            self._build_badge_frames()
-        comp._buf[anim_y:anim_y + anim_h, x:x + bw] = self._badge_frames[self._badge_idx]
-        self._badge_idx = (self._badge_idx + 1) % len(self._badge_frames)
+        if (
+            self._badge_cache is not None
+            and self._badge_cache_rect == cache_rect
+            and (now_t - self._badge_last_update_t) < self._badge_update_interval
+        ):
+            comp._buf[roll_y:roll_y + total_h, x:x + bw] = self._badge_cache
+            return
+
+        # --- Mini piano-roll panel ---
+        self._draw_badge_mini_roll(x, roll_y, bw, roll_h, roll_payload)
+
+        # --- Spectrum panel (fallback to old animation if no levels yet) ---
+        if spectrum_levels:
+            self._draw_badge_spectrum(x, spec_y, bw, spec_h, spectrum_levels)
+        else:
+            if self._badge_frames is None:
+                self._build_badge_frames()
+            comp._buf[spec_y:spec_y + spec_h, x:x + bw] = self._badge_frames[self._badge_idx]
+            self._badge_idx = (self._badge_idx + 1) % len(self._badge_frames)
 
         # --- Badge box ---
-        comp.rect(x, badge_y, bw, bh, _rgb565(0, 30, 10))
-        comp.rect(x, badge_y, bw, 1, GREEN_MID)
-        comp.rect(x, badge_y + bh - 1, bw, 1, GREEN_MID)
-        comp.rect(x, badge_y, 1, bh, GREEN_MID)
-        comp.rect(x + bw - 1, badge_y, 1, bh, GREEN_MID)
-        comp.text(x + cw, badge_y + ch, label, fg=GREEN_BRIGHT)
+        comp.rect(x, badge_y, bw, bh, _BADGE_BG)
+        comp.rect(x, badge_y, bw, 1, _BADGE_BORDER)
+        comp.rect(x, badge_y + bh - 1, bw, 1, _BADGE_BORDER)
+        comp.rect(x, badge_y, 1, bh, _BADGE_BORDER)
+        comp.rect(x + bw - 1, badge_y, 1, bh, _BADGE_BORDER)
+        self._draw_badge_piano(x + 1, badge_y + 1, bw - 2, max(8, (2 * ch) - 1), active_pcs)
+        comp.text(x + cw, badge_y + (2 * ch) + 1, label, fg=GREEN_BRIGHT)
+        self._badge_cache = comp._buf[roll_y:roll_y + total_h, x:x + bw].copy()
+        self._badge_cache_rect = cache_rect
+        self._badge_last_update_t = now_t
 
     # ------------------------------------------------------------------
     # Line-level drawing (header / transport rows, drawn before render())

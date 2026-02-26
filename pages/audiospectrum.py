@@ -57,9 +57,13 @@ _hpf_x_prev = 0.0
 _hpf_y_prev = 0.0
 _ACTIVE_PAGE_IDS = {PAGE_ID}
 _RAW_PAGE_IDS = set()
+_SPECTRUM_PAGE_IDS = {PAGE_ID}
 _last_audio_block = None
 _last_audio_seq = 0
 _last_audio_ts = 0.0
+_BG_SPECTRUM_HZ = 12.0
+_BG_SPECTRUM_BINS = 48
+_last_bg_spectrum_at = 0.0
 
 # ------------- Spectrum cache (precomputed per-session constants) -------------
 # Rebuilt when sr / blocksize / bins / freq_scale / FMIN_HZ change.
@@ -331,6 +335,27 @@ def register_raw_tap(page_id):
     _ACTIVE_PAGE_IDS.add(pid)
 
 
+def register_spectrum_tap(page_id):
+    """Allow another page to keep live spectrum levels updated."""
+    try:
+        pid = int(page_id)
+    except Exception:
+        return
+    _SPECTRUM_PAGE_IDS.add(pid)
+    _ACTIVE_PAGE_IDS.add(pid)
+
+
+def ensure_background():
+    """Ensure the audio thread is running for background consumers."""
+    _ensure_thread()
+
+
+def get_levels():
+    """Return a copy of the latest normalized spectrum levels."""
+    with _lock:
+        return list(_last_levels) if _last_levels else []
+
+
 def get_last_audio_block():
     """Return (block, seq, sr, ts). block is a float32 mono numpy array copy."""
     with _lock:
@@ -369,6 +394,7 @@ def _audio_loop():
         def callback(indata, frames, time_info, status):
             # Use globals for shared state; avoid creating locals that shadow them
             global _last_levels, _gain_db, _smooth, _bins, DISPLAY_SCALE, _auto_adapt
+            global _last_bg_spectrum_at
             if _stop_event.is_set():
                 raise sd.CallbackStop
             # Skip heavy FFT when the spectrum page is not visible
@@ -392,10 +418,17 @@ def _audio_loop():
                         _last_audio_block = blk
                         _last_audio_seq += 1
                         _last_audio_ts = time.time()
-                if current != PAGE_ID:
+                if current not in _SPECTRUM_PAGE_IDS:
                     return
+                bins = int(_bins)
+                if current != PAGE_ID:
+                    now_t = time.time()
+                    if (now_t - _last_bg_spectrum_at) < (1.0 / max(1.0, _BG_SPECTRUM_HZ)):
+                        return
+                    _last_bg_spectrum_at = now_t
+                    bins = min(bins, int(_BG_SPECTRUM_BINS))
                 # compute spectrum for this block
-                levels = _compute_spectrum(indata.copy(), _sr, _bins)
+                levels = _compute_spectrum(indata.copy(), _sr, max(8, bins))
                 g = 10 ** (_gain_db / 20.0)
                 with _lock:
                     if not _last_levels or len(_last_levels) != len(levels):
@@ -559,18 +592,16 @@ def keypress(ch):
     return False
 
 
-def _draw_bars(y_top, y_bottom, x_left, x_right, levels):
-    height = max(1, y_bottom - y_top + 1)
-    width = max(1, x_right - x_left + 1)
+def _bar_rows(height, width, levels):
+    """Return a list of text rows representing the current spectrum bars."""
+    if height <= 0 or width <= 0:
+        return []
     n = min(width, len(levels))
     if n <= 0:
-        return
-    # choose subset or average to width
+        return [" " * width for _ in range(height)]
     step = len(levels) / n
-    # build a grid of spaces then draw bars bottom-up
     rows = [list(" " * width) for _ in range(height)]
     for i in range(n):
-        # aggregate level
         j0 = int(i * step)
         j1 = int((i + 1) * step)
         if j1 <= j0:
@@ -581,9 +612,16 @@ def _draw_bars(y_top, y_bottom, x_left, x_right, levels):
         for r in range(height - 1, height - h - 1, -1):
             if 0 <= r < height:
                 rows[r][i] = "█"
+    return ["".join(row) for row in rows]
+
+
+def _draw_bars(y_top, y_bottom, x_left, x_right, levels):
+    height = max(1, y_bottom - y_top + 1)
+    width = max(1, x_right - x_left + 1)
+    rows = _bar_rows(height, width, levels)
     # emit all rows in one write to minimise syscall overhead
     buf = "".join(
-        term.move_yx(y_top + idx, x_left) + "".join(row)
+        term.move_yx(y_top + idx, x_left) + row
         for idx, row in enumerate(rows)
     )
     sys.stdout.write(buf)
@@ -654,4 +692,10 @@ def draw(state):
     with _lock:
         levels = list(_last_levels) if _last_levels else [0.0] * max(8, min(_bins, cols - 2))
 
-    _draw_bars(top, bottom, left, right, levels)
+    if str(state.get("render_backend", "")).startswith("compositor"):
+        rows_txt = _bar_rows(max(1, bottom - top + 1), max(1, right - left + 1), levels)
+        pad = " " * max(0, left)
+        for idx, row in enumerate(rows_txt):
+            draw_line(top + idx, pad + row)
+    else:
+        _draw_bars(top, bottom, left, right, levels)
