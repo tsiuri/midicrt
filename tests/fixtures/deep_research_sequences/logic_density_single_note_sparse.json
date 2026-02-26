@@ -1,0 +1,23 @@
+{
+  "name": "single_note_sparse",
+  "schema_version": 4,
+  "event": {
+    "kind": "note_on"
+  },
+  "transport": {
+    "tick": 12,
+    "bar": 1,
+    "running": true,
+    "bpm": 120.0
+  },
+  "active_notes": {
+    "0": [
+      60
+    ]
+  },
+  "expected": {
+    "motif_span": 0,
+    "note_density": "sparse",
+    "active_note_total": 1
+  }
+}
