@@ -129,6 +129,8 @@ if _core_cfg is None:
 IPC_ENABLED = True
 IPC_SOCKET_PATH = "/tmp/midicrt.sock"
 IPC_PUBLISH_HZ = 20.0
+MODULE_OVERLOAD_COST_MS = 6.0
+MODULE_POLICIES = {}
 try:
     FPS = float(_core_cfg.get("fps", FPS))
     HEADER_SCROLL_SPEED = float(_core_cfg.get("header_scroll_speed", HEADER_SCROLL_SPEED))
@@ -136,6 +138,9 @@ try:
     IPC_ENABLED = bool(_ipc_cfg.get("enabled", IPC_ENABLED))
     IPC_SOCKET_PATH = str(_ipc_cfg.get("socket_path", IPC_SOCKET_PATH))
     IPC_PUBLISH_HZ = float(_ipc_cfg.get("publish_hz", IPC_PUBLISH_HZ))
+    _mod_cfg = _core_cfg.get("module_scheduler", {}) if isinstance(_core_cfg.get("module_scheduler", {}), dict) else {}
+    MODULE_OVERLOAD_COST_MS = float(_mod_cfg.get("overload_cost_ms", MODULE_OVERLOAD_COST_MS))
+    MODULE_POLICIES = _mod_cfg.get("modules", {}) if isinstance(_mod_cfg.get("modules", {}), dict) else {}
 except Exception:
     pass
 try:
@@ -146,6 +151,10 @@ try:
             "enabled": bool(IPC_ENABLED),
             "socket_path": str(IPC_SOCKET_PATH),
             "publish_hz": float(IPC_PUBLISH_HZ),
+        },
+        "module_scheduler": {
+            "overload_cost_ms": float(MODULE_OVERLOAD_COST_MS),
+            "modules": dict(MODULE_POLICIES),
         },
     })
 except Exception:
@@ -322,6 +331,7 @@ def _sync_transport_globals(snapshot):
 
 
 def handle_engine_event(event, msg: mido.Message):
+    global _scheduler_health_status
     _dispatch_legacy_page_events(event, msg)
 
     # wake screensaver on note/CC/prog activity (mirrors keypress path)
@@ -331,7 +341,15 @@ def handle_engine_event(event, msg: mido.Message):
             _ss.deactivate()
         polydisplay.handle(msg)
 
-    _sync_transport_globals(ENGINE.get_snapshot())
+    snapshot = ENGINE.get_snapshot()
+    diag = snapshot.get("diagnostics", {}) if isinstance(snapshot.get("diagnostics"), dict) else {}
+    sched = diag.get("scheduler", {}) if isinstance(diag.get("scheduler"), dict) else {}
+    overloaded = sched.get("overloaded_modules", []) if isinstance(sched.get("overloaded_modules"), list) else []
+    health = "sched:overload:" + ",".join(overloaded[:3]) if overloaded else "sched:ok"
+    if health != _scheduler_health_status:
+        _scheduler_health_status = health
+        _append_runtime_log(f"[Scheduler] {health}")
+    _sync_transport_globals(snapshot)
 
 
 def _dispatch_legacy_page_events(event, msg: mido.Message) -> None:
@@ -376,6 +394,7 @@ def _dispatch_legacy_page_events(event, msg: mido.Message) -> None:
 sysex_status = ""       # last sysex command summary, displayed in footer
 sysex_status_time = 0.0
 fps_status = ""         # rolling fps text displayed in footer
+_scheduler_health_status = ""
 
 # ---------------------------------------------------------------------
 # UI loop
@@ -434,6 +453,8 @@ ENGINE = MidiEngine(
     modules=ENGINE_MODULES,
     on_event=handle_engine_event,
     publisher=SNAPSHOT_PUBLISHER,
+    module_policies=MODULE_POLICIES,
+    overload_cost_ms=MODULE_OVERLOAD_COST_MS,
     command_hooks={
         "set_page": switch_page,
         "wake_screensaver": wake_screensaver,
