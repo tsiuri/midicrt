@@ -12,11 +12,21 @@
     .muted { opacity:.8; font-size:.9rem; }
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; }
     ul { margin: .3rem 0 0 1rem; }
+    .status { margin:.5rem 0 1rem; }
+    .pill { display:inline-block; margin-right:.4rem; padding:.12rem .5rem; border-radius:999px; border:1px solid #2f5f2f; font-size:.85rem; }
+    .ok { color:#b7ffb7; border-color:#3e8f3e; }
+    .warn { color:#ffdd9f; border-color:#9a7a38; }
+    .bad { color:#ffb3b3; border-color:#9d4747; }
   </style>
 </head>
 <body>
   <h1>midicrt web observer</h1>
   <div class="muted">Read-only dashboard from engine snapshot feed (<code>/ws</code>).</div>
+  <div class="status">
+    <span id="snapshotState" class="pill warn">Snapshot: waiting</span>
+    <span id="staleState" class="pill warn">Age: --</span>
+    <span id="reconnectState" class="pill warn">Reconnect: --</span>
+  </div>
   <div class="grid">
     <section class="card">
       <h2>Transport</h2>
@@ -36,9 +46,24 @@
 const transportEl = document.getElementById('transport');
 const notesEl = document.getElementById('notes');
 const modulesEl = document.getElementById('modules');
+const staleStateEl = document.getElementById('staleState');
+const reconnectStateEl = document.getElementById('reconnectState');
+const snapshotStateEl = document.getElementById('snapshotState');
 
-function render(snapshot) {
+function setPill(el, text, cls) {
+  el.textContent = text;
+  el.classList.remove('ok', 'warn', 'bad');
+  el.classList.add(cls);
+}
+
+function render(payload) {
+  const snapshot = payload.snapshot || {};
   const t = snapshot.transport || {};
+  const metrics = payload.metrics || {};
+  const bridge = payload.bridge || {};
+  const ageMs = Number(metrics.last_update_age_ms ?? bridge.last_update_age_ms ?? 0);
+  const reconnectAttempts = Number(bridge.reconnect_attempts ?? 0);
+
   transportEl.textContent = [
     `tick: ${t.tick ?? 0}`,
     `bar: ${t.bar ?? 0}`,
@@ -46,7 +71,26 @@ function render(snapshot) {
     `bpm: ${(t.bpm ?? 0).toFixed ? t.bpm.toFixed(2) : t.bpm}`,
     `meter: ${t.meter_estimate ?? '--'} (${(t.confidence ?? 0).toFixed ? (t.confidence ?? 0).toFixed(2) : t.confidence})`,
     `status: ${snapshot.status_text || ''}`,
+    `seq: ${payload.seq ?? 0} (gap: ${metrics.sequence_gap ?? 0})`,
   ].join('\n');
+
+  if (ageMs < 1000) {
+    setPill(staleStateEl, `Age: ${ageMs.toFixed(0)} ms`, 'ok');
+  } else if (ageMs < 5000) {
+    setPill(staleStateEl, `Age: ${(ageMs / 1000).toFixed(1)} s`, 'warn');
+  } else {
+    setPill(staleStateEl, `Age: ${(ageMs / 1000).toFixed(1)} s (stale)`, 'bad');
+  }
+
+  if (reconnectAttempts === 0) {
+    setPill(reconnectStateEl, 'Reconnect: stable', 'ok');
+  } else if (reconnectAttempts < 3) {
+    setPill(reconnectStateEl, `Reconnect: ${reconnectAttempts} retries`, 'warn');
+  } else {
+    setPill(reconnectStateEl, `Reconnect loop: ${reconnectAttempts} retries`, 'bad');
+  }
+
+  setPill(snapshotStateEl, 'Snapshot: live', 'ok');
 
   notesEl.innerHTML = '';
   const channels = Array.isArray(snapshot.channels) ? snapshot.channels : [];
@@ -66,14 +110,31 @@ function render(snapshot) {
   modulesEl.textContent = JSON.stringify(mod, null, 2) || '{}';
 }
 
-const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
-ws.onmessage = (event) => {
-  const payload = JSON.parse(event.data);
-  if (payload.snapshot) {
-    render(payload.snapshot);
-  }
-};
-ws.onclose = () => { transportEl.textContent = 'Connection closed.'; };
+function connect() {
+  const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
+
+  ws.onopen = () => {
+    setPill(snapshotStateEl, 'Snapshot: connected', 'ok');
+  };
+
+  ws.onmessage = (event) => {
+    const payload = JSON.parse(event.data);
+    if (payload.snapshot) {
+      render(payload);
+    }
+  };
+
+  ws.onclose = () => {
+    setPill(snapshotStateEl, 'Snapshot: reconnecting...', 'warn');
+    setTimeout(connect, 1000);
+  };
+
+  ws.onerror = () => {
+    setPill(snapshotStateEl, 'Snapshot: socket error', 'bad');
+  };
+}
+
+connect();
 </script>
 </body>
 </html>
