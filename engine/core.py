@@ -130,6 +130,7 @@ class MidiEngine:
 
     def _make_research_snapshot(self, event: dict[str, Any]) -> dict[str, Any]:
         snapshot = self.get_snapshot()["schema"]
+        transport = snapshot.get("transport", {}) if isinstance(snapshot.get("transport"), dict) else {}
         with self._lock:
             self._deep_research_latest_snapshot_version += 1
             version = self._deep_research_latest_snapshot_version
@@ -140,6 +141,7 @@ class MidiEngine:
                 "timestamp": timestamp,
                 "source_snapshot_version": version,
                 "source_snapshot_timestamp": timestamp,
+                "source_tick": int(transport.get("tick", 0)),
                 "late_policy": self._deep_research_late_policy,
                 "stale": False,
                 "applied": False,
@@ -151,12 +153,15 @@ class MidiEngine:
         )
         return {"schema": snapshot, "event": deepcopy(event)}
 
-    def _apply_deep_research_result(self, source_version: int, source_timestamp: float, result: Any) -> None:
+    def _apply_deep_research_result(self, source_version: int, source_timestamp: float, source_tick: int, result: Any) -> None:
+        now_ts = time.time()
         payload = {
             "version": int(source_version),
-            "timestamp": time.time(),
+            "timestamp": now_ts,
+            "produced_at": now_ts,
             "source_snapshot_version": int(source_version),
             "source_snapshot_timestamp": float(source_timestamp),
+            "source_tick": int(source_tick),
             "late_policy": self._deep_research_late_policy,
             "stale": False,
             "applied": True,
@@ -164,6 +169,7 @@ class MidiEngine:
             "drop_reason": "",
             "result": deepcopy(result) if isinstance(result, dict) else {"value": deepcopy(result)},
         }
+        payload["lag_ms"] = max(0.0, (now_ts - float(source_timestamp)) * 1000.0)
         with self._lock:
             if source_version < self._deep_research_latest_snapshot_version:
                 payload["stale"] = True
@@ -540,6 +546,7 @@ class MidiEngine:
                 self._apply_deep_research_result(
                     int(source.get("source_snapshot_version", source.get("version", 0))),
                     float(source.get("source_snapshot_timestamp", source.get("timestamp", 0.0))),
+                    int(source.get("source_tick", 0)),
                     outputs if isinstance(outputs, dict) else {},
                 )
             except Exception:

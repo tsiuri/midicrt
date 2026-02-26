@@ -48,6 +48,25 @@ Backward-compatibility notes:
 - In-process consumers may still receive an engine state envelope containing
   `snapshot['schema']`; normalize by preferring top-level schema fields and
   falling back to `snapshot['schema']`.
+- Legacy/schema-v2 envelopes may place `deep_research` next to `schema`
+  rather than inside `schema`; clients should merge it into the normalized
+  schema snapshot when present.
+
+### `deep_research` optional payload contract
+
+`deep_research` is optional and may be omitted entirely when the module is
+not loaded/disabled. Consumers must treat absence as "unavailable" and avoid
+hard failures.
+
+Stable metadata fields for remote tooling:
+
+- `produced_at` (`float`, unix seconds): wall-clock time the result payload was produced.
+- `source_tick` (`int`): transport tick associated with the source snapshot.
+- `lag_ms` (`float`): production lag in milliseconds (publish-time or module-provided).
+- `stale` (`bool`): whether the payload is stale at publish time.
+
+Legacy aliases remain available for compatibility (`timestamp` and
+`source_snapshot_*`), but remote tools should prefer the fields above.
 
 ### Base payload
 

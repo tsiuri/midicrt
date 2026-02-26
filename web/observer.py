@@ -115,6 +115,14 @@ class DashboardServer:
     @staticmethod
     def _payload_for(seq: int, snapshot: dict[str, Any], bridge_meta: dict[str, Any], last_seq: int | None) -> str:
         sequence_gap = 0 if last_seq is None else max(0, seq - last_seq - 1)
+        deep = snapshot.get("deep_research") if isinstance(snapshot.get("deep_research"), dict) else None
+        deep_meta = {
+            "available": bool(deep),
+            "produced_at": deep.get("produced_at") if deep else None,
+            "source_tick": deep.get("source_tick") if deep else None,
+            "stale": bool(deep.get("stale", False)) if deep else None,
+            "lag_ms": deep.get("lag_ms") if deep else None,
+        }
         payload = {
             "seq": seq,
             "snapshot": snapshot,
@@ -123,6 +131,7 @@ class DashboardServer:
                 "sequence_gap": sequence_gap,
                 "last_update_age_ms": bridge_meta.get("last_update_age_ms"),
             },
+            "deep_research": deep_meta,
         }
         return json.dumps(payload, separators=(",", ":"))
 
