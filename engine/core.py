@@ -3,6 +3,7 @@ from __future__ import annotations
 import threading
 import time
 import os
+import queue
 from collections import deque
 from dataclasses import asdict, dataclass, field
 from typing import Any, Callable
@@ -41,6 +42,7 @@ class MidiEngine:
         command_hooks: dict[str, Callable[..., Any]] | None = None,
         module_policies: dict[str, dict[str, Any]] | None = None,
         overload_cost_ms: float = 6.0,
+        deep_research_settings: dict[str, Any] | None = None,
         legacy_pages_provider: Callable[[], dict[int, Any]] | None = None,
         current_page_provider: Callable[[], int] | None = None,
         plugin_state_provider: Callable[[], dict[str, Any]] | None = None,
@@ -63,7 +65,33 @@ class MidiEngine:
         self._capture_events = deque()
         self._capture_seq = 0
         self._command_hooks = command_hooks if isinstance(command_hooks, dict) else {}
-        self._scheduler = ModuleScheduler(module_policies=module_policies, overload_cost_ms=overload_cost_ms)
+        self._deep_research_cfg = deep_research_settings if isinstance(deep_research_settings, dict) else {}
+        if not self._deep_research_cfg and isinstance(module_policies, dict):
+            alt = module_policies.get("deep_research", {})
+            if isinstance(alt, dict):
+                self._deep_research_cfg = dict(alt)
+        self._scheduler = ModuleScheduler(
+            module_policies=module_policies,
+            overload_cost_ms=overload_cost_ms,
+            deep_research_settings=self._deep_research_cfg,
+        )
+        self._deep_research_modules: set[str] = {
+            str(v).strip().lower()
+            for v in self._deep_research_cfg.get("modules", ["deepresearch", "deep_research"])
+            if str(v).strip()
+        }
+        if not self._deep_research_modules:
+            self._deep_research_modules = {"deepresearch", "deep_research"}
+        self._deep_research_q: queue.Queue[tuple[Any, dict[str, Any], bool]] = queue.Queue(
+            maxsize=max(1, int(self._deep_research_cfg.get("queue_size", 1)))
+        )
+        self._deep_research_stop = threading.Event()
+        self._deep_research_worker = threading.Thread(
+            target=self._deep_research_loop,
+            daemon=True,
+            name="engine-deep-research",
+        )
+        self._deep_research_worker.start()
         self._legacy_pages_provider = legacy_pages_provider
         self._current_page_provider = current_page_provider
         self._plugin_state_provider = plugin_state_provider
@@ -310,6 +338,7 @@ class MidiEngine:
                 for key, payload in mod_views.items():
                     if payload is not None:
                         views[str(key)] = payload
+        module_state.setdefault("deep_research", {})["metrics"] = self._scheduler.deep_research_diag()
         return module_state, views
 
     def _update_transport(self, event: dict[str, Any]) -> None:
@@ -365,6 +394,10 @@ class MidiEngine:
         for mod in self.modules:
             name = getattr(mod, "name", mod.__class__.__name__)
             names.append(name)
+            lname = str(name).strip().lower()
+            if lname in self._deep_research_modules:
+                self._enqueue_deep_research(mod, event, kind == "clock")
+                continue
             if not self._scheduler.should_run(name, kind):
                 continue
             start_ts = self._scheduler.begin(name)
@@ -385,6 +418,32 @@ class MidiEngine:
             self.state.diagnostics = diag
             if overloaded:
                 self.state.status_text = f"overload:{','.join(overloaded[:3])}"
+
+    def _enqueue_deep_research(self, mod: Any, event: dict[str, Any], include_clock: bool) -> None:
+        if not self._scheduler.should_run_deep_research():
+            return
+        work_item = (mod, dict(event), bool(include_clock))
+        try:
+            self._deep_research_q.put_nowait(work_item)
+        except queue.Full:
+            self._scheduler.drop_deep_research_cycle("queue_full")
+
+    def _deep_research_loop(self) -> None:
+        while not self._deep_research_stop.is_set():
+            try:
+                mod, event, include_clock = self._deep_research_q.get(timeout=0.05)
+            except queue.Empty:
+                continue
+            start_ts = self._scheduler.begin_deep_research()
+            try:
+                mod.on_event(event)
+                if include_clock:
+                    mod.on_clock(self.get_snapshot())
+            except Exception:
+                pass
+            finally:
+                self._scheduler.end_deep_research(start_ts)
+                self._deep_research_q.task_done()
 
 
     def _route_legacy_event(self, event: dict[str, Any]) -> None:
