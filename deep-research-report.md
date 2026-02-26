@@ -23,6 +23,53 @@ On MIDI/transport: your existing approach—**Mido** with the **RtMidi backend**
 
 Finally, for SysEx: your project uses the “special” manufacturer ID **0x7D** (non-commercial) and the current MIDI Association policy explicitly distinguishes special IDs (including 0x7D) and their intended usage. citeturn0search0turn0search9 I recommend keeping 0x7D for private/local control, and optionally offering a configurable manufacturer ID for a future “public” protocol.
 
+## Finished (implemented since this report)
+
+The modernization work outlined in this report has already advanced significantly in the live codebase. The following milestones are now complete.
+
+### 1) Engine foundation and snapshot schema are in place
+
+- Added an `engine/` package with transport/state core (`engine/core.py`), tempo map logic (`engine/state/tempo_map.py`), and snapshot schema composition (`engine/state/schema.py`).
+- Added schema v2-style payload support with transport/channel/module data and optional `views` payloads for renderer-facing page data.
+- Added capture support in the engine (`capture_recent_to_file`) for retrospective MIDI export workflows.
+
+### 2) IPC snapshot publishing + client path are implemented
+
+- Added Unix-domain socket publishing in `engine/ipc.py` (`SnapshotPublisher`) with client fan-out and rate limiting.
+- Added `ui/client.py` (`SnapshotClient`) plus compatibility normalization so clients can consume either direct schema payloads or nested legacy envelopes.
+- Core runtime wiring exists in `midicrt.py` via configurable IPC settings (`core.ipc`) and publish frequency controls.
+
+### 3) Renderer abstraction and widget model are active
+
+- Added widget/layout primitives in `ui/model.py` and renderer protocol scaffolding in `ui/renderers/base.py`.
+- Added text renderer path (`ui/renderers/text/renderer.py`) and optional pixel renderer path (`ui/renderers/pixel.py`).
+- Runtime supports startup profiles (`run_tui`, `run_pixel`, `run_compositor`) while preserving tty-safe defaults and optional pixel dependencies.
+
+### 4) Pixel parity progress and compositor migration landed
+
+- Piano-roll parity milestone delivered (shared widget payload path + pixel rendering parity tests).
+- RGB565 compositor migration completed with direct 16-bit framebuffer-oriented drawing in the compositor stack.
+- Notes-page visual/compositor enhancements, smooth-motion improvements, and caching/perf throttling changes were implemented.
+
+### 5) Config and operational policies were preserved
+
+- Shared JSON configuration policy remains the source of truth (`config/settings.json`) with expanded sections (e.g., `core`, `capture`, renderer-related settings).
+- Startup profile logging and tty1-safe launch policy are preserved; pixel mode remains feature-flagged and optional.
+- Existing tmux-first remote co-observation workflow remains intact.
+
+### 6) Validation scaffolding exists for migration-critical paths
+
+- Added/maintained tests for piano-roll snapshot determinism, text/pixel payload parity, and pixel renderer smoke behavior under stubs.
+
+### Remaining work (high level)
+
+The project is now in the “integration hardening” phase rather than initial architecture bring-up. Remaining priorities are:
+
+1. complete page migration to widget-first rendering,
+2. further decouple engine internals from page-specific logic,
+3. expand contract/IPC/tempo-map test coverage,
+4. optionally add a web observer client on top of the existing snapshot stream.
+
 ## Current project constraints and architecture from AGENTS.md
 
 ### What the codebase already does well
@@ -545,4 +592,3 @@ Once IPC snapshots exist:
 - compare expected vs observed snapshot sequences (stable regression harness).
 
 This is particularly useful for your “single frontend with two renderers” goal: the renderers can be tested against the same snapshot stream.
-
