@@ -6,10 +6,15 @@ from types import MappingProxyType
 from typing import Any
 
 
+RESEARCH_CONTRACT_MAJOR_VERSION = 1
+RESEARCH_CONTRACT_MINOR_VERSION = 0
+
+
 @dataclass(frozen=True)
 class ResearchContract:
     """Frozen handoff contract consumed by deep-research logic."""
 
+    contract_version: str
     schema_version: int
     snapshot_timestamp: float
     event_kind: str
@@ -55,6 +60,30 @@ class ResearchCadenceScheduler:
         return True
 
 
+def current_contract_version() -> str:
+    return f"{RESEARCH_CONTRACT_MAJOR_VERSION}.{RESEARCH_CONTRACT_MINOR_VERSION}"
+
+
+def contract_versions_compatible(expected_version: str, actual_version: str) -> bool:
+    """Return True if actual contract version is compatible with expected.
+
+    Compatibility is major-version locked and minor-version forward compatible
+    for additive changes.
+    """
+
+    def _parse(version: str) -> tuple[int, int]:
+        major_text, sep, minor_text = str(version).partition(".")
+        if not sep:
+            raise ValueError("version must be '<major>.<minor>'")
+        return int(major_text), int(minor_text)
+
+    expected_major, expected_minor = _parse(expected_version)
+    actual_major, actual_minor = _parse(actual_version)
+    if expected_major != actual_major:
+        return False
+    return actual_minor >= expected_minor
+
+
 def freeze_payload(payload: Any) -> Any:
     if isinstance(payload, dict):
         frozen = {str(k): freeze_payload(v) for k, v in payload.items()}
@@ -82,6 +111,7 @@ def build_contract(snapshot: dict[str, Any], event: dict[str, Any]) -> ResearchC
     schema = snapshot.get("schema", snapshot) if isinstance(snapshot, dict) else {}
     transport = schema.get("transport", {}) if isinstance(schema, dict) else {}
     return ResearchContract(
+        contract_version=current_contract_version(),
         schema_version=int(schema.get("schema_version", 0)),
         snapshot_timestamp=float(schema.get("timestamp", 0.0)),
         event_kind=str(event.get("kind", "")),

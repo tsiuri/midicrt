@@ -271,6 +271,27 @@ Versioning behavior:
 - if `schema_version` changes incompatibly, the module should emit `status=error` (or `disabled`), keep last-good results marked `stale`, and avoid destructive output shape changes until the interface contract is updated
 - new optional fields should be additive (TypedDict `NotRequired`) to preserve compatibility for older consumers
 
+### How to land contract changes safely with parallel agents
+
+Use this exact staged sequence whenever changing `ResearchContract` or DeepResearch payload shape:
+
+1. **Classify the change**
+   - Additive field only: bump minor contract version and keep major unchanged.
+   - Breaking shape change: bump major contract version and plan staged rollout.
+2. **Land reader compatibility first (all agents)**
+   - Merge parsers/helpers that accept both current and next shape/version.
+   - Keep writers emitting the old major version during this step.
+3. **Add deterministic compatibility tests**
+   - Current version success case.
+   - Forward-compatible additive-field case (new minor read by old-minor expectation).
+   - Explicit major mismatch failure with deterministic error payload.
+4. **Roll out writer changes after reader saturation**
+   - Switch builders to emit the new version only after all parallel agents are updated.
+5. **Observe and then clean up**
+   - Monitor for mismatch errors during mixed-version windows.
+   - Remove old-shape compatibility in a follow-up change after stability window.
+
+
 ### Hardening checklist (remaining)
 
 - [~] **Decoupling:** move residual page-specific compatibility shims out of core scheduling paths and into explicit adapters.
