@@ -8,3 +8,14 @@
   - Owns algorithm behavior and deterministic expected outputs from fixture-driven MIDI/event sequences.
   - Consumes only `ResearchContract` input.
   - **Do not edit Track A files** for logic-only changes unless the contract itself changes.
+
+## Cross-track override policy
+
+CI rejects pull requests that modify both Track A and Track B files unless an explicit override is set.
+
+Allowed overrides (contract-only changes):
+- Set `ALLOW_CROSS_TRACK=1` (for local/one-off CI runs).
+- Apply PR label `allow-cross-track` (workflow maps this label to `ALLOW_CROSS_TRACK=1`).
+- Add `.ci/allow_cross_track` in the branch to provide a file-based override.
+
+Only use an override when the contract boundary itself changes and both tracks must be updated together.
