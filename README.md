@@ -250,6 +250,26 @@ Aligned with `deep-research-report.md`, the project has moved from architecture 
 - expand contract-level and tempo/IPC regression coverage,
 - harden observer behavior for long-running multi-client use.
 
+### DeepResearch module contract (schema + versioning)
+
+`engine/modules/interfaces.py` defines a `DeepResearchModule` protocol that consumes a strict snapshot subset matching `engine/state/schema.py` keys:
+
+- required root keys: `schema_version`, `timestamp`, `transport`, `active_notes`, `module_outputs`, `diagnostics`, `ui_context`
+- required transport keys: `tick`, `bar`, `running`, `bpm`
+- output path: `modules.deepresearch` (optional `views.deepresearch`)
+
+Cadence and budget policy are intentionally explicit in the interface and mirrored in `config/settings.json` under `deepresearch`:
+
+- cadence policy: `every_tick` / `throttled_hz` / `event_triggered`
+- cycle budget: `max_compute_ms`, `timeout_ms`, and `on_budget_exceeded` skip behavior
+- failure semantics: retain last-good payload and publish status (`ok` / `skipped` / `error` / `disabled`) plus an error string when relevant
+
+Versioning behavior:
+
+- modules must record `schema_version_seen` in their output payload
+- if `schema_version` changes incompatibly, the module should emit `status=error` (or `disabled`), keep last-good results marked `stale`, and avoid destructive output shape changes until the interface contract is updated
+- new optional fields should be additive (TypedDict `NotRequired`) to preserve compatibility for older consumers
+
 ### Hardening checklist (remaining)
 
 - [~] **Decoupling:** move residual page-specific compatibility shims out of core scheduling paths and into explicit adapters.
