@@ -6,6 +6,7 @@ import unittest
 from unittest import mock
 
 from engine.ipc import ENVELOPE_COMMAND, ENVELOPE_ERROR, SnapshotPublisher
+from ui.client import SnapshotClient
 
 
 class IpcPubSubTest(unittest.TestCase):
@@ -84,6 +85,51 @@ class IpcPubSubTest(unittest.TestCase):
             self.assertEqual(env2.get("payload", {}).get("code"), "unsupported")
         finally:
             client.close()
+
+    def test_unsupported_command_returns_structured_error(self):
+        client = self._connect()
+        try:
+            cmd = {"type": ENVELOPE_COMMAND, "request_id": "req-1", "command": "set_page", "payload": {"page": 1}}
+            client.sendall((json.dumps(cmd) + "\n").encode("utf-8"))
+            data = client.recv(4096).decode("utf-8")
+            env = json.loads(data.strip())
+            self.assertEqual(env.get("type"), ENVELOPE_ERROR)
+            self.assertEqual(env.get("request_id"), "req-1")
+            self.assertEqual(env.get("payload", {}).get("code"), "unsupported")
+        finally:
+            client.close()
+
+    def test_capture_command_ack_contains_path(self):
+        self.publisher.set_command_handler(
+            lambda command, payload: (
+                True,
+                {
+                    "message": "capture saved",
+                    "path": "/tmp/captures/recent.mid",
+                    "bars": payload.get("bars") if isinstance(payload, dict) else None,
+                },
+            )
+            if command == "capture_recent"
+            else (False, {"code": "unknown-command", "message": command})
+        )
+        client = SnapshotClient(self.socket_path, timeout_s=0.25)
+        ok, result = client.send_command("capture_recent", {"bars": 2})
+
+        self.assertTrue(ok)
+        self.assertEqual(result.get("path"), "/tmp/captures/recent.mid")
+        self.assertEqual(result.get("bars"), 2)
+
+    def test_command_timeout_returns_timeout_code(self):
+        def _slow_handler(_command, _payload):
+            time.sleep(0.2)
+            return True, {"message": "late"}
+
+        self.publisher.set_command_handler(_slow_handler)
+        client = SnapshotClient(self.socket_path, timeout_s=0.05)
+        ok, result = client.send_command("capture_recent", {"bars": 1})
+
+        self.assertFalse(ok)
+        self.assertEqual(result.get("code"), "timeout")
 
 
 if __name__ == "__main__":

@@ -108,14 +108,28 @@ class SnapshotClient:
 
 
 def normalize_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
-    """Return a schema snapshot across legacy and v2 payload shapes."""
+    """Return a schema snapshot across modern, legacy, and envelope payload shapes."""
     if not isinstance(snapshot, dict):
         return {}
+
+    if snapshot.get("type") == ENVELOPE_SNAPSHOT and isinstance(snapshot.get("payload"), dict):
+        snapshot = snapshot["payload"]
+
     if "transport" in snapshot and "schema_version" in snapshot:
         return snapshot
+
     nested = snapshot.get("schema")
     if isinstance(nested, dict):
         return nested
+
+    payload = snapshot.get("payload")
+    if isinstance(payload, dict):
+        nested = payload.get("schema")
+        if isinstance(nested, dict):
+            return nested
+        if "transport" in payload and "schema_version" in payload:
+            return payload
+
     return snapshot
 
 
