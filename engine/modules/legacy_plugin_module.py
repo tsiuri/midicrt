@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from engine.modules.interfaces import MidiMessageHandler
+
 
 class LegacyPluginModule:
     """Compatibility adapter from plugin-style modules to EngineModule."""
@@ -25,7 +27,7 @@ class LegacyPluginModule:
             "note_off",
             "control_change",
             "program_change",
-        ) and hasattr(self.plugin, "handle"):
+        ) and isinstance(self.plugin, MidiMessageHandler):
             try:
                 self.plugin.handle(msg)
             except Exception:

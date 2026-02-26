@@ -9,6 +9,7 @@ import mido
 from engine.core import MidiEngine
 from engine.ipc import SnapshotPublisher
 from engine.modules import LegacyPluginModule, PianoRollViewModule
+from engine.modules.interfaces import LegacyPageModule, ScreenSaverModule, UserActivityModule
 from ui.model import Frame
 from ui.renderers.text import TextRenderer
 from ui.adapters import build_widget_from_legacy_draw
@@ -143,6 +144,8 @@ try:
     MODULE_POLICIES = _mod_cfg.get("modules", {}) if isinstance(_mod_cfg.get("modules", {}), dict) else {}
 except Exception:
     pass
+if not isinstance(MODULE_POLICIES.get("legacy.event_shim"), dict):
+    MODULE_POLICIES["legacy.event_shim"] = {"enabled": True, "policy": "event_driven", "interval_hz": 10.0}
 try:
     save_section("core", {
         "fps": float(FPS),
@@ -332,15 +335,6 @@ def _sync_transport_globals(snapshot):
 
 def handle_engine_event(event, msg: mido.Message):
     global _scheduler_health_status
-    _dispatch_legacy_page_events(event, msg)
-
-    # wake screensaver on note/CC/prog activity (mirrors keypress path)
-    if event["kind"] in ("note_on", "note_off", "control_change", "program_change"):
-        _ss = next((m for m in PLUGINS if hasattr(m, "is_active") and hasattr(m, "deactivate")), None)
-        if _ss and _ss.is_active():
-            _ss.deactivate()
-        polydisplay.handle(msg)
-
     snapshot = ENGINE.get_snapshot()
     diag = snapshot.get("diagnostics", {}) if isinstance(snapshot.get("diagnostics"), dict) else {}
     sched = diag.get("scheduler", {}) if isinstance(diag.get("scheduler"), dict) else {}
@@ -350,42 +344,6 @@ def handle_engine_event(event, msg: mido.Message):
         _scheduler_health_status = health
         _append_runtime_log(f"[Scheduler] {health}")
     _sync_transport_globals(snapshot)
-
-
-def _dispatch_legacy_page_events(event, msg: mido.Message) -> None:
-    """Temporary UI-side compatibility shim while pages migrate off plugin-style hooks."""
-    kind = event.get("kind")
-    bg_msg_kinds = ("note_on", "note_off", "control_change", "program_change")
-
-    if kind == "clock":
-        plugin_state = None
-        for pid, pg in PAGES.items():
-            if pid == current_page:
-                continue
-            if not getattr(pg, "BACKGROUND", False) or not hasattr(pg, "on_tick"):
-                continue
-            try:
-                if plugin_state is None:
-                    plugin_state = plugin_state_dict()
-                pg.on_tick(plugin_state)
-            except Exception:
-                pass
-
-    page = PAGES.get(current_page)
-    if page and hasattr(page, "handle") and kind in bg_msg_kinds:
-        try:
-            page.handle(msg)
-        except Exception:
-            pass
-
-    for pid, pg in PAGES.items():
-        if pid == current_page:
-            continue
-        if getattr(pg, "BACKGROUND", False) and hasattr(pg, "handle") and kind in bg_msg_kinds:
-            try:
-                pg.handle(msg)
-            except Exception:
-                pass
 
 
 # ---------------------------------------------------------------------
@@ -424,8 +382,22 @@ def switch_page(page):
     return True, page_id
 
 
+def _screensaver_module() -> ScreenSaverModule | None:
+    for mod in PLUGINS:
+        if isinstance(mod, ScreenSaverModule):
+            return mod
+    return None
+
+
+def _pagecycle_module() -> UserActivityModule | None:
+    for mod in PLUGINS:
+        if isinstance(mod, UserActivityModule):
+            return mod
+    return None
+
+
 def wake_screensaver() -> bool:
-    ss = next((m for m in PLUGINS if hasattr(m, "is_active") and hasattr(m, "deactivate")), None)
+    ss = _screensaver_module()
     if not ss:
         return False
     was_active = bool(ss.is_active())
@@ -435,6 +407,13 @@ def wake_screensaver() -> bool:
 
 def set_config_section(section: str, value: dict):
     save_section(section, value)
+
+
+def _on_midi_activity(msg: mido.Message) -> None:
+    ss = _screensaver_module()
+    if ss and ss.is_active():
+        ss.deactivate()
+    polydisplay.handle(msg)
 
 
 SNAPSHOT_PUBLISHER = SnapshotPublisher(
@@ -449,6 +428,10 @@ _pianoroll_page = PAGES.get(8)
 if _pianoroll_page and hasattr(_pianoroll_page, "get_view_payload"):
     ENGINE_MODULES.append(PianoRollViewModule(_pianoroll_page.get_view_payload))
 
+LEGACY_EVENT_SHIM_ENABLED = bool(
+    (MODULE_POLICIES.get("legacy.event_shim", {}) if isinstance(MODULE_POLICIES.get("legacy.event_shim", {}), dict) else {}).get("enabled", True)
+)
+
 ENGINE = MidiEngine(
     modules=ENGINE_MODULES,
     on_event=handle_engine_event,
@@ -460,6 +443,11 @@ ENGINE = MidiEngine(
         "wake_screensaver": wake_screensaver,
         "set_config": set_config_section,
     },
+    legacy_pages_provider=lambda: {pid: pg for pid, pg in PAGES.items() if isinstance(pg, LegacyPageModule)},
+    current_page_provider=lambda: int(current_page),
+    plugin_state_provider=plugin_state_dict,
+    midi_activity_handler=_on_midi_activity,
+    legacy_event_shim_enabled=LEGACY_EVENT_SHIM_ENABLED,
 )
 ENGINE.configure_capture({
     "bars_to_keep": CAPTURE_BARS_TO_KEEP,
@@ -526,6 +514,11 @@ def _ui_loop_body():
                     SCREEN_COLS = w
                     SCREEN_ROWS = h
                     last_header = ""
+        except Exception:
+            pass
+
+        try:
+            ENGINE.set_ui_context(cols=SCREEN_COLS, rows=SCREEN_ROWS, y_offset=3, current_page=current_page)
         except Exception:
             pass
 
@@ -617,7 +610,7 @@ def _ui_loop_body():
         # In compositor mode the screensaver writes zeros directly to fb0 via
         # its own mmap, fighting the compositor.  Skip it entirely here; the
         # compositor's own frame_clear()/flush() cycle handles blanking.
-        _ss = next((m for m in PLUGINS if hasattr(m, "is_active") and hasattr(m, "deactivate")), None)
+        _ss = _screensaver_module()
         if _compositor is None and _ss and _ss.is_active():
             _ss.draw(state)
             sys.stdout.flush()
@@ -1100,8 +1093,8 @@ def trigger_capture_recent(trigger: str = "key", bars: int | None = None):
 def keyboard_listener():
     global exit_flag
     # find plugins of interest once at startup
-    _ss = next((m for m in PLUGINS if hasattr(m, "is_active") and hasattr(m, "deactivate")), None)
-    _pc = next((m for m in PLUGINS if hasattr(m, "notify_keypress")), None)
+    _ss = _screensaver_module()
+    _pc = _pagecycle_module()
     with term.cbreak():
         while not exit_flag:
             key = term.inkey(timeout=0.05)

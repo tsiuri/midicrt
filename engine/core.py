@@ -41,6 +41,11 @@ class MidiEngine:
         command_hooks: dict[str, Callable[..., Any]] | None = None,
         module_policies: dict[str, dict[str, Any]] | None = None,
         overload_cost_ms: float = 6.0,
+        legacy_pages_provider: Callable[[], dict[int, Any]] | None = None,
+        current_page_provider: Callable[[], int] | None = None,
+        plugin_state_provider: Callable[[], dict[str, Any]] | None = None,
+        midi_activity_handler: Callable[[mido.Message], None] | None = None,
+        legacy_event_shim_enabled: bool = True,
     ) -> None:
         self.state = EngineState()
         self.modules = modules if modules is not None else []
@@ -59,6 +64,12 @@ class MidiEngine:
         self._capture_seq = 0
         self._command_hooks = command_hooks if isinstance(command_hooks, dict) else {}
         self._scheduler = ModuleScheduler(module_policies=module_policies, overload_cost_ms=overload_cost_ms)
+        self._legacy_pages_provider = legacy_pages_provider
+        self._current_page_provider = current_page_provider
+        self._plugin_state_provider = plugin_state_provider
+        self._midi_activity_handler = midi_activity_handler
+        self._legacy_event_shim_enabled = bool(legacy_event_shim_enabled)
+        self._ui_context: dict[str, Any] = {"cols": 0, "rows": 0, "y_offset": 3, "current_page": 0}
 
     def get_snapshot(self) -> dict[str, Any]:
         with self._lock:
@@ -81,6 +92,7 @@ class MidiEngine:
             views=views,
             status_text=snap.get("status_text", ""),
             diagnostics=snap.get("diagnostics", {}),
+            ui_context=dict(self._ui_context),
         ).as_dict()
 
         # Backward-compat fields while old callsites migrate.
@@ -105,6 +117,7 @@ class MidiEngine:
         self._update_transport(event)
         self._capture_event(event, msg)
         self._run_modules(event)
+        self._route_legacy_event(event)
         if self.on_event:
             try:
                 self.on_event(event, msg)
@@ -116,6 +129,17 @@ class MidiEngine:
             except Exception:
                 pass
         return event
+
+
+    def set_ui_context(self, *, cols: int | None = None, rows: int | None = None, y_offset: int | None = None, current_page: int | None = None) -> None:
+        if cols is not None:
+            self._ui_context["cols"] = int(cols)
+        if rows is not None:
+            self._ui_context["rows"] = int(rows)
+        if y_offset is not None:
+            self._ui_context["y_offset"] = int(y_offset)
+        if current_page is not None:
+            self._ui_context["current_page"] = int(current_page)
 
     def configure_capture(self, cfg: dict[str, Any] | None) -> None:
         cfg = cfg if isinstance(cfg, dict) else {}
@@ -361,6 +385,59 @@ class MidiEngine:
             self.state.diagnostics = diag
             if overloaded:
                 self.state.status_text = f"overload:{','.join(overloaded[:3])}"
+
+
+    def _route_legacy_event(self, event: dict[str, Any]) -> None:
+        if not self._legacy_event_shim_enabled:
+            return
+        if not callable(self._legacy_pages_provider):
+            return
+
+        pages = self._legacy_pages_provider()
+        if not isinstance(pages, dict) or not pages:
+            return
+
+        current_page = int(self._current_page_provider() if callable(self._current_page_provider) else -1)
+        kind = str(event.get("kind", ""))
+        msg = event.get("raw")
+        bg_msg_kinds = {"note_on", "note_off", "control_change", "program_change"}
+
+        if kind == "clock":
+            plugin_state = None
+            for pid, page in pages.items():
+                if pid == current_page:
+                    continue
+                if not bool(getattr(page, "BACKGROUND", False)) or not hasattr(page, "on_tick"):
+                    continue
+                try:
+                    if plugin_state is None:
+                        plugin_state = self._plugin_state_provider() if callable(self._plugin_state_provider) else {}
+                    page.on_tick(plugin_state if isinstance(plugin_state, dict) else {})
+                except Exception:
+                    pass
+
+        if msg is not None and kind in bg_msg_kinds:
+            page = pages.get(current_page)
+            if page is not None and hasattr(page, "handle"):
+                try:
+                    page.handle(msg)
+                except Exception:
+                    pass
+
+            for pid, page in pages.items():
+                if pid == current_page:
+                    continue
+                if bool(getattr(page, "BACKGROUND", False)) and hasattr(page, "handle"):
+                    try:
+                        page.handle(msg)
+                    except Exception:
+                        pass
+
+            if callable(self._midi_activity_handler):
+                try:
+                    self._midi_activity_handler(msg)
+                except Exception:
+                    pass
 
     def _capture_event(self, event: dict[str, Any], msg: mido.Message) -> None:
         if event["kind"] in ("clock", "start", "stop", "continue", "active_sensing"):

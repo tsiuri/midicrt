@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 @dataclass
@@ -35,6 +35,7 @@ class StateSnapshot:
     views: dict[str, Any] | None = None
     status_text: str = ""
     diagnostics: dict[str, Any] = field(default_factory=dict)
+    ui_context: dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
         payload = {
@@ -57,6 +58,7 @@ class StateSnapshot:
             "module_outputs": self.module_outputs,
             "status_text": self.status_text,
             "diagnostics": self.diagnostics,
+            "ui_context": self.ui_context,
         }
         if self.views:
             payload["views"] = self.views
@@ -79,6 +81,7 @@ def build_snapshot(
     views: dict[str, Any] | None = None,
     status_text: str = "",
     diagnostics: dict[str, Any] | None = None,
+    ui_context: dict[str, Any] | None = None,
 ) -> StateSnapshot:
     active_notes = active_notes or {}
     normalized = {ch: sorted(notes) for ch, notes in active_notes.items()}
@@ -105,4 +108,5 @@ def build_snapshot(
         views=views or None,
         status_text=status_text,
         diagnostics=diagnostics or {},
+        ui_context=ui_context or {},
     )
