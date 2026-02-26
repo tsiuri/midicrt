@@ -157,6 +157,17 @@ Pages can implement either:
 - `build_widget(state)` (new path, rendered by `TextRenderer`), or
 - `draw(state)` (legacy path, still supported during migration).
 
+### Event path migration (single engine route)
+
+Legacy page/plugin event hooks now flow through a single engine path in `engine/core.py`:
+
+1. MIDI message ingest and normalization (`MidiEngine.ingest`)
+2. Transport update + module scheduling
+3. Temporary compatibility shim routing (legacy page `handle`/`on_tick`, screensaver wake, poly display updates) gated by `core.module_scheduler.modules['legacy.event_shim'].enabled`
+4. Snapshot publish with UI context (`ui_context`) and module outputs
+
+`midicrt.py` now focuses on startup/profile/runtime wiring and no longer dispatches legacy page events directly.
+
 ### CRT compatibility constraints
 
 - Character cells are the primary unit of layout.
