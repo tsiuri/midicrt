@@ -17,3 +17,9 @@ dependencies = [
 pixel = [
   "pygame>=2.5",
 ]
+web = [
+  "aiohttp>=3.10",
+]
+
+[project.scripts]
+midicrt-web-observer = "web.observer:main"

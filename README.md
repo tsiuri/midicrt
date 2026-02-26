@@ -90,6 +90,44 @@ Fallback behavior:
 On startup, midicrt appends a self-check line to `log.txt` recording the active
 profile and backend.
 
+
+## Web observer (optional, read-only)
+
+A lightweight web dashboard is available as a **separate process**. It reads the
+same engine IPC snapshot stream used by local clients and exposes it over
+WebSocket for remote viewing.
+
+- Package path: `web/`
+- Launcher script: `scripts/run_web_observer.py`
+- Console entrypoint (after install): `midicrt-web-observer`
+- Dashboard URL: `http://127.0.0.1:8765/` (default bind)
+- WebSocket URL: `ws://127.0.0.1:8765/ws`
+
+### Install
+
+```bash
+pip install '.[web]'
+```
+
+### Run
+
+```bash
+# from repo root
+python scripts/run_web_observer.py --socket-path /tmp/midicrt.sock --host 127.0.0.1 --port 8765
+
+# or if installed as a package
+midicrt-web-observer --socket-path /tmp/midicrt.sock --host 127.0.0.1 --port 8765
+```
+
+### Security assumptions
+
+- The MVP is **read-only** (no control/command API).
+- No authentication/TLS is built in; default host is loopback (`127.0.0.1`).
+- For remote access, use an SSH tunnel or reverse proxy with auth/TLS.
+- Keep tty1 autostart unchanged: `run_tui` remains the only boot-time target.
+- tmux remains the primary operational interface; web observer is for passive
+  monitoring only.
+
 ## Layout
 
 - midicrt.py: main program
