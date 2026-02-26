@@ -198,6 +198,13 @@ Notes:
 - vars.txt: SDL/framebuffer environment settings for optional pixel runs
 - log.txt and midicrt_autoconnect.log: startup/autoconnect logs
 
+## Contribution workflow
+
+- Parallel multi-agent workflow and handoff protocol:
+  - `docs/parallel_dev_playbook.md`
+- Deep-research ownership tracks and cross-track override policy:
+  - `docs/contributor_tracks.md`
+
 ## Rendering architecture
 
 The UI is now structured as a widget tree + renderer pipeline for incremental

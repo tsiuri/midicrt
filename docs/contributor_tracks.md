@@ -19,3 +19,9 @@ Allowed overrides (contract-only changes):
 - Add `.ci/allow_cross_track` in the branch to provide a file-based override.
 
 Only use an override when the contract boundary itself changes and both tracks must be updated together.
+
+## Parallel multi-agent workflow
+
+For lane definitions, branch naming, PR size limits, and the dependent-work handoff protocol, see:
+
+- `docs/parallel_dev_playbook.md`
