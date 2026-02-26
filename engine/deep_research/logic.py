@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from .platform import ResearchContract
+from .platform import ResearchContract, contract_versions_compatible, current_contract_version
 
 
 @dataclass(frozen=True)
@@ -20,8 +20,24 @@ class ResearchResult:
         }
 
 
+def _contract_version_error(expected_version: str, actual_version: str) -> dict[str, Any]:
+    return {
+        "status": "error",
+        "error": {
+            "code": "deep_research_contract_incompatible",
+            "expected_contract_version": expected_version,
+            "actual_contract_version": actual_version,
+            "message": "Deep research contract version is incompatible; staged rollout required.",
+        },
+    }
+
+
 def run_research(contract: ResearchContract) -> dict[str, Any]:
     """Track B logic: consumes only frozen contract input."""
+    expected_version = current_contract_version()
+    if not contract_versions_compatible(expected_version, contract.contract_version):
+        return _contract_version_error(expected_version, contract.contract_version)
+
     transport = dict(contract.transport)
     active_notes = dict(contract.active_notes)
     flattened = [note for notes in active_notes.values() for note in notes]

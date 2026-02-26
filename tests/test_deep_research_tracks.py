@@ -5,7 +5,10 @@ from pathlib import Path
 from engine.deep_research import (
     DeterministicMockResearchModule,
     ResearchCadenceScheduler,
+    ResearchContract,
     build_contract,
+    current_contract_version,
+    freeze_payload,
     freshness_meta,
     run_research,
 )
@@ -60,6 +63,56 @@ class DeepResearchTrackSplitTest(unittest.TestCase):
                 contract = build_contract(snapshot, case["event"])
                 result = run_research(contract)
                 self.assertEqual(result, case["expected"])
+
+    def test_research_contract_current_version_success(self):
+        contract = build_contract(
+            {
+                "schema": {
+                    "schema_version": 7,
+                    "timestamp": 300.0,
+                    "transport": {"tick": 5, "bar": 1, "running": True, "bpm": 120.0},
+                    "active_notes": {"0": [60, 67]},
+                    "module_outputs": {},
+                }
+            },
+            {"kind": "clock"},
+        )
+
+        result = run_research(contract)
+        self.assertEqual(result["note_density"], "medium")
+        self.assertEqual(contract.contract_version, current_contract_version())
+
+    def test_research_contract_forward_compatible_additive_minor(self):
+        contract = ResearchContract(
+            contract_version="1.1",
+            schema_version=7,
+            snapshot_timestamp=300.0,
+            event_kind="clock",
+            transport=freeze_payload({"tick": 7, "bar": 1, "running": True, "bpm": 120.0}),
+            active_notes=freeze_payload({"0": [60, 64, 67]}),
+            module_outputs=freeze_payload({"future_additive_field": {"debug": True}}),
+        )
+
+        result = run_research(contract)
+        self.assertEqual(result["active_note_total"], 3)
+        self.assertNotIn("status", result)
+
+    def test_research_contract_breaking_version_mismatch_fails_deterministically(self):
+        contract = ResearchContract(
+            contract_version="2.0",
+            schema_version=7,
+            snapshot_timestamp=300.0,
+            event_kind="clock",
+            transport=freeze_payload({"tick": 9, "bar": 1, "running": True, "bpm": 120.0}),
+            active_notes=freeze_payload({"0": [72]}),
+            module_outputs=freeze_payload({}),
+        )
+
+        result = run_research(contract)
+        self.assertEqual(result["status"], "error")
+        self.assertEqual(result["error"]["code"], "deep_research_contract_incompatible")
+        self.assertEqual(result["error"]["expected_contract_version"], current_contract_version())
+        self.assertEqual(result["error"]["actual_contract_version"], "2.0")
 
 
 if __name__ == "__main__":
