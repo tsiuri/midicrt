@@ -1,0 +1,83 @@
+{
+  "ipc_compat": [
+    {
+      "name": "schema_payload_without_deep_research",
+      "input": {
+        "type": "snapshot",
+        "payload": {
+          "schema_version": 4,
+          "transport": {"tick": 9}
+        }
+      },
+      "expect_has_deep_research": false
+    },
+    {
+      "name": "schema_v2_envelope_with_top_level_deep_research",
+      "input": {
+        "type": "snapshot",
+        "payload": {
+          "schema": {
+            "schema_version": 4,
+            "transport": {"tick": 11}
+          },
+          "deep_research": {
+            "version": 3,
+            "result": {"signature": "ok"}
+          }
+        }
+      },
+      "expect_has_deep_research": true,
+      "expected_version": 3
+    }
+  ],
+  "schema_contract": [
+    {
+      "name": "defaults_when_missing",
+      "input": {},
+      "expected": {
+        "version": 0,
+        "late_policy": "drop",
+        "stale": false,
+        "applied": false,
+        "dropped": false,
+        "drop_reason": "",
+        "result": {}
+      }
+    },
+    {
+      "name": "type_normalization_and_unknown_forward_fields",
+      "input": {
+        "version": "7",
+        "timestamp": "12.5",
+        "produced_at": "13",
+        "source_snapshot_version": "9",
+        "source_snapshot_timestamp": "11.0",
+        "source_tick": "42",
+        "lag_ms": "2.25",
+        "late_policy": "apply_next",
+        "stale": 1,
+        "applied": 0,
+        "dropped": "",
+        "drop_reason": "late_result",
+        "result": {"score": 99},
+        "future_field": {"kept": true}
+      },
+      "expected": {
+        "version": 7,
+        "timestamp": 12.5,
+        "produced_at": 13.0,
+        "source_snapshot_version": 9,
+        "source_snapshot_timestamp": 11.0,
+        "source_tick": 42,
+        "lag_ms": 2.25,
+        "late_policy": "apply_next",
+        "stale": true,
+        "applied": false,
+        "dropped": false,
+        "drop_reason": "late_result",
+        "result": {"score": 99},
+        "future_field": {"kept": true}
+      }
+    }
+  ]
+}
