@@ -122,6 +122,11 @@ midicrt-web-observer --socket-path /tmp/midicrt.sock --host 127.0.0.1 --port 876
 `--max-broadcast-hz` limits websocket fanout frequency and samples only the latest
 snapshot, reducing CPU cost when many browsers are connected.
 
+`--client-queue-size` configures per-client outbound buffering (default: `8`). When
+clients are slower than the fanout cadence, the observer applies bounded
+backpressure by dropping the oldest queued frame and keeping the newest one.
+This keeps lag bounded for all clients and avoids unbounded memory growth.
+
 ### Security assumptions
 
 - The observer remains **read-only** (no control/command API).
@@ -183,6 +188,42 @@ Notes:
   never committed to this repository.
 - If exposing beyond trusted LAN, add rate limits and IP allowlists at the
   proxy layer.
+
+### Operator runbook: capacity and failure modes
+
+Use `/healthz` as the first-line signal for observer health. It now includes
+fanout telemetry counters:
+
+- `telemetry.queue_dropped`: times a client queue hit capacity.
+- `telemetry.queue_coalesced`: times the server removed stale queued payloads to
+  prioritize the latest snapshot.
+
+Capacity guidance:
+
+- Start with `--max-broadcast-hz 10-20` and `--client-queue-size 8` for small
+  groups (up to ~5 browser clients).
+- For larger audiences or constrained CPUs, lower fanout first (for example,
+  `--max-broadcast-hz 8`) before increasing queue size.
+- Prefer small queue sizes (1-8) so stale frames are discarded quickly and
+  active viewers see near-current state instead of delayed history.
+
+Failure modes and operator response:
+
+1. **Slow/paused browser tabs**
+   - Symptom: `queue_dropped` and `queue_coalesced` rise while service remains
+     healthy.
+   - Response: expected under load; if persistent across many clients, reduce
+     `--max-broadcast-hz` and verify host CPU headroom.
+2. **Engine IPC disconnect/restart**
+   - Symptom: `bridge.connected=false`, `bridge.reconnect_attempts` increases,
+     `bridge.last_error` populated.
+   - Response: observer auto-reconnects; if reconnects continue, validate engine
+     socket path and engine process health.
+3. **Snapshot freshness drift / stale deep research payloads**
+   - Symptom: websocket payload `deep_research.stale=true` and increasing
+     `deep_research.lag_ms`.
+   - Response: treat as degraded analytics freshness; core transport data
+     remains available while deep research catches up.
 
 ## Layout
 
