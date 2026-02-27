@@ -31,6 +31,11 @@ def main() -> int:
     ap.add_argument("--window-start", required=True, help="ISO8601 start timestamp")
     ap.add_argument("--window-end", required=True, help="ISO8601 end timestamp")
     ap.add_argument("--output", required=True, help="Output summary JSON path")
+    ap.add_argument(
+        "--generated-at",
+        default=None,
+        help="Optional fixed ISO8601 timestamp for deterministic outputs.",
+    )
     args = ap.parse_args()
 
     merged = _load_records(Path(args.merged_prs))
@@ -40,8 +45,10 @@ def main() -> int:
     conflict_count = len(conflicts)
     conflict_rate = (conflict_count / merged_count) if merged_count else 0.0
 
+    generated_at = args.generated_at or datetime.now().astimezone().isoformat()
+
     summary = {
-        "generated_at": datetime.now().astimezone().isoformat(),
+        "generated_at": generated_at,
         "window_start": args.window_start,
         "window_end": args.window_end,
         "merged_pr_count": merged_count,

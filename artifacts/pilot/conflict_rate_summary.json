@@ -1,0 +1,12 @@
+{
+  "conflict_rate": 0.0,
+  "conflict_resolution_events": 0,
+  "generated_at": null,
+  "merged_pr_count": 0,
+  "source_files": {
+    "conflict_events": "artifacts/pilot/conflict_events.json",
+    "merged_prs": "artifacts/pilot/merged_prs.json"
+  },
+  "window_end": null,
+  "window_start": null
+}

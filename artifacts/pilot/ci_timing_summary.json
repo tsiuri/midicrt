@@ -1,0 +1,19 @@
+{
+  "by_workflow": {},
+  "filters": {
+    "conclusion": "success"
+  },
+  "generated_at": null,
+  "input_path": "artifacts/pilot/ci_runs.json",
+  "overall": {
+    "max_seconds": null,
+    "mean_seconds": null,
+    "median_seconds": null,
+    "min_seconds": null,
+    "p95_seconds": null,
+    "sample_count": 0
+  },
+  "run_count_in_payload": 0,
+  "run_count_skipped": 0,
+  "run_count_used": 0
+}
