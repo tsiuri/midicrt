@@ -96,24 +96,58 @@ class SnapshotBridge:
 
 
 class DashboardServer:
-    def __init__(self, socket_path: str, host: str, port: int, max_broadcast_hz: float = 20.0) -> None:
+    def __init__(
+        self,
+        socket_path: str,
+        host: str,
+        port: int,
+        max_broadcast_hz: float = 20.0,
+        client_queue_size: int = 8,
+    ) -> None:
         self.socket_path = socket_path
         self.host = host
         self.port = int(port)
         self.max_broadcast_hz = max(1.0, float(max_broadcast_hz))
+        self.client_queue_size = max(1, int(client_queue_size))
         self.bridge = SnapshotBridge(socket_path=socket_path)
         self.clients: set[web.WebSocketResponse] = set()
+        self.client_queues: dict[web.WebSocketResponse, asyncio.Queue[tuple[int, str]]] = {}
+        self.client_send_tasks: dict[web.WebSocketResponse, asyncio.Task[None]] = {}
+        self._queue_dropped = 0
+        self._queue_coalesced = 0
         self.static_dir = Path(__file__).with_name("static")
+
+    def _telemetry(self) -> dict[str, int]:
+        return {
+            "queue_dropped": self._queue_dropped,
+            "queue_coalesced": self._queue_coalesced,
+        }
 
     async def _index(self, request: web.Request) -> web.StreamResponse:
         return web.FileResponse(self.static_dir / "index.html")
 
     async def _healthz(self, request: web.Request) -> web.Response:
         seq, snapshot, meta = self.bridge.current()
-        return web.json_response({"ok": True, "seq": seq, "has_snapshot": bool(snapshot), "bridge": meta, "max_broadcast_hz": self.max_broadcast_hz})
+        return web.json_response(
+            {
+                "ok": True,
+                "seq": seq,
+                "has_snapshot": bool(snapshot),
+                "bridge": meta,
+                "max_broadcast_hz": self.max_broadcast_hz,
+                "client_queue_size": self.client_queue_size,
+                "telemetry": self._telemetry(),
+            }
+        )
 
     @staticmethod
-    def _payload_for(seq: int, snapshot: dict[str, Any], bridge_meta: dict[str, Any], last_seq: int | None) -> str:
+    def _payload_for(
+        seq: int,
+        snapshot: dict[str, Any],
+        bridge_meta: dict[str, Any],
+        last_seq: int | None,
+        telemetry: dict[str, int] | None = None,
+    ) -> str:
         sequence_gap = 0 if last_seq is None else max(0, seq - last_seq - 1)
         deep = snapshot.get("deep_research") if isinstance(snapshot.get("deep_research"), dict) else None
         deep_meta = {
@@ -130,6 +164,7 @@ class DashboardServer:
             "metrics": {
                 "sequence_gap": sequence_gap,
                 "last_update_age_ms": bridge_meta.get("last_update_age_ms"),
+                "fanout": telemetry or {"queue_dropped": 0, "queue_coalesced": 0},
             },
             "deep_research": deep_meta,
         }
@@ -139,10 +174,15 @@ class DashboardServer:
         ws = web.WebSocketResponse(heartbeat=30.0)
         await ws.prepare(request)
         self.clients.add(ws)
+        queue: asyncio.Queue[tuple[int, str]] = asyncio.Queue(maxsize=self.client_queue_size)
+        sender_task = asyncio.create_task(self._client_sender(ws, queue))
+        self.client_queues[ws] = queue
+        self.client_send_tasks[ws] = sender_task
 
         seq, snapshot, bridge_meta = self.bridge.current()
         if snapshot is not None:
-            await ws.send_str(self._payload_for(seq, snapshot, bridge_meta, last_seq=None))
+            payload = self._payload_for(seq, snapshot, bridge_meta, last_seq=None, telemetry=self._telemetry())
+            await ws.send_str(payload)
 
         try:
             async for msg in ws:
@@ -151,8 +191,39 @@ class DashboardServer:
                 elif msg.type == WSMsgType.ERROR:
                     _LOG.warning("websocket error: %s", ws.exception())
         finally:
-            self.clients.discard(ws)
+            self._drop_client(ws)
+            sender_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await sender_task
         return ws
+
+    @staticmethod
+    async def _client_sender(ws: web.WebSocketResponse, queue: asyncio.Queue[tuple[int, str]]) -> None:
+        while True:
+            _seq, payload = await queue.get()
+            await ws.send_str(payload)
+
+    async def _enqueue_payload(self, ws: web.WebSocketResponse, queue: asyncio.Queue[tuple[int, str]], seq: int, payload: str) -> None:
+        if ws.closed:
+            raise ConnectionError("websocket closed")
+        try:
+            queue.put_nowait((seq, payload))
+            return
+        except asyncio.QueueFull:
+            self._queue_dropped += 1
+        try:
+            queue.get_nowait()
+            self._queue_coalesced += 1
+        except asyncio.QueueEmpty:
+            pass
+        queue.put_nowait((seq, payload))
+
+    def _drop_client(self, ws: web.WebSocketResponse) -> None:
+        self.clients.discard(ws)
+        self.client_queues.pop(ws, None)
+        task = self.client_send_tasks.pop(ws, None)
+        if task is not None:
+            task.cancel()
 
     async def _broadcast_loop(self, app: web.Application) -> None:
         last_seq = -1
@@ -167,13 +238,17 @@ class DashboardServer:
                         stale.append(ws)
                         continue
                     try:
-                        payload = self._payload_for(seq, snapshot, bridge_meta, last_seq=client_last_seq.get(ws))
-                        await ws.send_str(payload)
+                        queue = self.client_queues.get(ws)
+                        if queue is None:
+                            stale.append(ws)
+                            continue
+                        payload = self._payload_for(seq, snapshot, bridge_meta, last_seq=client_last_seq.get(ws), telemetry=self._telemetry())
+                        await self._enqueue_payload(ws, queue, seq, payload)
                         client_last_seq[ws] = seq
                     except Exception:
                         stale.append(ws)
                 for ws in stale:
-                    self.clients.discard(ws)
+                    self._drop_client(ws)
                     client_last_seq.pop(ws, None)
                 last_seq = seq
             await asyncio.sleep(interval_s)
@@ -210,6 +285,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--host", default="127.0.0.1", help="HTTP bind host (default: loopback only)")
     parser.add_argument("--port", default=8765, type=int, help="HTTP/WebSocket bind port")
     parser.add_argument("--max-broadcast-hz", default=20.0, type=float, help="Maximum websocket broadcast rate (samples latest snapshot)")
+    parser.add_argument("--client-queue-size", default=8, type=int, help="Per-client outbound queue size before coalescing")
     parser.add_argument("--log-level", default="INFO", help="Python logging level")
     return parser.parse_args(argv)
 
@@ -217,7 +293,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     logging.basicConfig(level=getattr(logging, str(args.log_level).upper(), logging.INFO), format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    DashboardServer(socket_path=args.socket_path, host=args.host, port=args.port, max_broadcast_hz=args.max_broadcast_hz).run()
+    DashboardServer(
+        socket_path=args.socket_path,
+        host=args.host,
+        port=args.port,
+        max_broadcast_hz=args.max_broadcast_hz,
+        client_queue_size=args.client_queue_size,
+    ).run()
     return 0
 
 
