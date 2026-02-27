@@ -29,6 +29,10 @@
   </div>
   <div class="grid">
     <section class="card">
+      <h2>Schema health</h2>
+      <div id="schemaHealth" class="mono">Waiting for snapshot…</div>
+    </section>
+    <section class="card">
       <h2>Transport</h2>
       <div id="transport" class="mono">Waiting for snapshot…</div>
     </section>
@@ -51,6 +55,7 @@ const transportEl = document.getElementById('transport');
 const notesEl = document.getElementById('notes');
 const modulesEl = document.getElementById('modules');
 const deepResearchEl = document.getElementById('deepResearch');
+const schemaHealthEl = document.getElementById('schemaHealth');
 const staleStateEl = document.getElementById('staleState');
 const reconnectStateEl = document.getElementById('reconnectState');
 const snapshotStateEl = document.getElementById('snapshotState');
@@ -66,6 +71,7 @@ function render(payload) {
   const t = snapshot.transport || {};
   const metrics = payload.metrics || {};
   const bridge = payload.bridge || {};
+  const schemaHealth = payload.schema_health || {};
   const ageMs = Number(metrics.last_update_age_ms ?? bridge.last_update_age_ms ?? 0);
   const reconnectAttempts = Number(bridge.reconnect_attempts ?? 0);
 
@@ -96,6 +102,13 @@ function render(payload) {
   }
 
   setPill(snapshotStateEl, 'Snapshot: live', 'ok');
+
+  schemaHealthEl.textContent = [
+    `latest_snapshot_version: ${schemaHealth.latest_snapshot_version ?? snapshot.schema_version ?? '--'}`,
+    `ipc_freshness_age_ms: ${Number(schemaHealth.ipc_freshness_age_ms ?? ageMs).toFixed ? Number(schemaHealth.ipc_freshness_age_ms ?? ageMs).toFixed(1) : (schemaHealth.ipc_freshness_age_ms ?? '--')}`,
+    `normalization_fallbacks: ${schemaHealth.normalization_fallbacks ?? '--'}`,
+    `bounded_stream_rate_hz: ${payload.read_only?.bounded_stream_rate_hz ?? '--'}`,
+  ].join('\n');
 
   notesEl.innerHTML = '';
   const channels = Array.isArray(snapshot.channels) ? snapshot.channels : [];
