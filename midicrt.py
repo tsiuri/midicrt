@@ -12,6 +12,7 @@ from engine.modules import LegacyPluginModule, PianoRollViewModule
 from engine.modules.interfaces import ScreenSaverModule, UserActivityModule
 from engine.adapters.aconnect_parser import parse_aconnect_output
 from ui.model import Frame
+from ui.composition import build_footer_widget, build_transport_widget
 from ui.renderers.text import TextRenderer
 from ui.adapters import build_widget_from_legacy_draw
 from ui.overlays import capture_plugin_overlay_widget, compose_overlay_rows
@@ -22,6 +23,7 @@ sys.modules.setdefault("midicrt", sys.modules[__name__])
 
 term = Terminal()
 text_renderer = TextRenderer(term)
+_ui_line_renderer = TextRenderer(term)
 ACTIVE_PROFILE = "run_tui"
 ACTIVE_RENDER_BACKEND = "text"
 _compositor = None   # set to CompositorRenderer when profile=run_compositor
@@ -588,6 +590,23 @@ def _ui_loop_body():
             "running": running,
             "bpm": bpm,
         }
+        schema_snapshot = {}
+        if ENGINE:
+            try:
+                schema_snapshot = (ENGINE.get_snapshot() or {}).get("schema", {})
+            except Exception:
+                schema_snapshot = {}
+        transport_schema = schema_snapshot.get("transport") if isinstance(schema_snapshot.get("transport"), dict) else {}
+        ui_snapshot = {
+            "transport": {
+                "running": bool(transport_schema.get("running", snapshot.get("running", False))),
+                "bpm": float(transport_schema.get("bpm", snapshot.get("bpm", 0.0))),
+                "bar": int(transport_schema.get("bar", snapshot.get("bar_counter", 0))),
+                "tick": int(transport_schema.get("tick", snapshot.get("tick_counter", 0))),
+                "time_signature": str(transport_schema.get("meter_estimate", "") or ""),
+            },
+            "status_text": str(schema_snapshot.get("status_text", "") or ""),
+        }
         state = plugin_state_dict()
 
         # --- HEADER (row 0) — scrolling marquee when wider than screen
@@ -611,9 +630,10 @@ def _ui_loop_body():
             draw_line(0, (full * 2)[offset:offset + SCREEN_COLS])
 
         # --- TRANSPORT (row 1)
-        status = "RUN" if snapshot["running"] else "STOP"
-        metronome = "●" if snapshot["running"] and (snapshot["tick_counter"] % 24) < 3 else "○"
-        base = f" {status:<4}  {snapshot['bpm']:6.1f} BPM   BAR {snapshot['bar_counter']:04d}   {metronome}"
+        transport_widget = build_transport_widget(ui_snapshot)
+        status = "RUN" if transport_widget.running else "STOP"
+        metronome = "●" if transport_widget.running and (transport_widget.tick % 24) < 3 else "○"
+        base = f" {status:<4}  {transport_widget.bpm:6.1f} BPM   BAR {transport_widget.bar:04d}   {metronome}"
         msg = AUTOCONNECT_LOG[-1] if AUTOCONNECT_LOG else ""
         if msg:
             msg = msg.strip()
@@ -647,16 +667,23 @@ def _ui_loop_body():
         else:
             draw_line(1, base)
 
-        # --- STATUS (row 2): show FPS directly (footer may also render it)
-        if _compositor is not None:
-            _frame_now = time.monotonic()
-            _frame_dt  = _frame_now - getattr(ui_loop, "_frame_last_t", _frame_now)
-            ui_loop._frame_last_t = _frame_now
-            global fps_status
-            fps_status = f"fps:{1.0/_frame_dt:.1f}" if _frame_dt > 0 else "fps:--"
-            draw_line(2, f"  {fps_status}")
-        else:
-            draw_line(2, "")
+        # --- STATUS (row 2): schema-backed footer payload
+        _frame_now = time.monotonic()
+        _frame_dt = _frame_now - getattr(ui_loop, "_frame_last_t", _frame_now)
+        ui_loop._frame_last_t = _frame_now
+        global fps_status
+        fps_status = f"fps:{1.0/_frame_dt:.1f}" if _frame_dt > 0 else "fps:--"
+        footer_right_parts = [p for p in (fps_status, _scheduler_health_status) if p]
+        if sysex_status and (time.time() - sysex_status_time) < 3.0:
+            footer_right_parts.append(sysex_status)
+        ui_snapshot["fps_status"] = fps_status
+        ui_snapshot["footer"] = {
+            "left": ui_snapshot.get("status_text", ""),
+            "right": " | ".join(footer_right_parts),
+        }
+        footer_widget = build_footer_widget(ui_snapshot)
+        footer_rendered = _ui_line_renderer.render(footer_widget, Frame(cols=SCREEN_COLS, rows=1))
+        draw_line(2, footer_rendered[0] if footer_rendered else "")
 
         # --- SCREENSAVER CHECK: skip all drawing if active
         # In compositor mode the screensaver writes zeros directly to fb0 via
