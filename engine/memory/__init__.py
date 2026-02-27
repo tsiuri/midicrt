@@ -1,4 +1,5 @@
 from .capture import MemoryCaptureManager
+from .editor import SessionEditor, SessionRevision, TimeSelection
 from .session_model import (
     SCHEMA_NAME,
     SCHEMA_VERSION,
@@ -15,6 +16,8 @@ from .session_model import (
 
 __all__ = [
     "MemoryCaptureManager",
+    "SessionEditor",
+    "SessionRevision",
     "SCHEMA_NAME",
     "SCHEMA_VERSION",
     "EventKind",
@@ -24,6 +27,7 @@ __all__ = [
     "SessionModel",
     "TempoSegment",
     "TimeSignatureSegment",
+    "TimeSelection",
     "build_session_model",
     "to_mido_message",
 ]
