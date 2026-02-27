@@ -1,0 +1,101 @@
+name: Fixture Dependency Map Guard
+
+on:
+  pull_request:
+    paths:
+      - 'tests/fixtures/**/*.json'
+      - 'tests/deep_research_fixture_loader.py'
+      - 'tests/test_schema_contract.py'
+      - 'tests/test_tempo_map_metrics.py'
+      - 'tests/test_capture_export.py'
+      - 'tests/test_engine_replay_determinism.py'
+      - 'tests/test_deep_research_replay_contracts.py'
+      - 'tests/test_deep_research_tracks.py'
+      - 'docs/fixture_dependency_map.md'
+      - '.ci/fixture_map_exceptions.txt'
+  push:
+    branches:
+      - master
+    paths:
+      - 'tests/fixtures/**/*.json'
+      - 'tests/deep_research_fixture_loader.py'
+      - 'tests/test_schema_contract.py'
+      - 'tests/test_tempo_map_metrics.py'
+      - 'tests/test_capture_export.py'
+      - 'tests/test_engine_replay_determinism.py'
+      - 'tests/test_deep_research_replay_contracts.py'
+      - 'tests/test_deep_research_tracks.py'
+      - 'docs/fixture_dependency_map.md'
+      - '.ci/fixture_map_exceptions.txt'
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Enforce fixture dependency map updates
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          if [ -z "${BASE_SHA}" ] || [ "${BASE_SHA}" = "0000000000000000000000000000000000000000" ]; then
+            BASE_SHA="$(git rev-parse HEAD^)"
+          fi
+          python3 - <<'PY'
+          import fnmatch
+          import os
+          import subprocess
+          import sys
+
+          base_sha = os.environ["BASE_SHA"]
+          head_sha = os.environ["HEAD_SHA"]
+
+          changed = subprocess.check_output(
+              ["git", "diff", "--name-only", f"{base_sha}..{head_sha}"],
+              text=True,
+          ).splitlines()
+
+          fixture_patterns = [
+              "tests/fixtures/**/*.json",
+              "tests/deep_research_fixture_loader.py",
+              "tests/test_schema_contract.py",
+              "tests/test_tempo_map_metrics.py",
+              "tests/test_capture_export.py",
+              "tests/test_engine_replay_determinism.py",
+              "tests/test_deep_research_replay_contracts.py",
+              "tests/test_deep_research_tracks.py",
+          ]
+
+          def matches_any(path: str, patterns: list[str]) -> bool:
+              normalized = path.strip()
+              return any(fnmatch.fnmatch(normalized, pattern) for pattern in patterns)
+
+          fixture_related = [p for p in changed if matches_any(p, fixture_patterns)]
+          if not fixture_related:
+              print("No fixture-related paths changed; guard passes.")
+              raise SystemExit(0)
+
+          map_updated = "docs/fixture_dependency_map.md" in changed
+          exception_updated = ".ci/fixture_map_exceptions.txt" in changed
+
+          if map_updated or exception_updated:
+              print("Fixture-related paths changed:")
+              for path in fixture_related:
+                  print(f" - {path}")
+              if map_updated:
+                  print("Dependency map updated in diff: docs/fixture_dependency_map.md")
+              if exception_updated:
+                  print("Explicit exception updated in diff: .ci/fixture_map_exceptions.txt")
+              raise SystemExit(0)
+
+          print("Fixture-related paths changed without dependency map update or explicit exception:")
+          for path in fixture_related:
+              print(f" - {path}")
+          print("\nRequired action: update docs/fixture_dependency_map.md, or add an entry to .ci/fixture_map_exceptions.txt")
+          raise SystemExit(1)
+          PY
