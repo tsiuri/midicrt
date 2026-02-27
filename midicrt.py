@@ -11,13 +11,41 @@ from engine.ipc import SnapshotPublisher
 from engine.modules import LegacyPluginModule, PianoRollViewModule
 from engine.modules.interfaces import ScreenSaverModule, UserActivityModule
 from engine.adapters.aconnect_parser import parse_aconnect_output
-from ui.model import Frame
+from ui.model import Frame, Line, TextBlock
 from ui.renderers.text import TextRenderer
-from ui.adapters import build_widget_from_legacy_draw
+from engine.page_contracts import build_legacy_page_view_contract
+from ui.view_contracts import widget_from_page_view_contract
 
 # Ensure the running script is importable as `midicrt` so plugin/page imports do
 # not re-execute this module under a different name.
 sys.modules.setdefault("midicrt", sys.modules[__name__])
+
+
+class _LegacyLineCapture:
+    def __init__(self, cols: int, rows: int):
+        self.cols = max(1, int(cols))
+        self.rows = max(1, int(rows))
+        self.lines = ["" for _ in range(self.rows)]
+
+    def draw_line(self, y: int, text: str) -> None:
+        y_int = int(y)
+        if 0 <= y_int < self.rows:
+            self.lines[y_int] = str(text)[: self.cols]
+
+
+def _legacy_widget_from_draw(draw_fn, state, draw_line_ref):
+    cols = int(state.get("cols", 100))
+    rows = int(state.get("rows", 30))
+    y_offset = int(state.get("y_offset", 0))
+    cap = _LegacyLineCapture(cols, rows)
+    mod_globals = draw_fn.__globals__
+    old = mod_globals.get("draw_line", draw_line_ref)
+    mod_globals["draw_line"] = cap.draw_line
+    try:
+        draw_fn(state)
+    finally:
+        mod_globals["draw_line"] = old
+    return TextBlock(lines=[Line.plain(t) for t in cap.lines[y_offset:]])
 
 term = Terminal()
 text_renderer = TextRenderer(term)
@@ -146,6 +174,7 @@ MODULE_POLICIES = {}
 AUTOCONNECT_FALLBACK_SOURCES = []
 AUTOCONNECT_FALLBACK_DESTINATIONS = []
 TEMPO_METRICS_CFG = {"interval_window": 24, "baseline_window": 96, "stats_window": 24}
+CORE_FEATURE_FLAGS = {"contract_page_views": False, "contract_legacy_event_router": True}
 try:
     FPS = float(_core_cfg.get("fps", FPS))
     HEADER_SCROLL_SPEED = float(_core_cfg.get("header_scroll_speed", HEADER_SCROLL_SPEED))
@@ -164,6 +193,9 @@ try:
     if isinstance(_fallback_dests, list):
         AUTOCONNECT_FALLBACK_DESTINATIONS = [str(v).strip() for v in _fallback_dests if str(v).strip()]
     _tempo_metrics_cfg = _core_cfg.get("tempo_metrics", {}) if isinstance(_core_cfg.get("tempo_metrics", {}), dict) else {}
+    _ff_cfg = _core_cfg.get("feature_flags", {}) if isinstance(_core_cfg.get("feature_flags", {}), dict) else {}
+    CORE_FEATURE_FLAGS["contract_page_views"] = bool(_ff_cfg.get("contract_page_views", CORE_FEATURE_FLAGS["contract_page_views"]))
+    CORE_FEATURE_FLAGS["contract_legacy_event_router"] = bool(_ff_cfg.get("contract_legacy_event_router", CORE_FEATURE_FLAGS["contract_legacy_event_router"]))
     TEMPO_METRICS_CFG = {
         "interval_window": max(2, int(_tempo_metrics_cfg.get("interval_window", TEMPO_METRICS_CFG["interval_window"]))),
         "baseline_window": max(2, int(_tempo_metrics_cfg.get("baseline_window", TEMPO_METRICS_CFG["baseline_window"]))),
@@ -191,6 +223,7 @@ try:
             "fallback_destinations": list(AUTOCONNECT_FALLBACK_DESTINATIONS),
         },
         "tempo_metrics": dict(TEMPO_METRICS_CFG),
+        "feature_flags": dict(CORE_FEATURE_FLAGS),
     })
 except Exception:
     pass
@@ -482,7 +515,7 @@ if _pianoroll_page and hasattr(_pianoroll_page, "get_view_payload"):
 
 LEGACY_EVENT_SHIM_ENABLED = bool(
     (MODULE_POLICIES.get("legacy.event_shim", {}) if isinstance(MODULE_POLICIES.get("legacy.event_shim", {}), dict) else {}).get("enabled", True)
-)
+) and bool(CORE_FEATURE_FLAGS.get("contract_legacy_event_router", True))
 
 ENGINE = MidiEngine(
     modules=ENGINE_MODULES,
@@ -700,7 +733,11 @@ def _ui_loop_body():
                 if hasattr(page, "build_widget"):
                     widget = page.build_widget(state)
                 elif hasattr(page, "draw"):
-                    widget = build_widget_from_legacy_draw(page.draw, state, draw_line)
+                    if CORE_FEATURE_FLAGS.get("contract_page_views", False):
+                        payload = build_legacy_page_view_contract(page.draw, state, draw_line).as_dict()
+                        widget = widget_from_page_view_contract(payload)
+                    else:
+                        widget = _legacy_widget_from_draw(page.draw, state, draw_line)
                 else:
                     widget = None
                 if widget is None:

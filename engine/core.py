@@ -12,7 +12,7 @@ from typing import Any, Callable
 
 import mido
 
-from engine.adapters import LegacyPageEventAdapter
+from engine.legacy_page_router import LegacyPageRouter
 from engine.modules.interfaces import EngineModule
 from engine.scheduler import ModuleScheduler
 from engine.state.schema import build_snapshot, normalize_deep_research_payload
@@ -121,7 +121,7 @@ class MidiEngine:
         self._plugin_state_provider = plugin_state_provider
         self._midi_activity_handler = midi_activity_handler
         self._legacy_event_shim_enabled = bool(legacy_event_shim_enabled)
-        self._legacy_event_adapter = LegacyPageEventAdapter(
+        self._legacy_event_adapter = LegacyPageRouter(
             pages_provider=self._legacy_pages_provider,
             current_page_provider=self._current_page_provider,
             plugin_state_provider=self._plugin_state_provider,

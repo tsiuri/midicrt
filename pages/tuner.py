@@ -9,7 +9,7 @@ import sys
 from blessed import Terminal
 from midicrt import draw_line
 from configutil import load_section, save_section
-from ui.adapters import build_widget_from_legacy_draw
+from pages.legacy_contract_bridge import build_widget_from_contract
 
 audio = sys.modules.get("pages.audiospectrum")
 if audio is None:
@@ -188,4 +188,4 @@ def draw(state):
 
 
 def build_widget(state):
-    return build_widget_from_legacy_draw(draw, state, draw_line)
+    return build_widget_from_contract(draw, state, draw_line)

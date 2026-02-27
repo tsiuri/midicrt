@@ -171,6 +171,10 @@
       "interval_window": 24,
       "baseline_window": 96,
       "stats_window": 24
+    },
+    "feature_flags": {
+      "contract_page_views": false,
+      "contract_legacy_event_router": true
     }
   },
   "panic": {

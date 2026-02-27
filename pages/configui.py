@@ -7,7 +7,7 @@ import os
 import time
 from midicrt import draw_line, term
 from configutil import load_settings, save_settings, config_path
-from ui.adapters import build_widget_from_legacy_draw
+from pages.legacy_contract_bridge import build_widget_from_contract
 
 _ROOT = {}
 _PATH = []  # list of keys/indices
@@ -350,4 +350,4 @@ def draw(state):
 
 
 def build_widget(state):
-    return build_widget_from_legacy_draw(draw, state, draw_line)
+    return build_widget_from_contract(draw, state, draw_line)

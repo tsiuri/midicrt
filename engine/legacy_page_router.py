@@ -5,12 +5,8 @@ from typing import Any, Callable
 
 
 @dataclass
-class LegacyPageEventAdapter:
-    """Adapter for legacy page ``handle`` / ``on_tick`` hooks.
-
-    Keeps compatibility routing out of engine scheduling internals while
-    preserving behavior during migration.
-    """
+class LegacyPageRouter:
+    """Compatibility router for legacy page ``handle``/``on_tick`` hooks."""
 
     pages_provider: Callable[[], dict[int, Any]] | None = None
     current_page_provider: Callable[[], int] | None = None
@@ -74,4 +70,3 @@ class LegacyPageEventAdapter:
                 self.midi_activity_handler(msg)
             except Exception:
                 pass
-

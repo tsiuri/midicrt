@@ -1,4 +1,3 @@
-from .legacy_page_events import LegacyPageEventAdapter
+"""Adapters package namespace."""
 
-__all__ = ["LegacyPageEventAdapter"]
-
+__all__: list[str] = []

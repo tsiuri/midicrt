@@ -9,7 +9,7 @@ from collections import deque
 from blessed import Terminal
 import mido
 from midicrt import draw_line
-from ui.adapters import build_widget_from_legacy_draw
+from pages.legacy_contract_bridge import build_widget_from_contract
 
 term = Terminal()
 
@@ -146,4 +146,4 @@ def update(state):
 
 
 def build_widget(state):
-    return build_widget_from_legacy_draw(draw, state, draw_line)
+    return build_widget_from_contract(draw, state, draw_line)
