@@ -31,6 +31,7 @@ BRANCH_NAME_RE = re.compile(
     r"^agent/(?P<lane>platform|logic|qa-contract|observer)/"
     r"(?P<ticket>[A-Za-z0-9][A-Za-z0-9-]*)-(?P<slug>[a-z0-9]+(?:-[a-z0-9]+)*)$"
 )
+MARKDOWN_LINK_RE = re.compile(r"\[[^\]]+\]\((https?://[^)]+)\)|https?://\S+")
 
 
 class PolicyError(RuntimeError):
@@ -192,6 +193,31 @@ def _contract_impact_checked(pr_body: str) -> bool:
     return False
 
 
+def _extract_contract_impact_details(pr_body: str) -> tuple[str | None, str | None]:
+    impacted_lanes: str | None = None
+    handoff_artifacts: str | None = None
+
+    for line in pr_body.splitlines():
+        impacted_match = re.match(r"\s*-\s*impacted lane\(s\):\s*(.*?)\s*$", line, re.IGNORECASE)
+        if impacted_match:
+            value = re.sub(r"<!--.*?-->", "", impacted_match.group(1)).strip()
+            if value:
+                impacted_lanes = value
+            continue
+
+        handoff_match = re.match(
+            r"\s*-\s*required downstream handoff artifacts published:\s*(.*?)\s*$",
+            line,
+            re.IGNORECASE,
+        )
+        if handoff_match:
+            value = re.sub(r"<!--.*?-->", "", handoff_match.group(1)).strip()
+            if value:
+                handoff_artifacts = value
+
+    return impacted_lanes, handoff_artifacts
+
+
 def _lane_for_file(path: str, lane_roots: dict[str, set[str]]) -> set[str]:
     owners: set[str] = set()
     normalized = path.lstrip("./")
@@ -201,6 +227,13 @@ def _lane_for_file(path: str, lane_roots: dict[str, set[str]]) -> set[str]:
             if normalized.startswith(root_prefix):
                 owners.add(lane)
     return owners
+
+
+def _lanes_for_changed_files(changed: set[str], lane_roots: dict[str, set[str]]) -> set[str]:
+    touched: set[str] = set()
+    for path in changed:
+        touched.update(_lane_for_file(path, lane_roots))
+    return touched
 
 
 def _validate_pr_metadata(
@@ -223,6 +256,22 @@ def _validate_pr_metadata(
     if not _has_contract_impact_field(pr_body):
         errors.append("PR template must include the contract-impact declaration field.")
 
+    contract_impact_checked = _contract_impact_checked(pr_body)
+    impacted_lanes, handoff_artifacts = _extract_contract_impact_details(pr_body)
+    if contract_impact_checked:
+        if not impacted_lanes:
+            errors.append(
+                "contract-impact is checked, but 'impacted lane(s)' is missing or empty."
+            )
+        if not handoff_artifacts:
+            errors.append(
+                "contract-impact is checked, but 'required downstream handoff artifacts published' is missing or empty."
+            )
+        elif not MARKDOWN_LINK_RE.search(handoff_artifacts):
+            errors.append(
+                "contract-impact is checked, but handoff artifacts must include at least one URL/link."
+            )
+
     pr_lane = _parse_pr_lane(pr_body)
     if not pr_lane:
         errors.append("PR template must set '- Lane:' to one of platform|logic|qa-contract|observer.")
@@ -232,13 +281,23 @@ def _validate_pr_metadata(
         errors.append(f"Lane mismatch: branch lane '{branch_lane}' does not match PR lane '{pr_lane}'.")
 
     if declared_lane:
+        touched_lanes = _lanes_for_changed_files(changed, lane_roots)
+        if touched_lanes and (declared_lane not in touched_lanes or len(touched_lanes) > 1):
+            if not contract_impact_checked:
+                lanes_desc = ", ".join(sorted(touched_lanes))
+                errors.append(
+                    "Lane ownership conflict: changed top-level paths map to "
+                    f"[{lanes_desc}] while declared lane is '{declared_lane}'. "
+                    "Set contract-impact to true and provide handoff artifacts."
+                )
+
         cross_lane_files: list[str] = []
         for path in sorted(changed):
             owners = _lane_for_file(path, lane_roots)
             if owners and declared_lane not in owners:
                 cross_lane_files.append(path)
 
-        if cross_lane_files and not _contract_impact_checked(pr_body):
+        if cross_lane_files and not contract_impact_checked:
             sample = ", ".join(cross_lane_files[:5])
             errors.append(
                 "Cross-lane edits detected without contract-impact marker. "

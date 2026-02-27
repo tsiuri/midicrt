@@ -1,0 +1,15 @@
+{
+  "valid": [
+    "agent/platform/1234-contract-refresh",
+    "agent/logic/MIDI-1288-voice-monitor-thresholds",
+    "agent/qa-contract/TASK-1301-fixture-hardening",
+    "agent/observer/1310-websocket-metrics"
+  ],
+  "invalid": [
+    "feature/logic/1234-voice-monitor-fix",
+    "agent/platform/",
+    "agent/qa/1234-bad-lane",
+    "agent/logic/1234_Bad_Slug",
+    "agent/observer/-missing-ticket"
+  ]
+}
