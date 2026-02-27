@@ -51,6 +51,37 @@ Rationale:
 2. Real one-week, multi-contributor pilot evidence has not yet been completed.
 3. Contract-governance hard-fail path remains unproven in required CI.
 
+## Closeout template (to fill after WB-005 pilot)
+
+Use this section as the standardized completion block for the dated pilot report.
+Thresholds are sourced from `docs/parallel_execution_board.md`.
+
+### Objective thresholds
+
+- Cross-lane conflict rate: **< 10%**
+- CI median duration: **< 8 minutes**
+- CI p95 duration: **tracked** (no hard fail threshold, required for trend review)
+- Unreviewed contract-breaking merges: **0**
+- Sev-1 coordination incidents: **0**
+
+### Pilot result table
+
+| Metric | Threshold | Observed | Pass/Fail | Evidence link |
+|---|---:|---:|---|---|
+| Cross-lane conflict rate | < 10% | `TBD` | `TBD` | `artifacts/pilot/conflict_rate_summary.json` |
+| CI median duration | < 8 min | `TBD` | `TBD` | `artifacts/pilot/ci_timing_summary.json` |
+| CI p95 duration | tracked | `TBD` | `TBD` | `artifacts/pilot/ci_timing_summary.json` |
+| Unreviewed contract-breaking merges | 0 | `TBD` | `TBD` | `<contract-governance evidence>` |
+| Sev-1 coordination incidents | 0 | `TBD` | `TBD` | `docs/pilot_incident_log_template.md` |
+
+### Decision record
+
+- Decision: `GO` / `NO-GO`
+- Decision owner: `<name>`
+- Decision date (UTC): `YYYY-MM-DD`
+- Evidence index: `docs/parallel_pilot_evidence_index.md`
+- Follow-up actions: `<if NO-GO, list remediation + extension plan>`
+
 ## Execution plan to finish readiness tasks
 
 ### Phase 0 — repo synchronization (blocking)
@@ -87,7 +118,6 @@ Rationale:
 - **Owner:** Tech Lead + QA-Contract
 - **Target:** 2026-03-08
 - Steps:
-  - Apply thresholds in `docs/parallel_readiness_checklist.md`.
+  - Apply thresholds in `docs/parallel_execution_board.md`.
   - Publish final GO/NO-GO with evidence links.
   - If NO-GO, extend pilot by one week with updated remediation board.
-

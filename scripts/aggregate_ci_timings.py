@@ -94,6 +94,11 @@ def main() -> int:
         default="success",
         help="Filter by run conclusion (default: success). Use 'any' to include all conclusions.",
     )
+    parser.add_argument(
+        "--generated-at",
+        default=None,
+        help="Optional fixed ISO8601 timestamp for deterministic outputs.",
+    )
     args = parser.parse_args()
 
     payload = json.loads(Path(args.input).read_text(encoding="utf-8"))
@@ -115,8 +120,10 @@ def main() -> int:
     all_samples = [v for values in grouped.values() for v in values]
     by_workflow = {name: _build_stats(samples) for name, samples in sorted(grouped.items())}
 
+    generated_at = args.generated_at or datetime.now().astimezone().isoformat()
+
     output = {
-        "generated_at": datetime.now().astimezone().isoformat(),
+        "generated_at": generated_at,
         "input_path": args.input,
         "filters": {"conclusion": args.conclusion},
         "run_count_in_payload": len(runs),
