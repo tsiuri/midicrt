@@ -107,9 +107,59 @@ def thaw_payload(payload: Any) -> Any:
     return payload
 
 
+def resolve_feature_flags(settings: dict[str, Any] | None) -> dict[str, bool]:
+    """Resolve deep-research feature flags with safe defaults."""
+    cfg = settings if isinstance(settings, dict) else {}
+    ff = cfg.get("feature_flags", {}) if isinstance(cfg.get("feature_flags"), dict) else {}
+
+    def _flag(name: str, default: bool) -> bool:
+        return bool(ff.get(name, default))
+
+    return {
+        # Track-A executor gates.
+        "enable_module_execution": _flag("enable_module_execution", True),
+        "enable_payload_result": _flag("enable_payload_result", True),
+        "enable_payload_metadata": _flag("enable_payload_metadata", True),
+        # Contract input surface gates.
+        "enable_contract_module_outputs": _flag("enable_contract_module_outputs", True),
+        "enable_contract_views": _flag("enable_contract_views", True),
+        # UI snapshot surface gates.
+        "enable_ui_surface_module_outputs": _flag("enable_ui_surface_module_outputs", True),
+        "enable_ui_surface_views": _flag("enable_ui_surface_views", True),
+        "enable_ui_surface_deep_research": _flag("enable_ui_surface_deep_research", True),
+    }
+
+
+def filter_contract_module_outputs(snapshot: dict[str, Any], *, include_module_outputs: bool, include_views: bool) -> dict[str, Any]:
+    schema = snapshot.get("schema", snapshot) if isinstance(snapshot, dict) else {}
+    if not isinstance(schema, dict):
+        return {}
+
+    outputs = schema.get("module_outputs", {})
+    if not include_module_outputs:
+        return {}
+    if include_views:
+        return outputs if isinstance(outputs, dict) else {}
+
+    # Exclude view-like payloads from module outputs when disabled.
+    filtered: dict[str, Any] = {}
+    if not isinstance(outputs, dict):
+        return filtered
+    for name, payload in outputs.items():
+        if not isinstance(payload, dict):
+            filtered[str(name)] = payload
+            continue
+        local = dict(payload)
+        local.pop("views", None)
+        filtered[str(name)] = local
+    return filtered
+
+
 def build_contract(snapshot: dict[str, Any], event: dict[str, Any]) -> ResearchContract:
     schema = snapshot.get("schema", snapshot) if isinstance(snapshot, dict) else {}
     transport = schema.get("transport", {}) if isinstance(schema, dict) else {}
+    research_settings = schema.get("deep_research", {}) if isinstance(schema.get("deep_research"), dict) else {}
+    flags = resolve_feature_flags(research_settings)
     return ResearchContract(
         contract_version=current_contract_version(),
         schema_version=int(schema.get("schema_version", 0)),
@@ -117,7 +167,13 @@ def build_contract(snapshot: dict[str, Any], event: dict[str, Any]) -> ResearchC
         event_kind=str(event.get("kind", "")),
         transport=freeze_payload(transport),
         active_notes=freeze_payload(schema.get("active_notes", {})),
-        module_outputs=freeze_payload(schema.get("module_outputs", {})),
+        module_outputs=freeze_payload(
+            filter_contract_module_outputs(
+                snapshot,
+                include_module_outputs=flags["enable_contract_module_outputs"],
+                include_views=flags["enable_contract_views"],
+            )
+        ),
     )
 
 

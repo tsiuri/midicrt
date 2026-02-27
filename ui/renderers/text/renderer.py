@@ -122,6 +122,9 @@ class TextRenderer:
             lines: list[Line] = []
             timeline_label = f"{'Bars':>7} │"
             lines.append(Line.plain(timeline_label + widget.timeline))
+            if not widget.pitches or not widget.cells:
+                lines.append(Line.plain("Piano Roll: unavailable"))
+                return lines
             for pitch, row_cells in zip(widget.pitches, widget.cells):
                 label = f"{self._note_name(pitch):>7} │"
                 chars = ''.join(self._velocity_char(c.velocity) for c in row_cells)

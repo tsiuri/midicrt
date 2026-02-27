@@ -11,6 +11,7 @@ from .platform import (
     current_contract_version,
     freeze_payload,
     freshness_meta,
+    resolve_feature_flags,
     thaw_payload,
 )
 
@@ -24,6 +25,7 @@ __all__ = [
     "current_contract_version",
     "freeze_payload",
     "freshness_meta",
+    "resolve_feature_flags",
     "run_research",
     "thaw_payload",
 ]
