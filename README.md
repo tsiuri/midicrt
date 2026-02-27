@@ -26,6 +26,81 @@ Or from the project directory after activating the venv:
 
 - python /home/billie/codex/midicrt/midicrt.py
 
+## What to look for after pulling (user-facing changes)
+
+Use this section as a quick acceptance pass after `git pull`.
+
+### 1) Startup/profile behavior (safety first)
+
+Run:
+
+```bash
+./run_tui
+```
+
+Confirm:
+- App starts in terminal mode with no pixel dependency requirements.
+- `log.txt` receives a startup self-check line containing active profile/backend.
+
+Optional pixel check:
+
+```bash
+MIDICRT_ENABLE_PIXEL=1 MIDICRT_PIXEL_RENDERER=sdl2 ./run_pixel
+```
+
+Confirm:
+- Pixel profile starts when extras are installed.
+- If extras are missing, startup falls back to text mode cleanly.
+
+### 2) Deep-research data now visible in observer telemetry
+
+Run observer in a second shell:
+
+```bash
+python scripts/run_web_observer.py --socket-path /tmp/midicrt.sock --host 127.0.0.1 --port 8765
+```
+
+Open `http://127.0.0.1:8765/` and confirm new user-visible panels populate:
+- **Schema health** (snapshot version + compat mode).
+- **Transport quality** (BPM, jitter, drift, status).
+- **Microtiming summary** (bucket count + sample totals).
+- **Capture status** (buffer fill, armed state, last commit path when present).
+
+### 3) New structured widget surfaces (renderer parity)
+
+From user POV, these should render consistently in text and pixel paths:
+- Tempo quality panel.
+- Microtiming histogram panel.
+- Capture status panel.
+- Module-health style status surfaces.
+
+If one renderer shows stale/missing fields while another does not, treat it as a
+parity regression.
+
+### 4) Retrospective capture behavior
+
+When triggering capture actions (`capture_recent` / `commit_last_bars`), confirm:
+- Successful exports report metadata in snapshot payloads.
+- `commit_last_bars` excludes the partial current bar and aligns to completed bars.
+- Failure mode is explicit (`capture-failed`, e.g., no events in window).
+
+### 5) Existing pages with recent feature growth
+
+Check these user-visible behaviors while sending MIDI:
+- **Notes page (1):** chord/scale confidence, missing tones, tension bar,
+  harmonic rhythm, motif detector.
+- **Piano roll (8):** smooth scrolling, out-of-range indicators, consistent
+  behavior after leaving/returning to the page.
+- **Audio spectrum (9):** recovers cleanly after device errors without spamming.
+- **Time signature:** stable estimator output on transport + experimental page.
+
+### 6) Quick regression checklist before declaring success
+
+- No boot-time change to tty1 policy: `run_tui` remains default/autostart target.
+- No required GUI dependency for default run path.
+- tmux co-observe flow still works (`tmux attach -t midicrt`).
+- Web observer remains read-only (monitoring only, no control API).
+
 ## Co-observing via tmux
 
 A shared tmux session lets multiple people view the same terminal UI.
