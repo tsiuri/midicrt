@@ -72,6 +72,30 @@ class DeepResearchTrackSplitTest(unittest.TestCase):
                 result = run_research(contract)
                 self.assertEqual(result, case["expected"])
 
+    def test_track_b_microtiming_histogram_bucket_counts_are_deterministic(self):
+        expectations = {
+            "microtiming_quantized": {"early": 0, "on_grid": 3, "late": 0},
+            "microtiming_early": {"early": 3, "on_grid": 0, "late": 0},
+            "microtiming_late": {"early": 0, "on_grid": 0, "late": 3},
+        }
+
+        for case in load_all_deep_research_sequence_fixtures():
+            if case["name"] not in expectations:
+                continue
+            with self.subTest(case=case["name"]):
+                snapshot = {
+                    "schema": {
+                        "schema_version": case["schema_version"],
+                        "timestamp": 123.0,
+                        "transport": case["transport"],
+                        "active_notes": case["active_notes"],
+                        "module_outputs": {},
+                    }
+                }
+                contract = build_contract(snapshot, case["event"])
+                result = run_research(contract)
+                self.assertEqual(result["microtiming"]["histogram"], expectations[case["name"]])
+
     def test_track_b_fixture_files_follow_schema_and_naming_rules(self):
         lane_topic_filename_re = re.compile(r"^(logic_density|transport_tick)_[a-z0-9_]+\.json$")
         for fixture_path in discover_deep_research_sequence_fixture_paths():

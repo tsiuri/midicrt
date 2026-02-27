@@ -61,6 +61,21 @@
           "confidence": 0.6667
         }
       ]
+    },
+    "microtiming": {
+      "subdivision": 4,
+      "ticks_per_beat": 24.0,
+      "histogram": {
+        "early": 0,
+        "on_grid": 0,
+        "late": 0
+      },
+      "aggregate": {
+        "count": 0,
+        "mean_offset": 0.0,
+        "median_offset": 0.0
+      },
+      "per_channel": {}
     }
   }
 }

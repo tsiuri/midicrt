@@ -1,0 +1,58 @@
+{
+  "name": "microtiming_quantized",
+  "schema_version": 4,
+  "event": {
+    "kind": "clock"
+  },
+  "transport": {
+    "tick": 48,
+    "bar": 2,
+    "running": true,
+    "bpm": 120.0,
+    "timing": {
+      "ticks_per_beat": 24,
+      "subdivision": 4
+    },
+    "microtiming": {
+      "note_on_events": [
+        {"tick": 0, "channel": 0},
+        {"tick": 6, "channel": 0},
+        {"tick": 12, "channel": 1}
+      ]
+    }
+  },
+  "active_notes": {},
+  "expected": {
+    "motif_span": 0,
+    "note_density": "sparse",
+    "active_note_total": 0,
+    "chord_candidates": [],
+    "key_estimate": null,
+    "microtiming": {
+      "subdivision": 4,
+      "ticks_per_beat": 24.0,
+      "histogram": {
+        "early": 0,
+        "on_grid": 3,
+        "late": 0
+      },
+      "aggregate": {
+        "count": 3,
+        "mean_offset": 0.0,
+        "median_offset": 0.0
+      },
+      "per_channel": {
+        "0": {
+          "count": 2,
+          "mean_offset": 0.0,
+          "median_offset": 0.0
+        },
+        "1": {
+          "count": 1,
+          "mean_offset": 0.0,
+          "median_offset": 0.0
+        }
+      }
+    }
+  }
+}

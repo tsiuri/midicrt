@@ -85,6 +85,25 @@ def validate_deep_research_sequence_fixture(case: dict[str, Any], fixture_path: 
     if not isinstance(expected.get("note_density"), str):
         raise FixtureValidationError(f"{fixture_path.name}: expected.note_density must be a string")
 
+    microtiming = expected.get("microtiming")
+    if not isinstance(microtiming, dict):
+        raise FixtureValidationError(f"{fixture_path.name}: expected.microtiming must be an object")
+    for field in ("subdivision",):
+        if not isinstance(microtiming.get(field), int):
+            raise FixtureValidationError(f"{fixture_path.name}: expected.microtiming.{field} must be an int")
+    if not isinstance(microtiming.get("ticks_per_beat"), (int, float)):
+        raise FixtureValidationError(
+            f"{fixture_path.name}: expected.microtiming.ticks_per_beat must be numeric"
+        )
+    histogram = microtiming.get("histogram")
+    if not isinstance(histogram, dict):
+        raise FixtureValidationError(f"{fixture_path.name}: expected.microtiming.histogram must be an object")
+    for field in ("early", "on_grid", "late"):
+        if not isinstance(histogram.get(field), int):
+            raise FixtureValidationError(
+                f"{fixture_path.name}: expected.microtiming.histogram.{field} must be an int"
+            )
+
     chord_candidates = expected.get("chord_candidates")
     if not isinstance(chord_candidates, list):
         raise FixtureValidationError(
