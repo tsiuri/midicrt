@@ -37,6 +37,24 @@ Mark each gate as complete only when objective evidence exists (CI logs, audit r
   - CI must fail when lane metadata is missing or invalid.
   - Evidence: template fields + metadata validation check in required CI.
 
+
+## PR metadata guard operator notes
+
+The `pr-metadata-guard` required check (workflow: `.github/workflows/pr-metadata-guard.yml`) enforces branch naming, lane declaration, and cross-lane escalation metadata.
+
+### Common failure modes
+
+- Branch name does not match `agent/<lane>/<ticket>-<slug>`.
+- PR body is missing `Lane:` or does not use one of `platform|logic|qa-contract|observer`.
+- PR body omits the `contract-impact` declaration block from the PR template.
+- Changed files cross lane ownership boundaries without the `contract-impact` checkbox marked as checked.
+
+### Override / recovery process
+
+- There is **no bypass label** for PR metadata guard; fix the branch name and/or PR body metadata and push again.
+- For legitimate cross-lane changes, mark the `contract-impact` checkbox and document the impacted lanes + handoff artifacts in the PR template.
+- If branch naming is wrong, rename locally and push the corrected branch, then update the PR source branch.
+
 ## Measurable thresholds (must hold before GO)
 
 Track for a rolling 2-week window unless noted otherwise.

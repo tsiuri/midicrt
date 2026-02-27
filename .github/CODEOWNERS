@@ -1,16 +1,15 @@
 # CODEOWNERS for lane-aligned review routing.
-# Paths are owned at top-level to match the parallel lane model.
+# Explicit lane roots are aligned with docs/parallel_dev_playbook.md.
 
-/engine/   @tsiuri/platform-lane
-/fb/       @tsiuri/platform-lane
-/ui/       @tsiuri/platform-lane
-/scripts/  @tsiuri/platform-lane
-/.github/  @tsiuri/platform-lane @tsiuri/qa-contract-lane
+/engine/               @tsiuri/platform-lane
+/pages/                @tsiuri/logic-lane
+/plugins/              @tsiuri/logic-lane
+/tests/                @tsiuri/qa-contract-lane
+/web/                  @tsiuri/observer-lane
+/docs/                 @tsiuri/qa-contract-lane
+/.github/workflows/    @tsiuri/platform-lane @tsiuri/qa-contract-lane
 
-/pages/    @tsiuri/logic-lane
-/plugins/  @tsiuri/logic-lane
-
-/tests/    @tsiuri/qa-contract-lane
-/docs/     @tsiuri/qa-contract-lane
-
-/web/      @tsiuri/observer-lane
+# Additional platform-owned runtime/plumbing roots from the playbook.
+/fb/                   @tsiuri/platform-lane
+/ui/                   @tsiuri/platform-lane
+/scripts/              @tsiuri/platform-lane
