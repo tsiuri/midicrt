@@ -13,7 +13,7 @@ from typing import Any
 
 from aiohttp import WSMsgType, web
 
-from ui.client import SnapshotClient, normalize_snapshot
+from ui.client import SnapshotClient, get_normalization_stats, normalize_snapshot
 
 _LOG = logging.getLogger("midicrt.web.observer")
 
@@ -182,6 +182,14 @@ class DashboardServer:
             "queue_coalesced": self._queue_coalesced,
         }
 
+    def _schema_health(self, snapshot: dict[str, Any], bridge_meta: dict[str, Any]) -> dict[str, Any]:
+        stats = get_normalization_stats()
+        return {
+            "latest_snapshot_version": snapshot.get("schema_version"),
+            "ipc_freshness_age_ms": bridge_meta.get("last_update_age_ms"),
+            "normalization_fallbacks": stats.get("fallbacks", 0),
+        }
+
     async def _index(self, request: web.Request) -> web.StreamResponse:
         return web.FileResponse(self.static_dir / "index.html")
 
@@ -193,14 +201,23 @@ class DashboardServer:
                 "seq": seq,
                 "has_snapshot": bool(snapshot),
                 "bridge": meta,
+                "schema_health": self._schema_health(snapshot or {}, meta),
                 "max_broadcast_hz": self.max_broadcast_hz,
                 "client_queue_size": self.client_queue_size,
                 "telemetry": self._telemetry(),
+                "read_only": {
+                    "mutation_endpoints": [],
+                    "command_execution_paths": [],
+                    "bounded_polling": {
+                        "max_broadcast_hz": self.max_broadcast_hz,
+                        "client_queue_size": self.client_queue_size,
+                    },
+                },
             }
         )
 
-    @staticmethod
     def _payload_for(
+        self,
         seq: int,
         snapshot: dict[str, Any],
         bridge_meta: dict[str, Any],
@@ -226,6 +243,12 @@ class DashboardServer:
                 "fanout": telemetry or {"queue_dropped": 0, "queue_coalesced": 0},
             },
             "deep_research": deep_meta,
+            "schema_health": self._schema_health(snapshot, bridge_meta),
+            "read_only": {
+                "mutation_endpoints": [],
+                "command_execution_paths": [],
+                "bounded_stream_rate_hz": self.max_broadcast_hz,
+            },
         }
         return json.dumps(payload, separators=(",", ":"))
 

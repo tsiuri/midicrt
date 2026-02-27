@@ -2,10 +2,32 @@ from __future__ import annotations
 
 import json
 import socket
+import threading
 import time
 from typing import Any, Callable
 
 from engine.ipc import ENVELOPE_ACK, ENVELOPE_COMMAND, ENVELOPE_ERROR, ENVELOPE_SNAPSHOT, make_envelope
+
+
+_NORMALIZATION_LOCK = threading.Lock()
+_NORMALIZATION_FALLBACKS = 0
+
+
+def _record_normalization_fallback() -> None:
+    global _NORMALIZATION_FALLBACKS
+    with _NORMALIZATION_LOCK:
+        _NORMALIZATION_FALLBACKS += 1
+
+
+def get_normalization_stats() -> dict[str, int]:
+    with _NORMALIZATION_LOCK:
+        return {"fallbacks": _NORMALIZATION_FALLBACKS}
+
+
+def reset_normalization_stats() -> None:
+    global _NORMALIZATION_FALLBACKS
+    with _NORMALIZATION_LOCK:
+        _NORMALIZATION_FALLBACKS = 0
 
 
 class SnapshotClient:
@@ -138,14 +160,17 @@ def normalize_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
 
     nested = snapshot.get("schema")
     if isinstance(nested, dict):
+        _record_normalization_fallback()
         return _maybe_attach_schema2_deep_research(nested, snapshot)
 
     payload = snapshot.get("payload")
     if isinstance(payload, dict):
         nested = payload.get("schema")
         if isinstance(nested, dict):
+            _record_normalization_fallback()
             return _maybe_attach_schema2_deep_research(nested, payload)
         if "transport" in payload and "schema_version" in payload:
+            _record_normalization_fallback()
             return _maybe_attach_schema2_deep_research(payload, snapshot)
 
     return snapshot

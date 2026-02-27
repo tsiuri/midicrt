@@ -172,6 +172,10 @@ class DashboardServerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(data["max_broadcast_hz"], 12.0)
         self.assertEqual(data["bridge"]["total_failures"], 2)
         self.assertIn("telemetry", data)
+        self.assertIn("schema_health", data)
+        self.assertEqual(data["read_only"]["mutation_endpoints"], [])
+        self.assertEqual(data["read_only"]["command_execution_paths"], [])
+        self.assertEqual(data["read_only"]["bounded_polling"]["max_broadcast_hz"], 12.0)
 
     async def test_ws_initial_payload_includes_metrics(self):
         server = DashboardServer(socket_path="/tmp/test.sock", host="127.0.0.1", port=0)
@@ -191,6 +195,9 @@ class DashboardServerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["seq"], 7)
         self.assertEqual(payload["metrics"]["sequence_gap"], 0)
         self.assertEqual(payload["metrics"]["last_update_age_ms"], 15.5)
+        self.assertEqual(payload["schema_health"]["latest_snapshot_version"], 4)
+        self.assertEqual(payload["read_only"]["mutation_endpoints"], [])
+        self.assertEqual(payload["read_only"]["command_execution_paths"], [])
 
     async def test_broadcast_loop_evicts_stale_and_churned_websocket_clients(self):
         server = DashboardServer(socket_path="/tmp/test.sock", host="127.0.0.1", port=0, max_broadcast_hz=10)
@@ -254,7 +261,8 @@ class DashboardServerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload, "second")
 
     def test_payload_reports_stale_deep_research_metadata(self):
-        payload = DashboardServer._payload_for(
+        server = DashboardServer(socket_path="/tmp/test.sock", host="127.0.0.1", port=0, max_broadcast_hz=20)
+        payload = server._payload_for(
             9,
             {
                 "schema_version": 4,
@@ -270,6 +278,23 @@ class DashboardServerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(data["deep_research"]["lag_ms"], 987.0)
         self.assertEqual(data["metrics"]["fanout"]["queue_dropped"], 2)
         self.assertEqual(data["metrics"]["sequence_gap"], 1)
+        self.assertEqual(data["schema_health"]["latest_snapshot_version"], 4)
+        self.assertEqual(data["read_only"]["bounded_stream_rate_hz"], 20.0)
+
+    def test_payload_includes_schema_health_fallback_counter_for_legacy_envelopes(self):
+        server = DashboardServer(socket_path="/tmp/test.sock", host="127.0.0.1", port=0, max_broadcast_hz=15)
+        with mock.patch("web.observer.get_normalization_stats", return_value={"fallbacks": 3}):
+            payload = server._payload_for(
+                11,
+                {"schema_version": 2, "transport": {"tick": 5}},
+                {"connected": True, "last_update_age_ms": 33.0},
+                last_seq=10,
+                telemetry={"queue_dropped": 0, "queue_coalesced": 0},
+            )
+        data = json.loads(payload)
+        self.assertEqual(data["schema_health"]["normalization_fallbacks"], 3)
+        self.assertEqual(data["schema_health"]["ipc_freshness_age_ms"], 33.0)
+        self.assertEqual(data["read_only"]["bounded_stream_rate_hz"], 15.0)
 
 
 if __name__ == "__main__":
