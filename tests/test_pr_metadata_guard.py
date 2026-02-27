@@ -11,6 +11,8 @@ ctb = importlib.util.module_from_spec(_spec)
 assert _spec and _spec.loader
 _spec.loader.exec_module(ctb)
 
+FIXTURE_DIR = Path("tests/fixtures/pr_metadata_guard")
+
 
 class PrMetadataGuardTests(unittest.TestCase):
     def setUp(self):
@@ -21,32 +23,32 @@ class PrMetadataGuardTests(unittest.TestCase):
             "observer": {"web/"},
         }
 
-    def test_branch_name_valid(self):
-        match = ctb.BRANCH_NAME_RE.match("agent/logic/MIDI-1234-voice-monitor-fix")
-        self.assertIsNotNone(match)
-        self.assertEqual(match.group("lane"), "logic")
+    def test_branch_name_fixtures(self):
+        fixture = json.loads((FIXTURE_DIR / "branch_names.json").read_text(encoding="utf-8"))
 
-    def test_branch_name_invalid(self):
-        self.assertIsNone(ctb.BRANCH_NAME_RE.match("feature/logic/1234-voice-monitor-fix"))
+        for branch in fixture["valid"]:
+            with self.subTest(branch=branch):
+                match = ctb.BRANCH_NAME_RE.match(branch)
+                self.assertIsNotNone(match)
+
+        for branch in fixture["invalid"]:
+            with self.subTest(branch=branch):
+                self.assertIsNone(ctb.BRANCH_NAME_RE.match(branch))
 
     def test_pr_lane_parse(self):
         body = """## Lane declaration\n- Lane: qa-contract\n"""
         self.assertEqual(ctb._parse_pr_lane(body), "qa-contract")
 
     def test_pr_lane_missing(self):
-        self.assertIsNone(ctb._parse_pr_lane("- Ticket: TASK-1"))
+        body = (FIXTURE_DIR / "pr_body_invalid_missing_lane.md").read_text(encoding="utf-8")
+        self.assertIsNone(ctb._parse_pr_lane(body))
 
-    def test_valid_metadata_no_cross_lane(self):
-        body = """## Lane declaration
-- Lane: logic
-
-## Contract impact
-- [ ] This PR changes a contract/interface consumed by another lane (`contract-impact`).
-"""
+    def test_valid_metadata_with_contract_impact_handoff_link(self):
+        body = (FIXTURE_DIR / "pr_body_valid.md").read_text(encoding="utf-8")
         ok, errors = ctb._validate_pr_metadata(
-            "agent/logic/1234-note-page-tuning",
+            "agent/logic/TASK-2001-notes-page-improvements",
             body,
-            {"pages/notes.py", "plugins/zharmony.py"},
+            {"pages/notes.py", "tests/test_schema_contract.py"},
             self.lane_roots,
         )
         self.assertTrue(ok)
@@ -87,6 +89,10 @@ class PrMetadataGuardTests(unittest.TestCase):
 
 ## Contract impact
 - [x] This PR changes a contract/interface consumed by another lane (`contract-impact`).
+- If checked, include:
+  - impacted lane(s): qa-contract
+  - contract delta summary: Added optional field to event payload.
+  - required downstream handoff artifacts published: https://example.com/handoff/TASK-999
 """
         ok, errors = ctb._validate_pr_metadata(
             "agent/logic/1234-note-page-tuning",
@@ -96,6 +102,33 @@ class PrMetadataGuardTests(unittest.TestCase):
         )
         self.assertTrue(ok)
         self.assertEqual(errors, [])
+
+    def test_contract_impact_requires_handoff_artifact_link(self):
+        body = (FIXTURE_DIR / "pr_body_invalid_missing_handoff.md").read_text(encoding="utf-8")
+        ok, errors = ctb._validate_pr_metadata(
+            "agent/logic/TASK-2002-missing-handoff",
+            body,
+            {"pages/notes.py", "tests/test_schema_contract.py"},
+            self.lane_roots,
+        )
+        self.assertFalse(ok)
+        self.assertTrue(any("handoff artifacts" in e for e in errors))
+
+    def test_lane_ownership_conflict_error_message(self):
+        body = """## Lane declaration
+- Lane: observer
+
+## Contract impact
+- [ ] This PR changes a contract/interface consumed by another lane (`contract-impact`).
+"""
+        ok, errors = ctb._validate_pr_metadata(
+            "agent/observer/TASK-3001-observer-check",
+            body,
+            {"pages/notes.py"},
+            self.lane_roots,
+        )
+        self.assertFalse(ok)
+        self.assertTrue(any("Lane ownership conflict" in e for e in errors))
 
     def test_override_source_precedence_env_then_label_then_file(self):
         old = dict(os.environ)

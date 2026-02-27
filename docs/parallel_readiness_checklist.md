@@ -52,8 +52,26 @@ The `pr-metadata-guard` required check (workflow: `.github/workflows/pr-metadata
 ### Override / recovery process
 
 - There is **no bypass label** for PR metadata guard; fix the branch name and/or PR body metadata and push again.
-- For legitimate cross-lane changes, mark the `contract-impact` checkbox and document the impacted lanes + handoff artifacts in the PR template.
+- For legitimate cross-lane changes, mark the `contract-impact` checkbox and populate all required fields:
+  - `impacted lane(s)` must be non-empty.
+  - `required downstream handoff artifacts published` must include at least one URL/Markdown link.
+- Lane/path conflicts are only allowed when `contract-impact` is checked (`yes/true` by checkbox), and they must include the handoff artifact links above.
 - If branch naming is wrong, rename locally and push the corrected branch, then update the PR source branch.
+
+### Metadata guard failure messages and remediations
+
+- `Branch name must match agent/<lane>/<ticket>-<slug> ...`
+  - Rename the branch to match playbook format and keep lane in `platform|logic|qa-contract|observer`.
+- `PR template must set '- Lane:' ...`
+  - Set the lane explicitly in the PR body.
+- `PR template must include the contract-impact declaration field.`
+  - Restore the contract-impact block from `.github/pull_request_template.md`.
+- `Lane ownership conflict ... Set contract-impact to true and provide handoff artifacts.`
+  - Either keep changes within the declared lane paths, or check contract-impact and add impacted lanes + links.
+- `Cross-lane edits detected without contract-impact marker ...`
+  - Check contract-impact and include the downstream artifact links.
+- `contract-impact is checked, but ... missing or empty.`
+  - Fill missing `impacted lane(s)` and/or `required downstream handoff artifacts published` values.
 
 ## Measurable thresholds (must hold before GO)
 
