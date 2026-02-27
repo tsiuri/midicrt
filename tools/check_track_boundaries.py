@@ -388,11 +388,11 @@ def main() -> int:
         _print_track_changes("Track B", changed_b)
         return 0
 
-    print("Track boundary check failed: both Track A and Track B files changed.", file=sys.stderr)
+    print("Cross-track violation: both Track A and Track B files changed in one PR.", file=sys.stderr)
     _print_track_changes("Track A", changed_a, to_stderr=True)
     _print_track_changes("Track B", changed_b, to_stderr=True)
     print(
-        "Use PR label 'allow-cross-track' or add .ci/allow_cross_track (or set ALLOW_CROSS_TRACK=1) to override.",
+        "Action: split this PR by lane, or add override evidence via label 'allow-cross-track', file .ci/allow_cross_track, or ALLOW_CROSS_TRACK=1.",
         file=sys.stderr,
     )
     return 1

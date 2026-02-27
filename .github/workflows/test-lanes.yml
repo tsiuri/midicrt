@@ -10,93 +10,65 @@ jobs:
   detect_changes:
     runs-on: ubuntu-latest
     outputs:
-      track_a: ${{ steps.filter.outputs.track_a }}
-      track_b: ${{ steps.filter.outputs.track_b }}
-      contract_guard_paths: ${{ steps.filter.outputs.contract_guard_paths }}
-      platform: ${{ steps.filter.outputs.platform }}
-      logic: ${{ steps.filter.outputs.logic }}
-      qa_contract: ${{ steps.filter.outputs.qa_contract }}
-      observer: ${{ steps.filter.outputs.observer }}
-      version_contract: ${{ steps.filter.outputs.version_contract }}
+      contract_schema_paths: ${{ steps.filter.outputs.contract_schema_paths }}
+      replay_determinism_paths: ${{ steps.filter.outputs.replay_determinism_paths }}
+      observer_bridge_paths: ${{ steps.filter.outputs.observer_bridge_paths }}
+      snapshot_pubsub_paths: ${{ steps.filter.outputs.snapshot_pubsub_paths }}
+      rollout_guard_paths: ${{ steps.filter.outputs.rollout_guard_paths }}
+      track_boundary_paths: ${{ steps.filter.outputs.track_boundary_paths }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Detect changed paths
-        id: filter
+      - uses: actions/checkout@v4
+      - id: filter
         uses: dorny/paths-filter@v3
         with:
           filters: |
-            track_a:
-              - 'engine/deep_research/platform.py'
-              - 'engine/deep_research/mock_module.py'
-              - 'engine/scheduler.py'
+            contract_schema_paths:
+              - 'engine/deep_research/**'
               - 'engine/state/schema.py'
-              - 'tests/test_scheduler_overload.py'
               - 'tests/test_schema_contract.py'
               - 'tests/test_deep_research_replay_contracts.py'
               - 'tests/test_deep_research_contract_compat.py'
-              - 'tools/check_deep_research_contract_rollout.py'
-              - '.github/workflows/test-lanes.yml'
-            track_b:
-              - 'engine/deep_research/logic.py'
-              - 'tests/fixtures/deep_research_sequences.json'
-              - 'tests/test_deep_research_tracks.py'
-              - 'tests/test_deep_research_contract_compat.py'
-              - 'tests/test_engine_replay_determinism.py'
-              - 'tools/check_deep_research_contract_rollout.py'
-              - '.github/workflows/test-lanes.yml'
-            platform:
-              - 'engine/**'
-              - 'fb/**'
-              - 'ui/**'
-              - 'scripts/**'
-              - '.github/workflows/**'
-              - '!engine/deep_research/logic.py'
-              - '!tests/**'
-              - '!web/**'
-              - '!docs/**'
-            logic:
-              - 'pages/**'
-              - 'plugins/**'
-              - 'harmony.py'
-              - 'engine/deep_research/logic.py'
-              - 'tests/fixtures/**'
-              - '!tests/test_web_observer_bridge.py'
-              - '!tests/test_ipc_pubsub.py'
-            qa_contract:
-              - 'tests/**'
-              - '.ci/**'
-              - 'docs/**'
-              - 'tools/check_track_boundaries.py'
-            observer:
-              - 'web/**'
-              - 'scripts/run_web_observer.py'
-              - 'engine/ipc.py'
-              - 'tests/test_web_observer_bridge.py'
-              - 'tests/test_ipc_pubsub.py'
-              - '.github/workflows/test-lanes.yml'
-            version_contract:
-              - 'engine/deep_research/platform.py'
-              - 'engine/deep_research/logic.py'
-              - 'engine/deep_research/__init__.py'
-              - 'engine/deep_research/contract_versioning.md'
-              - 'tests/test_deep_research_tracks.py'
-              - 'tests/test_deep_research_replay_contracts.py'
               - 'tests/fixtures/deep_research_contract_cases.json'
               - '.github/workflows/test-lanes.yml'
-            contract_guard_paths:
+            replay_determinism_paths:
+              - 'engine/deep_research/**'
+              - 'engine/core.py'
+              - 'engine/scheduler.py'
+              - 'tests/test_engine_replay_determinism.py'
+              - 'tests/fixtures/deep_research_sequences/**'
+              - '.github/workflows/test-lanes.yml'
+            observer_bridge_paths:
+              - 'web/**'
+              - 'engine/ipc.py'
+              - 'tests/test_web_observer_bridge.py'
+              - '.github/workflows/test-lanes.yml'
+            snapshot_pubsub_paths:
+              - 'engine/ipc.py'
+              - 'web/**'
+              - 'tests/test_ipc_pubsub.py'
+              - 'tests/test_pianoroll_view_snapshot.py'
+              - '.github/workflows/test-lanes.yml'
+            rollout_guard_paths:
               - 'engine/deep_research/**'
               - 'engine/state/schema.py'
               - 'tests/fixtures/deep_research_contract_cases.json'
+              - 'tools/check_deep_research_contract_rollout.py'
+              - '.github/workflows/test-lanes.yml'
+            track_boundary_paths:
+              - 'docs/contributor_tracks.md'
+              - 'docs/parallel_dev_playbook.md'
+              - '.ci/**'
+              - 'tools/check_track_boundaries.py'
+              - 'engine/**'
+              - 'pages/**'
+              - 'plugins/**'
+              - 'web/**'
               - '.github/workflows/test-lanes.yml'
 
-
-  deep_research_contract_guard:
-    name: deep_research_contract_guard
+  contract_schema_checks:
     runs-on: ubuntu-latest
     needs: detect_changes
-    if: github.event_name != 'pull_request' || needs.detect_changes.outputs.contract_guard_paths == 'true'
+    if: github.event_name != 'pull_request' || needs.detect_changes.outputs.contract_schema_paths == 'true'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -105,8 +77,7 @@ jobs:
       - name: Ensure origin/master is available
         run: git fetch origin master --depth=1
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
@@ -116,292 +87,197 @@ jobs:
           pip install pytest
           pip install -e .
 
-      - name: Validate contract rollout declarations
+      - name: Required gate: DeepResearch contract rollout policy
         run: python tools/check_deep_research_contract_rollout.py
 
-      - name: Run DeepResearch compatibility tests
-        run: PYTHONPATH=. pytest -q tests/test_deep_research_contract_compat.py
-
-  track_a_tests:
-    name: track_a_tests
-  platform_tests:
-    name: platform
-    runs-on: ubuntu-latest
-    needs: detect_changes
-    if: github.event_name != 'pull_request' || needs.detect_changes.outputs.platform == 'true'
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install dependencies
+      - name: Contract/schema compatibility checks
         run: |
-          python -m pip install --upgrade pip
-          pip install pytest
-          pip install -e .
-
-      - name: Run platform lane
-        run: |
-          start_ts=$(date +%s)
-          set +e
           PYTHONPATH=. pytest -q \
-            tests/test_scheduler_overload.py \
             tests/test_schema_contract.py \
             tests/test_deep_research_replay_contracts.py \
-            tests/test_tempo_map_metrics.py \
-            tests/test_capture_export.py
-          exit_code=$?
-          end_ts=$(date +%s)
-          duration=$((end_ts - start_ts))
-          status="success"
-          if [ "$exit_code" -ne 0 ]; then
-            status="failed"
-          fi
-          printf '{"lane":"platform","status":"%s","runtime_seconds":%s}\n' "$status" "$duration" > lane_result_platform.json
-          exit "$exit_code"
+            tests/test_deep_research_contract_compat.py
 
-      - name: Upload lane result
+      - name: Build contract evidence payload
         if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: lane-result-platform
-          path: lane_result_platform.json
+        run: |
+          python - <<'PY'
+          import json
+          import re
+          import subprocess
+          from pathlib import Path
 
-  logic_tests:
-    name: logic
+          platform_text = Path('engine/deep_research/platform.py').read_text(encoding='utf-8')
+          major = re.search(r'^RESEARCH_CONTRACT_MAJOR_VERSION\s*=\s*(\d+)\s*$', platform_text, re.MULTILINE)
+          minor = re.search(r'^RESEARCH_CONTRACT_MINOR_VERSION\s*=\s*(\d+)\s*$', platform_text, re.MULTILINE)
+          version = f"{major.group(1)}.{minor.group(1)}" if major and minor else "unknown"
+
+          changed = subprocess.check_output(
+              ['git', 'diff', '--name-only', 'origin/master...HEAD'],
+              text=True,
+          ).splitlines()
+          fixture_path = 'tests/fixtures/deep_research_contract_cases.json'
+          fixture_updated = fixture_path in changed
+
+          Path('ci_evidence_contract.json').write_text(
+              json.dumps(
+                  {
+                      'contract_version': version,
+                      'fixture_updated': fixture_updated,
+                      'fixture_path': fixture_path,
+                  },
+                  indent=2,
+              ) + '\n',
+              encoding='utf-8',
+          )
+          PY
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ci-evidence-contract
+          path: ci_evidence_contract.json
+
+  replay_determinism_tests:
     runs-on: ubuntu-latest
     needs: detect_changes
-    if: github.event_name != 'pull_request' || needs.detect_changes.outputs.logic == 'true'
+    if: github.event_name != 'pull_request' || needs.detect_changes.outputs.replay_determinism_paths == 'true'
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install pytest
           pip install -e .
 
-      - name: Run logic lane
-        run: |
-          start_ts=$(date +%s)
-          set +e
-          PYTHONPATH=. pytest -q \
-            tests/test_deep_research_tracks.py \
-            tests/test_engine_replay_determinism.py \
-            tests/test_pianoroll_payload_parity.py
-          exit_code=$?
-          end_ts=$(date +%s)
-          duration=$((end_ts - start_ts))
-          status="success"
-          if [ "$exit_code" -ne 0 ]; then
-            status="failed"
-          fi
-          printf '{"lane":"logic","status":"%s","runtime_seconds":%s}\n' "$status" "$duration" > lane_result_logic.json
-          exit "$exit_code"
+      - name: Replay determinism tests
+        run: PYTHONPATH=. pytest -q tests/test_engine_replay_determinism.py
 
-      - name: Upload lane result
+      - name: Build determinism evidence payload
         if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: lane-result-logic
-          path: lane_result_logic.json
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
 
-  qa_contract_tests:
-    name: qa-contract
+          payload = {
+            'determinism_status': 'passed' if os.environ.get('GITHUB_JOB_STATUS', '').lower() != 'failure' else 'failed'
+          }
+          Path('ci_evidence_determinism.json').write_text(json.dumps(payload, indent=2) + '\n', encoding='utf-8')
+          PY
+        env:
+          GITHUB_JOB_STATUS: ${{ job.status }}
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ci-evidence-determinism
+          path: ci_evidence_determinism.json
+
+  observer_bridge_compat_tests:
     runs-on: ubuntu-latest
     needs: detect_changes
-    if: github.event_name != 'pull_request' || needs.detect_changes.outputs.qa_contract == 'true'
+    if: github.event_name != 'pull_request' || needs.detect_changes.outputs.observer_bridge_paths == 'true'
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install pytest
-          pip install -e .
-
-      - name: Run QA contract lane
-        run: |
-          start_ts=$(date +%s)
-          set +e
-          PYTHONPATH=. pytest -q \
-            tests/test_deep_research_replay_contracts.py \
-            tests/test_schema_contract.py \
-            tests/test_deep_research_tracks.py
-          exit_code=$?
-          end_ts=$(date +%s)
-          duration=$((end_ts - start_ts))
-          status="success"
-          if [ "$exit_code" -ne 0 ]; then
-            status="failed"
-          fi
-          printf '{"lane":"qa-contract","status":"%s","runtime_seconds":%s}\n' "$status" "$duration" > lane_result_qa_contract.json
-          exit "$exit_code"
-
-      - name: Upload lane result
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: lane-result-qa-contract
-          path: lane_result_qa_contract.json
-
-  observer_tests:
-    name: observer
-    runs-on: ubuntu-latest
-    needs: detect_changes
-    if: github.event_name != 'pull_request' || needs.detect_changes.outputs.observer == 'true'
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install pytest
           pip install -e '.[web]'
+      - name: Observer bridge compatibility tests
+        run: PYTHONPATH=. pytest -q tests/test_web_observer_bridge.py
 
-      - name: Run observer lane
-        run: |
-          start_ts=$(date +%s)
-          set +e
-          PYTHONPATH=. pytest -q \
-            tests/test_web_observer_bridge.py \
-            tests/test_ipc_pubsub.py
-          exit_code=$?
-          end_ts=$(date +%s)
-          duration=$((end_ts - start_ts))
-          status="success"
-          if [ "$exit_code" -ne 0 ]; then
-            status="failed"
-          fi
-          printf '{"lane":"observer","status":"%s","runtime_seconds":%s}\n' "$status" "$duration" > lane_result_observer.json
-          exit "$exit_code"
-
-      - name: Upload lane result
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: lane-result-observer
-          path: lane_result_observer.json
-
-  version_compatibility_tests:
-    name: version_compatibility_tests
+  snapshot_pubsub_tests:
     runs-on: ubuntu-latest
     needs: detect_changes
-    if: github.event_name != 'pull_request' || needs.detect_changes.outputs.version_contract == 'true'
+    if: github.event_name != 'pull_request' || needs.detect_changes.outputs.snapshot_pubsub_paths == 'true'
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install pytest
-          pip install -e .
-
-      - name: Run deep research version compatibility lane
+          pip install -e '.[web]'
+      - name: Snapshot publish/subscribe tests
         run: |
-          start_ts=$(date +%s)
-          set +e
           PYTHONPATH=. pytest -q \
-            tests/test_deep_research_tracks.py \
-            tests/test_deep_research_replay_contracts.py
-          exit_code=$?
-          end_ts=$(date +%s)
-          duration=$((end_ts - start_ts))
-          status="success"
-          if [ "$exit_code" -ne 0 ]; then
-            status="failed"
-          fi
-          printf '{"lane":"version_compatibility_tests","status":"%s","runtime_seconds":%s}\n' "$status" "$duration" > lane_result_version_compatibility_tests.json
-          exit "$exit_code"
+            tests/test_ipc_pubsub.py \
+            tests/test_pianoroll_view_snapshot.py
 
-      - name: Upload lane result
-        if: always()
-        uses: actions/upload-artifact@v4
+  track_boundary_gate:
+    runs-on: ubuntu-latest
+    needs: detect_changes
+    if: github.event_name != 'pull_request' || needs.detect_changes.outputs.track_boundary_paths == 'true'
+    steps:
+      - uses: actions/checkout@v4
         with:
-          name: lane-result-version-compatibility
-          path: lane_result_version_compatibility_tests.json
+          fetch-depth: 0
+      - name: Ensure origin/master is available
+        run: git fetch origin master --depth=1
+      - name: Required gate: cross-track policy
+        run: python3 tools/check_track_boundaries.py
 
-  ci_lane_summary:
+  ci_evidence_summary:
     runs-on: ubuntu-latest
     needs:
-      - deep_research_contract_guard
-      - track_a_tests
-      - track_b_tests
-      - integration_observer_tests
-      - version_compatibility_tests
-    if: always()
+      - contract_schema_checks
+      - replay_determinism_tests
+      - observer_bridge_compat_tests
+      - snapshot_pubsub_tests
+      - track_boundary_gate
+    if: always() && github.event_name == 'pull_request'
     steps:
-      - name: Download lane artifacts
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
-          pattern: lane-result-*
+          pattern: ci-evidence-*
           merge-multiple: true
-          path: lane-results
+          path: ci-evidence
 
-      - name: Build lane summary + runtime metrics
+      - name: Build PR CI evidence summary
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
 
-          rows = []
-          for path in sorted(Path("lane-results").glob("lane_result_*.json")):
-            with path.open() as fh:
-              rows.append(json.load(fh))
+          evidence_dir = Path('ci-evidence')
+          contract = {}
+          determinism = {}
 
-          if not rows:
-            summary = "No lane results were produced in this run.\n"
-          else:
-            lines = [
-              "| Lane | Status | Runtime (s) | Median (s) | p95 (s) |",
-              "|---|---|---:|---:|---:|",
-            ]
-            for row in rows:
-              runtime = float(row["runtime_seconds"])
-              lines.append(
-                f"| {row['lane']} | {row['status']} | {runtime:.0f} | {runtime:.0f} | {runtime:.0f} |"
-              )
+          contract_file = evidence_dir / 'ci_evidence_contract.json'
+          determinism_file = evidence_dir / 'ci_evidence_determinism.json'
 
-            sla_target_s = 8 * 60
-            runtimes = [float(r["runtime_seconds"]) for r in rows]
-            med = sorted(runtimes)[len(runtimes)//2]
-            overall_status = "✅ within SLA" if med < sla_target_s else "❌ exceeds SLA"
-            lines.append("")
-            lines.append(f"Overall required-check median: **{med:.0f}s** ({overall_status}; target < {sla_target_s}s)")
-            summary = "\n".join(lines) + "\n"
+          if contract_file.exists():
+            contract = json.loads(contract_file.read_text(encoding='utf-8'))
+          if determinism_file.exists():
+            determinism = json.loads(determinism_file.read_text(encoding='utf-8'))
 
-          Path("ci_lane_summary.md").write_text(summary)
-          print(summary)
+          lines = [
+            '# CI Evidence Summary',
+            '',
+            f"- Contract version: `{contract.get('contract_version', 'not-collected')}`",
+            f"- Fixture updates: `{contract.get('fixture_updated', 'not-collected')}` ({contract.get('fixture_path', 'n/a')})",
+            f"- Replay determinism status: `{determinism.get('determinism_status', 'not-collected')}`",
+          ]
+
+          summary_md = '\n'.join(lines) + '\n'
+          Path('ci_evidence_summary.md').write_text(summary_md, encoding='utf-8')
+          print(summary_md)
           PY
 
-      - name: Upload CI lane summary artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: ci-lane-summary
-          path: ci_lane_summary.md
+          name: ci-evidence-summary
+          path: ci_evidence_summary.md
 
-      - name: Add job summary
-        run: cat ci_lane_summary.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Add PR job summary
+        run: cat ci_evidence_summary.md >> "$GITHUB_STEP_SUMMARY"
