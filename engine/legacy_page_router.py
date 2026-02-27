@@ -17,13 +17,18 @@ class LegacyPageRouter:
     def route(self, event: dict[str, Any]) -> None:
         if not self.enabled or not callable(self.pages_provider):
             return
-        pages = self.pages_provider()
+        kind = str(event.get("kind", ""))
+        msg = event.get("raw")
+        # Only fetch pages dict when we actually need it (note/CC/clock, not active_sensing etc.)
+        if kind != "clock" and (msg is None or kind not in self._MIDI_BG_KINDS):
+            return
+        if not hasattr(self, "_pages_cache") or self._pages_cache is None:
+            self._pages_cache = self.pages_provider()
+        pages = self._pages_cache
         if not isinstance(pages, dict) or not pages:
             return
 
         current_page = int(self.current_page_provider() if callable(self.current_page_provider) else -1)
-        kind = str(event.get("kind", ""))
-        msg = event.get("raw")
 
         if kind == "clock":
             self._route_background_ticks(pages, current_page)

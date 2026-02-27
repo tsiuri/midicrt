@@ -13,6 +13,7 @@ from engine.modules.interfaces import ScreenSaverModule, UserActivityModule
 from engine.adapters.aconnect_parser import parse_aconnect_output
 from ui.model import Frame
 from ui.composition import build_footer_widget, build_transport_widget
+from ui.overlays import capture_plugin_overlay_widget, compose_overlay_rows
 from ui.renderers.text import TextRenderer
 from engine.page_contracts import capture_legacy_page_view
 from ui.view_contracts import widget_from_page_view
@@ -415,8 +416,16 @@ def _sync_transport_globals(snapshot):
     bpm = snapshot["bpm"]
 
 
+_engine_event_diag_next = 0.0  # next time to check scheduler diagnostics
+
 def handle_engine_event(event, msg: mido.Message):
-    global _scheduler_health_status
+    global _scheduler_health_status, _engine_event_diag_next
+    kind = event.get("kind", "")
+    if kind == "clock":
+        # Clock ticks are the most frequent MIDI message (~48/sec at 120BPM).
+        # Skip the expensive get_transport_state() + diagnostics parsing.
+        # The UI loop refreshes transport globals each frame anyway.
+        return
     snapshot = ENGINE.get_transport_state() if ENGINE else {
         "running": running,
         "tick_counter": tick_counter,
@@ -424,14 +433,18 @@ def handle_engine_event(event, msg: mido.Message):
         "bpm": bpm,
         "diagnostics": {},
     }
-    diag = snapshot.get("diagnostics", {}) if isinstance(snapshot.get("diagnostics"), dict) else {}
-    sched = diag.get("scheduler", {}) if isinstance(diag.get("scheduler"), dict) else {}
-    overloaded = sched.get("overloaded_modules", []) if isinstance(sched.get("overloaded_modules"), list) else []
-    health = "sched:overload:" + ",".join(overloaded[:3]) if overloaded else "sched:ok"
-    if health != _scheduler_health_status:
-        _scheduler_health_status = health
-        _append_runtime_log(f"[Scheduler] {health}")
     _sync_transport_globals(snapshot)
+    # Throttle scheduler health check to ~2 Hz
+    now = time.monotonic()
+    if now >= _engine_event_diag_next:
+        _engine_event_diag_next = now + 0.5
+        diag = snapshot.get("diagnostics", {}) if isinstance(snapshot.get("diagnostics"), dict) else {}
+        sched = diag.get("scheduler", {}) if isinstance(diag.get("scheduler"), dict) else {}
+        overloaded = sched.get("overloaded_modules", []) if isinstance(sched.get("overloaded_modules"), list) else []
+        health = "sched:overload:" + ",".join(overloaded[:3]) if overloaded else "sched:ok"
+        if health != _scheduler_health_status:
+            _scheduler_health_status = health
+            _append_runtime_log(f"[Scheduler] {health}")
 
 
 # ---------------------------------------------------------------------
@@ -579,6 +592,16 @@ def _ui_loop_body():
     global _auto_scroll_offset, _auto_scroll_last_time, _auto_last_msg, _auto_last_window
     _frame_budget = 1.0 / FPS
     _do_plugin_draw = not os.environ.get("MIDICRT_DISABLE_PLUGIN_DRAW")
+    # --- Profiling instrumentation ---
+    _prof_enabled = bool(os.environ.get("MIDICRT_PROFILE"))
+    _prof_n = 0
+    _prof_accum = {}
+    _prof_last_dump = time.monotonic()
+    _PROF_INTERVAL = 5.0  # dump every 5s
+    def _pt(label, t0):  # record elapsed since t0, return now
+        if _prof_enabled:
+            _prof_accum[label] = _prof_accum.get(label, 0.0) + (time.monotonic() - t0)
+        return time.monotonic()
     # Cache plugin draw signatures once (avoid per-frame inspect overhead)
     _plugin_draw_takes_state = {}
     for _mod in PLUGINS:
@@ -590,6 +613,7 @@ def _ui_loop_body():
     while not exit_flag:
       try:
         _frame_t0 = time.monotonic()
+        _pt0 = _frame_t0
         # refresh screen size each frame so pages/plugins can use all space
         try:
             if _compositor is None:
@@ -623,12 +647,18 @@ def _ui_loop_body():
             "running": running,
             "bpm": bpm,
         }
+        # get_snapshot() is expensive (iterates all modules, builds full state dict).
+        # Cache it at 10 Hz — module outputs/diagnostics don't need per-frame freshness.
         schema_snapshot = {}
         if ENGINE:
-            try:
-                schema_snapshot = (ENGINE.get_snapshot() or {}).get("schema", {})
-            except Exception:
-                schema_snapshot = {}
+            _snap_now = time.monotonic()
+            if _snap_now >= getattr(ui_loop, "_schema_snap_next_t", 0.0):
+                try:
+                    ui_loop._schema_snap_cache = (ENGINE.get_snapshot() or {}).get("schema", {})
+                except Exception:
+                    ui_loop._schema_snap_cache = {}
+                ui_loop._schema_snap_next_t = _snap_now + 0.1  # 10 Hz
+            schema_snapshot = getattr(ui_loop, "_schema_snap_cache", {})
         transport_schema = schema_snapshot.get("transport") if isinstance(schema_snapshot.get("transport"), dict) else {}
         ui_snapshot = {
             "transport": {
@@ -641,6 +671,7 @@ def _ui_loop_body():
             "status_text": str(schema_snapshot.get("status_text", "") or ""),
         }
         state = plugin_state_dict()
+        _pt0 = _pt("snapshot", _pt0)
 
         # --- HEADER (row 0) — scrolling marquee when wider than screen
         _now = time.time()
@@ -700,6 +731,7 @@ def _ui_loop_body():
         else:
             draw_line(1, base)
 
+        _pt0 = _pt("header", _pt0)
         # --- STATUS (row 2): schema-backed footer payload
         _frame_now = time.monotonic()
         _frame_dt = _frame_now - getattr(ui_loop, "_frame_last_t", _frame_now)
@@ -718,6 +750,7 @@ def _ui_loop_body():
         footer_rendered = _ui_line_renderer.render(footer_widget, Frame(cols=SCREEN_COLS, rows=1))
         draw_line(2, footer_rendered[0] if footer_rendered else "")
 
+        _pt0 = _pt("footer", _pt0)
         # --- SCREENSAVER CHECK: skip all drawing if active
         # In compositor mode the screensaver writes zeros directly to fb0 via
         # its own mmap, fighting the compositor.  Skip it entirely here; the
@@ -777,6 +810,7 @@ def _ui_loop_body():
         elif not _use_notes_page_cache:
             draw_line(3, f"No page loaded for {current_page}")
 
+        _pt0 = _pt("page", _pt0)
         # --- PLUGIN VISUALS (respect y_offset)
         if _do_plugin_draw and not _use_notes_page_cache:
             now_plugins = time.monotonic()
@@ -805,6 +839,7 @@ def _ui_loop_body():
                 for row_idx, row_text in overlay_rows:
                     draw_line(row_idx, row_text)
 
+        _pt0 = _pt("plugins", _pt0)
         if _compositor is not None and current_page == 1 and not _use_notes_page_cache:
             try:
                 y0_px = 3 * _compositor.comp.char_h
@@ -815,6 +850,7 @@ def _ui_loop_body():
             except Exception:
                 pass
 
+        _pt0 = _pt("page_cache", _pt0)
         if _compositor is not None:
             if current_page == 1:
                 badge_now = time.monotonic()
@@ -862,9 +898,27 @@ def _ui_loop_body():
                     active_pcs=getattr(ui_loop, "_notes_badge_pcs", set()),
                     roll_payload=getattr(ui_loop, "_notes_badge_roll", None),
                 )
+            _pt0 = _pt("badge", _pt0)
             _compositor.frame_flush()
+            _pt0 = _pt("flush", _pt0)
         else:
             sys.stdout.flush()
+        if _prof_enabled:
+            _pt("total", _frame_t0)
+            _prof_n += 1
+            _now_prof = time.monotonic()
+            if _now_prof - _prof_last_dump >= _PROF_INTERVAL:
+                _prof_last_dump = _now_prof
+                lines = [f"frames={_prof_n}  page={current_page}"]
+                for k, v in sorted(_prof_accum.items(), key=lambda x: -x[1]):
+                    lines.append(f"  {k:<14s}: {v/_prof_n*1000:.2f}ms")
+                try:
+                    with open("/tmp/midicrt_perf.txt", "w") as _pf:
+                        _pf.write("\n".join(lines) + "\n")
+                except Exception:
+                    pass
+                _prof_accum.clear()
+                _prof_n = 0
         time.sleep(max(0, _frame_budget - (time.monotonic() - _frame_t0)))
       except Exception:
         import traceback as _tb
@@ -1184,13 +1238,31 @@ def autoconnect_panic_output():
     if (src_id, dst_id) in existing_edges:
         _log_autoconnect(f"[Panic] Already connected {src_id} → {dst_id}; src={src_reason}, dst={dst_reason}")
         PANIC_AUTOCONNECT_DONE = True
-        return
+        return "already_connected"
 
     if _connect_pair(src_id, dst_id, existing_edges):
         _log_autoconnect(f"[Panic] Connected {src_client}:{src_port} ({src_id}) → {dst_client}:{dst_port} ({dst_id}); src={src_reason}, dst={dst_reason}")
         PANIC_AUTOCONNECT_DONE = True
+        return "connected"
     else:
         _log_autoconnect(f"[Panic] Connect failed for {src_id} → {dst_id}")
+        return "connect_failed"
+
+
+def _panic_autoconnect_retry_loop():
+    """Retry panic output autoconnect until connected or shutdown."""
+    if not PANIC_RETRY_ENABLE:
+        return
+    interval = max(0.25, float(PANIC_RETRY_INTERVAL))
+    interval_cap = max(interval, float(PANIC_RETRY_INTERVAL_CAP))
+    while not globals().get("exit_flag", False):
+        if PANIC_AUTOCONNECT_DONE or not PANIC_OUT_VIRTUAL:
+            return
+        status = autoconnect_panic_output()
+        if status in {"connected", "already_connected", "skipped"}:
+            return
+        time.sleep(interval)
+        interval = min(interval_cap, interval * 1.5)
 
 
 def _connect_pair(src_id: str, dst_id: str, existing_edges=None) -> bool:
@@ -1237,6 +1309,7 @@ def _open_preferred_input():
     direct_input_name = _pick_midi_input_name()
     if direct_input_name:
         port = mido.open_input(direct_input_name)
+        _install_midi_error_filter(port)
         status = f"[MIDI] open success attempt=1 mode=direct port={direct_input_name}"
         _log_autoconnect(status)
         _append_runtime_log(status)

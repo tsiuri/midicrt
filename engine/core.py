@@ -129,6 +129,9 @@ class MidiEngine:
             enabled=self._legacy_event_shim_enabled,
         )
         self._ui_context: dict[str, Any] = {"cols": 0, "rows": 0, "y_offset": 3, "current_page": 0}
+        self._meter_cache: list[dict[str, Any]] = []
+        self._meter_cache_tick: int = -1  # tick when cache was last refreshed
+        self._meter_cache_interval: int = 96  # refresh once per bar (4/4 = 96 ticks)
         self._deep_research_late_policy = str(self._deep_research_cfg.get("late_policy", "drop")).strip().lower() or "drop"
         if self._deep_research_late_policy not in {"drop", "apply_next"}:
             self._deep_research_late_policy = "drop"
@@ -695,8 +698,14 @@ class MidiEngine:
     def _update_transport(self, event: dict[str, Any]) -> None:
         with self._lock:
             kind = event["kind"]
-            meter_candidates = self._collect_meter_candidates()
-            self._tempo_map.handle(kind, event["timestamp"], meter_candidates=meter_candidates)
+            # Refresh meter candidates once per bar instead of every message.
+            # The timesig plugins accumulate data continuously — polling them
+            # less often loses nothing since they look back at their full window.
+            cur_tick = int(self.state.tick_counter)
+            if kind in ("start", "stop") or (cur_tick - self._meter_cache_tick) >= self._meter_cache_interval:
+                self._meter_cache = self._collect_meter_candidates()
+                self._meter_cache_tick = cur_tick
+            self._tempo_map.handle(kind, event["timestamp"], meter_candidates=self._meter_cache)
             tempo_snapshot = self._tempo_map.snapshot()
 
             self.state.running = tempo_snapshot.running
