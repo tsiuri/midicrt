@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from statistics import median
 from typing import Any
 
 from harmony import CHORDS, NOTE_NAMES
 
-from .platform import ResearchContract, contract_versions_compatible, current_contract_version
+from .platform import (
+    ResearchContract,
+    contract_versions_compatible,
+    current_contract_version,
+    thaw_payload,
+)
 
 
 @dataclass(frozen=True)
@@ -15,6 +21,7 @@ class ResearchResult:
     active_note_total: int
     chord_candidates: list[dict[str, Any]]
     key_estimate: dict[str, Any] | None
+    microtiming: dict[str, Any]
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -23,6 +30,7 @@ class ResearchResult:
             "active_note_total": self.active_note_total,
             "chord_candidates": self.chord_candidates,
             "key_estimate": self.key_estimate,
+            "microtiming": self.microtiming,
         }
 
 
@@ -187,13 +195,95 @@ def _contract_version_error(expected_version: str, actual_version: str) -> dict[
     }
 
 
+def _coerce_float(value: Any) -> float | None:
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None
+
+
+def _extract_microtiming_events(transport: dict[str, Any]) -> list[dict[str, Any]]:
+    microtiming = transport.get("microtiming")
+    if not isinstance(microtiming, dict):
+        return []
+    note_on_events = microtiming.get("note_on_events")
+    if not isinstance(note_on_events, list):
+        return []
+    normalized: list[dict[str, Any]] = []
+    for event in note_on_events:
+        if not isinstance(event, dict):
+            continue
+        tick = _coerce_float(event.get("tick"))
+        channel = event.get("channel", 0)
+        if tick is None or not isinstance(channel, int):
+            continue
+        normalized.append({"tick": tick, "channel": channel})
+    return normalized
+
+
+def _compute_microtiming(transport: dict[str, Any]) -> dict[str, Any]:
+    timing = transport.get("timing")
+    ticks_per_beat = 24.0
+    subdivision = 4
+    if isinstance(timing, dict):
+        ticks_per_beat = max(1.0, _coerce_float(timing.get("ticks_per_beat")) or ticks_per_beat)
+        subdivision = int(max(1, _coerce_float(timing.get("subdivision")) or subdivision))
+
+    events = _extract_microtiming_events(transport)
+    bucket_counts: dict[str, int] = {
+        "early": 0,
+        "on_grid": 0,
+        "late": 0,
+    }
+    channel_offsets: dict[str, list[float]] = {}
+    offsets: list[float] = []
+    step = ticks_per_beat / subdivision
+
+    for event in events:
+        tick = event["tick"]
+        channel_key = str(event["channel"])
+        nearest_step = round(tick / step)
+        offset = tick - (nearest_step * step)
+        offset = _round4(offset)
+        offsets.append(offset)
+        channel_offsets.setdefault(channel_key, []).append(offset)
+        if abs(offset) <= (step * 0.05):
+            bucket_counts["on_grid"] += 1
+        elif offset < 0:
+            bucket_counts["early"] += 1
+        else:
+            bucket_counts["late"] += 1
+
+    per_channel = {
+        channel: {
+            "count": len(items),
+            "mean_offset": _round4(sum(items) / len(items)),
+            "median_offset": _round4(float(median(items))),
+        }
+        for channel, items in sorted(channel_offsets.items(), key=lambda pair: int(pair[0]))
+    }
+
+    mean_offset = 0.0 if not offsets else _round4(sum(offsets) / len(offsets))
+    median_offset = 0.0 if not offsets else _round4(float(median(offsets)))
+    return {
+        "subdivision": subdivision,
+        "ticks_per_beat": _round4(ticks_per_beat),
+        "histogram": bucket_counts,
+        "aggregate": {
+            "count": len(offsets),
+            "mean_offset": mean_offset,
+            "median_offset": median_offset,
+        },
+        "per_channel": per_channel,
+    }
+
+
 def run_research(contract: ResearchContract) -> dict[str, Any]:
     """Track B logic: consumes only frozen contract input."""
     expected_version = current_contract_version()
     if not contract_versions_compatible(expected_version, contract.contract_version):
         return _contract_version_error(expected_version, contract.contract_version)
 
-    transport = dict(contract.transport)
+    transport = thaw_payload(contract.transport)
     active_notes = dict(contract.active_notes)
     flattened = [note for notes in active_notes.values() for note in notes]
     active_total = len(flattened)
@@ -210,6 +300,7 @@ def run_research(contract: ResearchContract) -> dict[str, Any]:
     chord_candidates = _build_chord_candidates(flattened)
     key_estimate = _compute_key_estimate(flattened)
     _annotate_harmonic_function(chord_candidates, key_estimate)
+    microtiming = _compute_microtiming(transport)
 
     return ResearchResult(
         motif_span=motif_span,
@@ -225,4 +316,5 @@ def run_research(contract: ResearchContract) -> dict[str, Any]:
                 "alternatives": key_estimate["alternatives"],
             }
         ),
+        microtiming=microtiming,
     ).as_dict()
