@@ -19,6 +19,10 @@ class TempoSnapshot:
     bpm: float
     clock_interval_ms: float
     jitter_rms: float
+    jitter_p95: float
+    jitter_p99: float
+    drift_ppm: float
+    interval_stats: dict[str, float]
     meter_estimate: str
     confidence: float
 
@@ -26,8 +30,16 @@ class TempoSnapshot:
 class TempoMap:
     """Realtime transport map derived from MIDI realtime clock + advisory meter hints."""
 
-    def __init__(self, *, interval_window: int = 24) -> None:
+    def __init__(
+        self,
+        *,
+        interval_window: int = 24,
+        baseline_window: int = 96,
+        stats_window: int = 24,
+    ) -> None:
         self._intervals = deque(maxlen=max(2, int(interval_window)))
+        self._baseline_intervals = deque(maxlen=max(2, int(baseline_window)))
+        self._stats_window = max(2, int(stats_window))
         self.reset()
 
     def reset(self) -> None:
@@ -40,6 +52,16 @@ class TempoMap:
         self._bpm = 0.0
         self._clock_interval_ms = 0.0
         self._jitter_rms = 0.0
+        self._jitter_p95 = 0.0
+        self._jitter_p99 = 0.0
+        self._drift_ppm = 0.0
+        self._interval_stats = {
+            "count": 0.0,
+            "mean_ms": 0.0,
+            "min_ms": 0.0,
+            "max_ms": 0.0,
+            "std_ms": 0.0,
+        }
 
     def handle(self, kind: str, timestamp: float, meter_candidates: list[dict[str, Any]] | None = None) -> None:
         if kind == "start":
@@ -48,9 +70,20 @@ class TempoMap:
             self.running = True
             self._last_clock_ts = None
             self._intervals.clear()
+            self._baseline_intervals.clear()
             self._bpm = 0.0
             self._clock_interval_ms = 0.0
             self._jitter_rms = 0.0
+            self._jitter_p95 = 0.0
+            self._jitter_p99 = 0.0
+            self._drift_ppm = 0.0
+            self._interval_stats = {
+                "count": 0.0,
+                "mean_ms": 0.0,
+                "min_ms": 0.0,
+                "max_ms": 0.0,
+                "std_ms": 0.0,
+            }
             self._apply_meter_candidates(meter_candidates)
             return
 
@@ -83,13 +116,29 @@ class TempoMap:
         if self._last_clock_ts is not None:
             interval = max(0.0, timestamp - self._last_clock_ts)
             self._intervals.append(interval)
+            self._baseline_intervals.append(interval)
             if self._intervals:
-                avg = sum(self._intervals) / len(self._intervals)
+                sample = list(self._intervals)[-self._stats_window :]
+                avg = sum(sample) / len(sample)
                 if avg > 0:
                     self._bpm = 60.0 / (PPQN * avg)
                     self._clock_interval_ms = avg * 1000.0
-                    variance = sum((v - avg) ** 2 for v in self._intervals) / len(self._intervals)
+                    variance = sum((v - avg) ** 2 for v in sample) / len(sample)
                     self._jitter_rms = math.sqrt(max(0.0, variance)) * 1000.0
+                    deviations_ms = sorted(abs(v - avg) * 1000.0 for v in sample)
+                    self._jitter_p95 = _percentile_from_sorted(deviations_ms, 0.95)
+                    self._jitter_p99 = _percentile_from_sorted(deviations_ms, 0.99)
+                    base_sample = list(self._baseline_intervals)
+                    base_avg = sum(base_sample) / len(base_sample) if base_sample else avg
+                    if base_avg > 0:
+                        self._drift_ppm = ((avg - base_avg) / base_avg) * 1_000_000.0
+                    self._interval_stats = {
+                        "count": float(len(sample)),
+                        "mean_ms": avg * 1000.0,
+                        "min_ms": min(sample) * 1000.0,
+                        "max_ms": max(sample) * 1000.0,
+                        "std_ms": self._jitter_rms,
+                    }
         self._last_clock_ts = timestamp
 
     def snapshot(self) -> TempoSnapshot:
@@ -108,6 +157,10 @@ class TempoMap:
             bpm=self._bpm,
             clock_interval_ms=self._clock_interval_ms,
             jitter_rms=self._jitter_rms,
+            jitter_p95=self._jitter_p95,
+            jitter_p99=self._jitter_p99,
+            drift_ppm=self._drift_ppm,
+            interval_stats=dict(self._interval_stats),
             meter_estimate=self._meter,
             confidence=self._confidence,
         )
@@ -144,3 +197,12 @@ def _parse_meter(label: str) -> tuple[int, int]:
         return beats, denom
     except Exception:
         return 4, 4
+
+
+def _percentile_from_sorted(values: list[float], q: float) -> float:
+    if not values:
+        return 0.0
+    q = max(0.0, min(1.0, float(q)))
+    idx = int(math.ceil(q * len(values))) - 1
+    idx = max(0, min(idx, len(values) - 1))
+    return float(values[idx])
