@@ -8,7 +8,7 @@ Current observer surfaces:
 
 - `GET /healthz`: bridge connectivity + throttling + schema health + read-only invariants.
 - `GET /ws`: read-only snapshot stream payloads (no command channels).
-- Static dashboard (`/`) renders transport/channels/module outputs/deep research/schema health.
+- Static dashboard (`/`) renders schema/compat state, transport quality, timing summaries, capture status, channels/module outputs, and deep research metadata.
 
 Refresh cadence and bounds:
 
@@ -24,6 +24,7 @@ Refresh cadence and bounds:
   "seq": 42,
   "snapshot": {
     "schema_version": 4,
+    "compat_mode": "native",
     "transport": {"tick": 960, "bar": 13, "running": true, "bpm": 120.0},
     "status_text": "playing",
     "channels": [{"channel": 1, "active_notes": [60, 64, 67]}],
@@ -54,9 +55,27 @@ Refresh cadence and bounds:
     "ipc_freshness_age_ms": 28.4,
     "normalization_fallbacks": 3
   },
+  "observer_views": {
+    "tempo_quality": {"bpm": 120.0, "confidence": 0.95, "jitter_ms": 1.8, "drift_ppm": -0.2},
+    "microtiming": {"title": "Microtiming", "total_samples": 128, "buckets": ["early", "on", "late"]},
+    "motif": {"found": true, "pattern": "+4 -2", "count": 3, "window": 2},
+    "capture_status": {
+      "armed": true,
+      "state": "capturing",
+      "buffer_fill": 24,
+      "buffer_capacity": 128,
+      "commit_state": "dirty",
+      "last_commit": "2026-02-27T12:00:00Z",
+      "last_commit_age_s": 2.4
+    }
+  },
   "read_only": {
+    "mode": "strict-read-only",
     "mutation_endpoints": [],
     "command_execution_paths": [],
+    "allowed_http_methods": ["GET"],
+    "websocket_inbound_actions": ["ping"],
+    "websocket_rejected_actions": ["*"],
     "bounded_stream_rate_hz": 20.0
   }
 }
@@ -79,8 +98,12 @@ Refresh cadence and bounds:
   "client_queue_size": 8,
   "telemetry": {"queue_dropped": 0, "queue_coalesced": 2},
   "read_only": {
+    "mode": "strict-read-only",
     "mutation_endpoints": [],
     "command_execution_paths": [],
+    "allowed_http_methods": ["GET"],
+    "websocket_inbound_actions": ["ping"],
+    "websocket_rejected_actions": ["*"],
     "bounded_polling": {"max_broadcast_hz": 20.0, "client_queue_size": 8}
   }
 }
@@ -91,3 +114,36 @@ Refresh cadence and bounds:
 `ui.client.normalize_snapshot()` accepts modern schema payloads and legacy wrapped payloads
 (`schema`, `payload.schema`, and `payload` schema envelopes). Legacy normalization paths
 increment a process-local fallback counter surfaced in `schema_health.normalization_fallbacks`.
+
+
+## Operator debugging snippets
+
+Use these snippets during incident triage to verify observer contract stability and strict read-only behavior.
+
+```json
+{
+  "schema_health": {
+    "latest_snapshot_version": 4,
+    "normalization_fallbacks": 0
+  },
+  "snapshot": {
+    "compat_mode": "native"
+  },
+  "observer_views": {
+    "tempo_quality": {"jitter_ms": 0.9, "drift_ppm": 0.1},
+    "microtiming": {"total_samples": 256},
+    "motif": {"found": false, "pattern": "", "count": 0},
+    "capture_status": {"buffer_fill": 0, "buffer_capacity": 128, "commit_state": "clean"}
+  }
+}
+```
+
+```json
+{
+  "error": "read-only observer: mutation methods are disabled",
+  "read_only": {
+    "mode": "strict-read-only",
+    "allowed_http_methods": ["GET"]
+  }
+}
+```
