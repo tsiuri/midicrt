@@ -15,7 +15,12 @@ Mark each gate as complete only when objective evidence exists (CI logs, audit r
 - [ ] **Contract-version protocol active**
   - Contract changes must follow versioning policy (additive = minor, breaking = major).
   - CI must verify version declarations and compatibility tests for reader/writer rollout order.
-  - Evidence: contract-version check job required and passing on `master`.
+  - Required check behavior (exact):
+    - run `python tools/check_deep_research_contract_rollout.py`
+    - fail if `RESEARCH_CONTRACT_MAJOR_VERSION`/`RESEARCH_CONTRACT_MINOR_VERSION` move backwards
+    - fail if major version changed and `tests/test_deep_research_contract_compat.py` was not updated in the same PR
+    - run `PYTHONPATH=. pytest -q tests/test_deep_research_contract_compat.py` and require pass
+  - Evidence: required `deep_research_contract_guard` job passing on `master`, linked in `docs/parallel_execution_board.md` G2 evidence.
 
 - [ ] **Lane-sharded CI active**
   - CI execution must be split by lane/area (for example: engine, ui, integration).
