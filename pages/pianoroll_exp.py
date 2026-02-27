@@ -6,11 +6,14 @@ PAGE_NAME = "Piano Roll Exp"
 import os
 import sys
 import time
+from uuid import uuid4
 
 import mido
 from blessed import Terminal
 
 from configutil import load_section, save_section
+from engine.memory import session_model
+from engine.memory.session_model import SessionModel, build_session_model
 from midicrt import draw_line
 from ui.model import Column, Line, PianoRollCell, PianoRollWidget, Spacer, TextBlock
 
@@ -76,30 +79,19 @@ def _abs_export_dir() -> str:
     return os.path.join(_project_root(), out)
 
 
-def _new_session(start_tick: int, bpm: float) -> dict:
-    return {
-        "start_tick": int(start_tick),
-        "stop_tick": int(start_tick),
-        "start_time": time.time(),
-        "stop_time": None,
-        "bpm": float(bpm if bpm > 0 else 120.0),
-        # absolute-clock events for MIDI export: (tick, mido.Message)
-        "events": [],
-        # active notes: (ch, note) -> (start_tick, vel)
-        "active": {},
-        # completed spans: (start_tick, end_tick, pitch, ch, vel)
-        "spans": [],
-        # recent hits: (note, ch, vel, ts)
-        "recent_hits": [],
-        # cc events: (tick, ch, cc, value, ts)
-        "cc_events": [],
-        # stable CC lane ordering (top row first). Existing lanes keep slot.
-        "cc_order": [],
-        "export_path": None,
-    }
+def _new_session(start_tick: int, bpm: float) -> SessionModel:
+    session = build_session_model(
+        session_id=f"pianoroll-exp-{uuid4().hex[:12]}",
+        start_tick=int(start_tick),
+        bpm=float(bpm if bpm > 0 else 120.0),
+        ppqn=24,
+    )
+    session.start_time = time.time()
+    session.stop_time = None
+    return session
 
 
-def _append_session(session: dict) -> None:
+def _append_session(session: SessionModel) -> None:
     global _session_history
     _session_history.append(session)
     max_keep = max(1, int(_MEMORY_MAX_SESSIONS))
@@ -107,32 +99,16 @@ def _append_session(session: dict) -> None:
         _session_history = _session_history[-max_keep:]
 
 
-def _close_active_note(session: dict, ch: int, note: int, end_tick: int, emit_synth_off: bool) -> None:
-    active = session["active"].pop((int(ch), int(note)), None)
-    if not active:
-        return
-    start_tick, vel = active
-    end_tick = int(max(int(end_tick), int(start_tick)))
-    session["spans"].append((int(start_tick), int(end_tick), int(note), int(ch), int(vel)))
-    if emit_synth_off:
-        try:
-            session["events"].append(
-                (
-                    int(end_tick),
-                    mido.Message("note_off", channel=max(0, int(ch) - 1), note=int(note), velocity=0, time=0),
-                )
-            )
-        except Exception:
-            pass
+def _close_active_note(session: SessionModel, ch: int, note: int, end_tick: int, emit_synth_off: bool) -> None:
+    session.close_active_note(channel=int(ch), note=int(note), end_tick=int(end_tick), emit_synth_off=bool(emit_synth_off))
 
 
-def _flush_active_notes(session: dict, end_tick: int, emit_synth_off: bool = True) -> None:
-    for ch, note in list(session["active"].keys()):
-        _close_active_note(session, ch, note, end_tick=end_tick, emit_synth_off=emit_synth_off)
+def _flush_active_notes(session: SessionModel, end_tick: int, emit_synth_off: bool = True) -> None:
+    session.flush_active_notes(end_tick=int(end_tick), emit_synth_off=bool(emit_synth_off))
 
 
-def _export_session_midi(session: dict) -> str | None:
-    events = list(session.get("events") or [])
+def _export_session_midi(session: SessionModel) -> str | None:
+    events = list(session.events or [])
     if not events:
         return None
 
@@ -140,23 +116,25 @@ def _export_session_midi(session: dict) -> str | None:
     track = mido.MidiTrack()
     midi.tracks.append(track)
 
-    bpm = float(session.get("bpm", 120.0) or 120.0)
+    bpm = float(session.header.bpm or 120.0)
     track.append(mido.MetaMessage("set_tempo", tempo=int(mido.bpm2tempo(bpm)), time=0))
     track.append(mido.MetaMessage("track_name", name="midicrt pianoroll_exp", time=0))
 
     ticks_per_clock = midi.ticks_per_beat / 24.0
-    start_tick = int(session.get("start_tick", 0))
+    start_tick = int(session.header.start_tick)
 
-    indexed = list(enumerate(events))
-    indexed.sort(key=lambda item: (int(item[1][0]), item[0]))
+    indexed = list(events)
+    indexed.sort(key=lambda ev: (int(ev.tick), int(ev.seq)))
 
     prev = 0
-    for _, (abs_clock, msg) in indexed:
-        rel = max(0, int((int(abs_clock) - start_tick) * ticks_per_clock))
+    for event in indexed:
+        rel = max(0, int((int(event.tick) - start_tick) * ticks_per_clock))
         delta = max(0, rel - prev)
         prev = rel
         try:
-            track.append(msg.copy(time=delta))
+            msg = session_model.to_mido_message(event)
+            if msg is not None:
+                track.append(msg.copy(time=delta))
         except Exception:
             pass
 
@@ -188,10 +166,10 @@ def _finalize_session(tick_now: int) -> None:
         return
     session = _current_session
     _flush_active_notes(session, end_tick=tick_now, emit_synth_off=True)
-    session["stop_tick"] = int(max(int(tick_now), int(session.get("start_tick", tick_now))))
-    session["stop_time"] = time.time()
+    session.header.stop_tick = int(max(int(tick_now), int(session.header.start_tick)))
+    session.stop_time = time.time()
     out_path = _export_session_midi(session)
-    session["export_path"] = out_path
+    session.export_path = out_path
     _append_session(session)
     _view_session_idx = len(_session_history) - 1
     _view_page_idx = max(0, _session_page_count(session, _roll_cols_from_screen_cols(100)) - 1)
@@ -220,20 +198,20 @@ def _session_page_origin(start_tick: int) -> int:
     return int((st // bar_ticks) * bar_ticks)
 
 
-def _session_page_count(session: dict, roll_cols: int) -> int:
+def _session_page_count(session: SessionModel, roll_cols: int) -> int:
     page_ticks = _ticks_per_page(roll_cols)
-    start = int(session.get("start_tick", 0))
+    start = int(session.header.start_tick)
     origin = _session_page_origin(start)
-    stop = int(session.get("stop_tick", start))
-    if session.get("spans"):
-        stop = max(stop, max(int(s[1]) for s in session["spans"]))
-    if session.get("active"):
-        stop = max(stop, max(int(v[0]) for v in session["active"].values()))
+    stop = int(session.header.stop_tick)
+    if session.note_spans:
+        stop = max(stop, max(int(s.end_tick) for s in session.note_spans))
+    if session.active_notes:
+        stop = max(stop, max(int(v[0]) for v in session.active_notes.values()))
     dur = max(1, stop - origin + int(base.TICKS_PER_COL))
     return max(1, (dur + page_ticks - 1) // page_ticks)
 
 
-def _selected_session(running: bool) -> tuple[dict | None, bool]:
+def _selected_session(running: bool) -> tuple[SessionModel | None, bool]:
     global _view_session_idx
     if running and _current_session is not None:
         return _current_session, True
@@ -255,14 +233,14 @@ def _build_layout_window(state: dict) -> tuple[int, int, int, int, int]:
     return cols, rows, y0, top, total_rows
 
 
-def _recent_overflow(session: dict, pitch_low: int, pitch_high: int) -> tuple[str, str]:
+def _recent_overflow(session: SessionModel, pitch_low: int, pitch_high: int) -> tuple[str, str]:
     now = time.time()
     hold = float(base.OUT_RANGE_HOLD)
-    recent = [r for r in session.get("recent_hits", []) if (now - float(r[3])) <= hold]
+    recent = [r for r in session.recent_hits if (now - float(r[3])) <= hold]
     above = [r for r in recent if int(r[0]) > pitch_high]
     below = [r for r in recent if int(r[0]) < pitch_low]
 
-    for (ch, note), (_start, vel) in session.get("active", {}).items():
+    for (ch, note), (_start, vel) in session.active_notes.items():
         if int(note) > pitch_high:
             above.append((int(note), int(ch), int(vel), now))
         elif int(note) < pitch_low:
@@ -278,9 +256,9 @@ def _recent_overflow(session: dict, pitch_low: int, pitch_high: int) -> tuple[st
     return _fmt(above), _fmt(below)
 
 
-def _session_cc_tracks(session: dict) -> list[dict]:
+def _session_cc_tracks(session: SessionModel) -> list[dict]:
     tracks: dict[tuple[int, int], dict] = {}
-    for tick, ch, cc, value, ts in session.get("cc_events", []):
+    for tick, ch, cc, value, ts in session.cc_events:
         key = (int(ch), int(cc))
         ent = tracks.get(key)
         if ent is None:
@@ -296,9 +274,7 @@ def _session_cc_tracks(session: dict) -> list[dict]:
         if int(tick) >= int(ent["last_tick"]):
             ent["last_tick"] = int(tick)
             ent["last_ts"] = float(ts)
-    order = session.get("cc_order")
-    if not isinstance(order, list):
-        order = []
+    order = session.cc_order
 
     out: list[dict] = []
     used: set[tuple[int, int]] = set()
@@ -383,7 +359,7 @@ def _build_cc_lanes(
 
 
 def _project_session_page(
-    session: dict,
+    session: SessionModel,
     roll_cols: int,
     pitch_low: int,
     pitch_high: int,
@@ -395,10 +371,10 @@ def _project_session_page(
     best_cols = [{} for _ in range(max(1, roll_cols))]
     spans_for_render = []
 
-    spans = list(session.get("spans", []))
+    spans = [(s.start_tick, s.end_tick, s.pitch, s.channel, s.velocity) for s in session.note_spans]
     if include_live_active:
         now_tick = int(max(page_start, _last_tick))
-        for (ch, note), (start, vel) in session.get("active", {}).items():
+        for (ch, note), (start, vel) in session.active_notes.items():
             spans.append((int(start), int(now_tick), int(note), int(ch), int(vel)))
 
     for start, end, pitch, ch, vel in spans:
@@ -432,7 +408,7 @@ def _project_session_page(
         spans_for_render.append((clip_s, clip_e + 1, pitch, ch, vel))
 
     columns = [[(p, ch, vel) for p, (ch, vel) in col.items()] for col in best_cols]
-    return columns, spans_for_render, int(len(session.get("active", {})) if include_live_active else 0)
+    return columns, spans_for_render, int(len(session.active_notes) if include_live_active else 0)
 
 
 def _build_live_view(state: dict, build_grid: bool) -> dict:
@@ -472,7 +448,7 @@ def _build_memory_view(state: dict, build_grid: bool) -> dict:
 
     if session is not None:
         page_ticks = _ticks_per_page(roll_cols)
-        page_origin = _session_page_origin(int(session.get("start_tick", 0)))
+        page_origin = _session_page_origin(int(session.header.start_tick))
         page_count = _session_page_count(session, roll_cols)
 
         if live:
@@ -526,8 +502,8 @@ def _build_memory_view(state: dict, build_grid: bool) -> dict:
         )
         _above_txt, below_txt = _recent_overflow(session, int(base.pitch_low), int(base.pitch_high))
         footer_right = below_txt or ""
-        if not live and session.get("export_path"):
-            footer_right = os.path.basename(str(session["export_path"]))
+        if not live and session.export_path:
+            footer_right = os.path.basename(str(session.export_path))
 
     if session is not None and cc_rows > 0:
         cc_lanes = _build_cc_lanes(
@@ -596,8 +572,8 @@ def _build_memory_view(state: dict, build_grid: bool) -> dict:
         "spans": spans,
         "cc_lanes": cc_lanes,
         "cc_lines": cc_lines,
-        "tick_right": int(session.get("start_tick", 0) + ((page_idx + 1) * roll_cols - 1) * int(base.TICKS_PER_COL)) if session else int(tick_now),
-        "tick_now": int(session.get("start_tick", 0) + ((page_idx + 1) * roll_cols - 1) * int(base.TICKS_PER_COL)) if session else int(tick_now),
+        "tick_right": int(session.header.start_tick + ((page_idx + 1) * roll_cols - 1) * int(base.TICKS_PER_COL)) if session else int(tick_now),
+        "tick_now": int(session.header.start_tick + ((page_idx + 1) * roll_cols - 1) * int(base.TICKS_PER_COL)) if session else int(tick_now),
         "footer_left": footer_left,
         "footer_right": footer_right,
         "overflow": {"above": "", "below": ""},
@@ -650,70 +626,51 @@ def handle(msg):
         return
 
     kind = getattr(msg, "type", "")
-    if kind not in {"note_on", "note_off", "control_change"}:
+    if kind not in {"note_on", "note_off", "control_change", "program_change", "pitchwheel", "aftertouch", "polytouch"}:
         return
 
     abs_tick = int(_last_tick)
+    session.append_event_from_message(abs_tick, msg)
 
     if kind == "note_on":
         ch = int(getattr(msg, "channel", 0)) + 1
         note = int(getattr(msg, "note", -1))
         vel = int(getattr(msg, "velocity", 0))
-        try:
-            session["events"].append((abs_tick, msg.copy(time=0)))
-        except Exception:
-            pass
         if vel > 0:
             _close_active_note(session, ch, note, end_tick=abs_tick, emit_synth_off=True)
-            session["active"][(ch, note)] = (abs_tick, vel)
-            session["recent_hits"].append((note, ch, vel, time.time()))
-            if len(session["recent_hits"]) > 256:
-                session["recent_hits"] = session["recent_hits"][-256:]
+            session.active_notes[(ch, note)] = (abs_tick, vel)
+            session.recent_hits.append((note, ch, vel, time.time()))
+            if len(session.recent_hits) > 256:
+                session.recent_hits = session.recent_hits[-256:]
         else:
+            # zero-velocity note_on closes active note per MIDI convention
             _close_active_note(session, ch, note, end_tick=abs_tick, emit_synth_off=False)
         return
 
     if kind == "note_off":
         ch = int(getattr(msg, "channel", 0)) + 1
         note = int(getattr(msg, "note", -1))
-        try:
-            session["events"].append((abs_tick, msg.copy(time=0)))
-        except Exception:
-            pass
         _close_active_note(session, ch, note, end_tick=abs_tick, emit_synth_off=False)
         return
 
     if kind == "control_change" and int(getattr(msg, "control", -1)) == 123:
         ch = int(getattr(msg, "channel", 0)) + 1
-        try:
-            session["events"].append((abs_tick, msg.copy(time=0)))
-        except Exception:
-            pass
-        for key in [k for k in session["active"].keys() if int(k[0]) == ch]:
-            _close_active_note(session, key[0], key[1], end_tick=abs_tick, emit_synth_off=True)
+        session.close_channel_active_notes(channel=ch, end_tick=abs_tick, emit_synth_off=True)
         return
 
     if kind == "control_change":
         ch = int(getattr(msg, "channel", 0)) + 1
         cc = int(getattr(msg, "control", -1))
         value = int(getattr(msg, "value", 0))
-        try:
-            session["events"].append((abs_tick, msg.copy(time=0)))
-        except Exception:
-            pass
-        session["cc_events"].append((abs_tick, ch, cc, value, time.time()))
-        if len(session["cc_events"]) > 4096:
-            session["cc_events"] = session["cc_events"][-4096:]
-        order = session.get("cc_order")
-        if not isinstance(order, list):
-            order = []
-            session["cc_order"] = order
+        session.cc_events.append((abs_tick, ch, cc, value, time.time()))
+        if len(session.cc_events) > 4096:
+            session.cc_events = session.cc_events[-4096:]
         key = (int(ch), int(cc))
-        if key not in order:
+        if key not in session.cc_order:
             # New CCs claim the top slot; existing rows keep position.
-            order.insert(0, key)
-            if len(order) > 256:
-                del order[256:]
+            session.cc_order.insert(0, key)
+            if len(session.cc_order) > 256:
+                del session.cc_order[256:]
         return
 
 
@@ -734,7 +691,7 @@ def on_tick(state):
         elif (not running) and _last_running:
             _finalize_session(tick_now=tick_now)
         if running and _current_session is not None:
-            _current_session["stop_tick"] = tick_now
+            _current_session.header.stop_tick = tick_now
 
     _last_running = running
 
