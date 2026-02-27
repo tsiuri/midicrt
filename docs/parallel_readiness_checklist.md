@@ -67,6 +67,69 @@ Track for a rolling 2-week window unless noted otherwise.
 
 If any threshold fails, decision is **NO-GO** until corrective actions are completed and metrics recover.
 
+## Contract governance policy details (WB-002)
+
+The `contract-version-governance` required check (workflow: `.github/workflows/contract-version-governance.yml`) enforces explicit path-scoped contract governance on pull requests.
+
+### Governed contract surfaces (explicit glob map)
+
+- `lane-interface-docs`
+  - `docs/parallel_readiness_checklist.md`
+  - `docs/parallel_execution_board.md`
+  - `engine/deep_research/contract_versioning.md`
+- `shared-schema-config`
+  - `engine/deep_research/platform.py`
+  - `engine/deep_research/logic.py`
+  - `engine/state/schema.py`
+  - `config/settings.json`
+- `fixture-contracts`
+  - `tests/fixtures/**/*.json`
+  - `tests/fixtures/**/*.yaml`
+  - `tests/test_deep_research_contract_compat.py`
+
+### Required PR declarations when governed paths are touched
+
+1. `Contract-Impact: none|additive|breaking` must exist in the PR body.
+2. One of the following must exist:
+   - a contract version bump in `engine/deep_research/platform.py` (`RESEARCH_CONTRACT_MAJOR_VERSION` / `RESEARCH_CONTRACT_MINOR_VERSION`), or
+   - `Contract-Version-Exception: <structured reason + rollout/test plan>` in PR body.
+3. If `Contract-Impact: breaking`:
+   - label `contract-breaking-approved` is required, and
+   - at least one approval must come from a designated reviewer listed in the workflow.
+
+### Actionable failures in CI
+
+The check prints exactly:
+- each changed file that matched a contract surface glob,
+- the surface/rule category that was triggered,
+- each failed requirement as a numbered remediation item.
+
+### PR body examples
+
+**Additive change with version bump**
+
+```md
+Contract-Impact: additive
+Contract-Version-Exception: n/a
+```
+
+**Breaking change with exception note (while reader-first rollout is in flight)**
+
+```md
+Contract-Impact: breaking
+Contract-Version-Exception: ADR-0123 phase 1/4 (reader-first):
+- no writer flip in this PR
+- compat tests updated in tests/test_deep_research_contract_compat.py
+- rollout validation planned in staging before major increment
+```
+
+**Docs-only touch on a governed file without version bump**
+
+```md
+Contract-Impact: none
+Contract-Version-Exception: docs-only update to governance wording; no payload/schema change
+```
+
 ## 1-week pilot plan (2–3 agents)
 
 Run a controlled pilot with **2–3 simultaneous agents** before full rollout.

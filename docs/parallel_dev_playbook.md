@@ -94,3 +94,7 @@ Publish:
 - A lane may not modify another lane’s owned files unless `contract-impact` is checked and justified.
 - Contract-impact changes require at least one reviewer from each affected lane.
 - Prefer sequential handoffs over large cross-lane PRs.
+
+### Cross-lane edit review rule
+
+When a PR edits files across multiple owned top-level paths (for example `engine/` + `pages/`), each touched lane owner must provide explicit review approval before merge. CODEOWNERS routing alone is not sufficient; PR authors must request the owning lane(s) directly and note approvals in the PR checklist.
