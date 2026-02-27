@@ -14,6 +14,7 @@ jobs:
       logic: ${{ steps.filter.outputs.logic }}
       qa_contract: ${{ steps.filter.outputs.qa_contract }}
       observer: ${{ steps.filter.outputs.observer }}
+      version_contract: ${{ steps.filter.outputs.version_contract }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -52,6 +53,16 @@ jobs:
               - 'engine/ipc.py'
               - 'tests/test_web_observer_bridge.py'
               - 'tests/test_ipc_pubsub.py'
+              - '.github/workflows/test-lanes.yml'
+            version_contract:
+              - 'engine/deep_research/platform.py'
+              - 'engine/deep_research/logic.py'
+              - 'engine/deep_research/__init__.py'
+              - 'engine/deep_research/contract_versioning.md'
+              - 'tests/test_deep_research_tracks.py'
+              - 'tests/test_deep_research_replay_contracts.py'
+              - 'tests/fixtures/deep_research_contract_cases.json'
+              - '.github/workflows/test-lanes.yml'
 
   platform_tests:
     name: platform
@@ -230,13 +241,56 @@ jobs:
           name: lane-result-observer
           path: lane_result_observer.json
 
+  version_compatibility_tests:
+    name: version_compatibility_tests
+    runs-on: ubuntu-latest
+    needs: detect_changes
+    if: github.event_name != 'pull_request' || needs.detect_changes.outputs.version_contract == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest
+          pip install -e .
+
+      - name: Run deep research version compatibility lane
+        run: |
+          start_ts=$(date +%s)
+          set +e
+          PYTHONPATH=. pytest -q \
+            tests/test_deep_research_tracks.py \
+            tests/test_deep_research_replay_contracts.py
+          exit_code=$?
+          end_ts=$(date +%s)
+          duration=$((end_ts - start_ts))
+          status="success"
+          if [ "$exit_code" -ne 0 ]; then
+            status="failed"
+          fi
+          printf '{"lane":"version_compatibility_tests","status":"%s","runtime_seconds":%s}\n' "$status" "$duration" > lane_result_version_compatibility_tests.json
+          exit "$exit_code"
+
+      - name: Upload lane result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lane-result-version-compatibility
+          path: lane_result_version_compatibility_tests.json
+
   ci_lane_summary:
     runs-on: ubuntu-latest
     needs:
-      - platform_tests
-      - logic_tests
-      - qa_contract_tests
-      - observer_tests
+      - track_a_tests
+      - track_b_tests
+      - integration_observer_tests
+      - version_compatibility_tests
     if: always()
     steps:
       - name: Download lane artifacts
