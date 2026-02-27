@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # midicrt.py — CRT-style MIDI monitor / visualizer for Cirklon
 
-import os, sys, time, glob, importlib.util, subprocess, threading, re, argparse
+import os, sys, time, glob, importlib.util, subprocess, threading, re, argparse, json
 from configutil import load_section, save_section
 from inspect import signature
 from blessed import Terminal
@@ -132,6 +132,8 @@ IPC_SOCKET_PATH = "/tmp/midicrt.sock"
 IPC_PUBLISH_HZ = 20.0
 MODULE_OVERLOAD_COST_MS = 6.0
 MODULE_POLICIES = {}
+AUTOCONNECT_FALLBACK_SOURCES = []
+AUTOCONNECT_FALLBACK_DESTINATIONS = []
 try:
     FPS = float(_core_cfg.get("fps", FPS))
     HEADER_SCROLL_SPEED = float(_core_cfg.get("header_scroll_speed", HEADER_SCROLL_SPEED))
@@ -142,6 +144,13 @@ try:
     _mod_cfg = _core_cfg.get("module_scheduler", {}) if isinstance(_core_cfg.get("module_scheduler", {}), dict) else {}
     MODULE_OVERLOAD_COST_MS = float(_mod_cfg.get("overload_cost_ms", MODULE_OVERLOAD_COST_MS))
     MODULE_POLICIES = _mod_cfg.get("modules", {}) if isinstance(_mod_cfg.get("modules", {}), dict) else {}
+    _autoc_cfg = _core_cfg.get("autoconnect", {}) if isinstance(_core_cfg.get("autoconnect", {}), dict) else {}
+    _fallback_sources = _autoc_cfg.get("fallback_sources", [])
+    _fallback_dests = _autoc_cfg.get("fallback_destinations", [])
+    if isinstance(_fallback_sources, list):
+        AUTOCONNECT_FALLBACK_SOURCES = [str(v).strip() for v in _fallback_sources if str(v).strip()]
+    if isinstance(_fallback_dests, list):
+        AUTOCONNECT_FALLBACK_DESTINATIONS = [str(v).strip() for v in _fallback_dests if str(v).strip()]
 except Exception:
     pass
 if not isinstance(MODULE_POLICIES.get("legacy.event_shim"), dict):
@@ -158,6 +167,10 @@ try:
         "module_scheduler": {
             "overload_cost_ms": float(MODULE_OVERLOAD_COST_MS),
             "modules": dict(MODULE_POLICIES),
+        },
+        "autoconnect": {
+            "fallback_sources": list(AUTOCONNECT_FALLBACK_SOURCES),
+            "fallback_destinations": list(AUTOCONNECT_FALLBACK_DESTINATIONS),
         },
     })
 except Exception:
@@ -793,6 +806,10 @@ def _ui_loop_body():
 # ---------------------------------------------------------------------
 _client_re = re.compile(r"^client\s+(\d+):\s+'([^']+)'")
 _port_re = re.compile(r"^\s+(\d+)\s+'([^']+)'")
+_connect_to_re = re.compile(r"^\s+Connecting To:\s*(.+)$")
+_connect_from_re = re.compile(r"^\s+Connected From:\s*(.+)$")
+_endpoint_re = re.compile(r"(\d+):(\d+)")
+_forced_pair_re = re.compile(r"^\s*(\d+:\d+)\s*->\s*(\d+:\d+)\s*$")
 
 
 def _log_autoconnect(msg: str):
@@ -856,6 +873,62 @@ def _parse_aconnect(flag: str):
     return entries
 
 
+def _parse_aconnect_edges():
+    """Return a set of existing sequencer connections as (src_id, dst_id)."""
+    try:
+        result = subprocess.run(
+            ["aconnect", "-l"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+        _log_autoconnect(f"[AutoConnect] Unable to run aconnect -l: {exc}")
+        return set()
+
+    edges = set()
+    current_client_id = None
+    current_port = None
+    for line in result.stdout.splitlines():
+        m_client = _client_re.match(line)
+        if m_client:
+            current_client_id = m_client.group(1)
+            current_port = None
+            continue
+        m_port = _port_re.match(line)
+        if m_port:
+            current_port = f"{current_client_id}:{m_port.group(1)}" if current_client_id else None
+            continue
+        if not current_port:
+            continue
+
+        m_to = _connect_to_re.match(line)
+        if m_to:
+            for dst_client, dst_port in _endpoint_re.findall(m_to.group(1)):
+                edges.add((current_port, f"{dst_client}:{dst_port}"))
+            continue
+        m_from = _connect_from_re.match(line)
+        if m_from:
+            for src_client, src_port in _endpoint_re.findall(m_from.group(1)):
+                edges.add((f"{src_client}:{src_port}", current_port))
+    return edges
+
+
+def _parse_forced_pairs(forced_env: str):
+    valid_pairs = []
+    rejected = []
+    for part in forced_env.split(","):
+        token = part.strip()
+        if not token:
+            continue
+        m = _forced_pair_re.match(token)
+        if not m:
+            rejected.append(token)
+            continue
+        valid_pairs.append((m.group(1), m.group(2)))
+    return valid_pairs, rejected
+
+
 def _find_matching_port(flag: str, hints):
     hints = [h.strip() for h in hints if h.strip()]
     if not hints:
@@ -898,34 +971,54 @@ def autoconnect_dynamic(target_port_name: str):
 
     outputs = _parse_aconnect("-o")
     inputs = _parse_aconnect("-i")
+    existing_edges = _parse_aconnect_edges()
 
-    def match_ports(entries, hints):
-        matches = []
+    def collect_candidates(entries, hints, fallbacks):
+        by_id = {}
+
+        def add_candidate(port_id, client_name, port_name, confidence, reason):
+            prev = by_id.get(port_id)
+            candidate = {
+                "id": port_id,
+                "client": client_name,
+                "port": port_name,
+                "confidence": confidence,
+                "reason": reason,
+            }
+            if prev is None or confidence > prev["confidence"]:
+                by_id[port_id] = candidate
+
         for client_id, client_name, port_id, port_name in entries:
-            text = f"{client_name} {port_name}".lower()
+            port_full = f"{client_id}:{port_id}"
+            client_lower = client_name.lower()
+            port_lower = port_name.lower()
             for hint in hints:
-                if hint.lower() in text:
-                    matches.append((f"{client_id}:{port_id}", client_name, port_name))
+                hint_lower = hint.lower()
+                if hint_lower == port_lower:
+                    add_candidate(port_full, client_name, port_name, 3, f"exact port-name match '{hint}'")
                     break
-        return matches
+                if hint_lower in client_lower:
+                    add_candidate(port_full, client_name, port_name, 2, f"client-name match '{hint}'")
+                    break
+        for fallback in fallbacks:
+            add_candidate(fallback, "Fallback", "Configured fallback", 1, "configured fallback")
 
-    src_matches = match_ports(outputs, src_hints)
-    dst_matches = match_ports(inputs, dst_hints)
+        return sorted(by_id.values(), key=lambda c: (-c["confidence"], c["id"]))
 
-    forced_pairs = []
+    src_candidates = collect_candidates(outputs, src_hints, AUTOCONNECT_FALLBACK_SOURCES)
+    dst_candidates = collect_candidates(inputs, dst_hints, AUTOCONNECT_FALLBACK_DESTINATIONS)
+
     forced_env = os.environ.get("MIDICRT_AUTOCONNECT_FORCE", "")
-    if forced_env:
-        for part in forced_env.split(","):
-            if "->" in part:
-                lhs, rhs = part.split("->", 1)
-                forced_pairs.append((lhs.strip(), rhs.strip()))
+    forced_pairs, rejected_pairs = _parse_forced_pairs(forced_env) if forced_env else ([], [])
+    for bad in rejected_pairs:
+        _log_autoconnect(f"[AutoConnect] Rejected malformed forced pair '{bad}' (expected N:M->N:M)")
 
-    if not src_matches:
+    if not [c for c in src_candidates if c["confidence"] > 1]:
         _log_autoconnect(f"[AutoConnect] Could not locate Cirklon output; hints: {src_hints}")
-    if not dst_matches:
+    if not [c for c in dst_candidates if c["confidence"] > 1]:
         _log_autoconnect(f"[AutoConnect] Could not locate monitor input; hints: {dst_hints}")
 
-    if not src_matches or not dst_matches:
+    if not src_candidates or not dst_candidates:
         if outputs:
             _log_autoconnect("[AutoConnect] Available outputs:")
             for client_id, client_name, port_id, port_name in outputs:
@@ -935,63 +1028,62 @@ def autoconnect_dynamic(target_port_name: str):
             for client_id, client_name, port_id, port_name in inputs:
                 _log_autoconnect(f"   {client_id}:{port_id}  {client_name} — {port_name}")
 
-    # Some RtMidi virtual ports only appear under -o; include them if needed.
-    if not dst_matches:
-        extra_dst = match_ports(outputs, dst_hints)
-        for entry in extra_dst:
-            if entry not in dst_matches:
-                dst_matches.append(entry)
-    for client_id, client_name, port_id, port_name in outputs:
-        if "rtmidi" in client_name.lower() or "greencrt" in client_name.lower():
-            entry = (f"{client_id}:{port_id}", client_name, port_name)
-            if entry not in dst_matches:
-                dst_matches.append(entry)
-
-    # Fallback guesses
-    fallback_sources = ["20:0"]
-    fallback_dests = ["128:0", "129:0", "130:0", "131:0"]
-
-    src_candidates = src_matches + [(fs, "Fallback", "Cirklon guess") for fs in fallback_sources]
-    dst_candidates = dst_matches + [(fd, "Fallback", "Monitor guess") for fd in fallback_dests]
-
-    # prepend forced pairs so they are attempted first
-    for src_id, dst_id in forced_pairs:
-        src_candidates.insert(0, (src_id, "Forced", "Source override"))
-        dst_candidates.insert(0, (dst_id, "Forced", "Destination override"))
-
-    def dedupe(seq):
-        seen = set()
-        result = []
-        for item in seq:
-            if item[0] in seen:
-                continue
-            seen.add(item[0])
-            result.append(item)
-        return result
-
-    src_candidates = dedupe(src_candidates)
-    dst_candidates = dedupe(dst_candidates)
+    summary = {
+        "forced_pairs": [{"src": src_id, "dst": dst_id} for src_id, dst_id in forced_pairs],
+        "rejected_forced": rejected_pairs,
+        "src_candidates": src_candidates,
+        "dst_candidates": dst_candidates,
+        "attempted": [],
+        "winning_pair": None,
+        "exhausted_reason": None,
+    }
 
     attempted = set()
 
     # If explicit forced pairs were supplied, try them first.
     for src_id, dst_id in forced_pairs:
-        if _connect_pair(src_id, dst_id):
+        if (src_id, dst_id) in existing_edges:
+            summary["winning_pair"] = {
+                "src": src_id,
+                "dst": dst_id,
+                "reason": "already connected (forced pair)",
+            }
+            summary["attempted"].append({"src": src_id, "dst": dst_id, "status": "already_connected", "reason": "forced pair"})
+            _log_autoconnect(f"[AutoConnect] Already connected {src_id} → {dst_id}; skipping connect call")
+            _log_autoconnect(f"[AutoConnect] Summary {json.dumps(summary, sort_keys=True)}")
+            return
+        summary["attempted"].append({"src": src_id, "dst": dst_id, "status": "attempted", "reason": "forced pair"})
+        if _connect_pair(src_id, dst_id, existing_edges):
+            summary["winning_pair"] = {"src": src_id, "dst": dst_id, "reason": "forced pair connected"}
+            _log_autoconnect(f"[AutoConnect] Summary {json.dumps(summary, sort_keys=True)}")
             return
         attempted.add((src_id, dst_id))
 
-    for src_id, src_client, src_port in src_candidates:
-        for dst_id, dst_client, dst_port in dst_candidates:
+    for src in src_candidates:
+        for dst in dst_candidates:
+            src_id = src["id"]
+            dst_id = dst["id"]
             key = (src_id, dst_id)
             if key in attempted:
                 continue
             attempted.add(key)
             _log_autoconnect(
-                f"[AutoConnect] Trying {src_client}:{src_port} ({src_id}) → {dst_client}:{dst_port} ({dst_id})"
+                f"[AutoConnect] Trying {src['client']}:{src['port']} ({src_id}) → {dst['client']}:{dst['port']} ({dst_id})"
             )
-            if _connect_pair(src_id, dst_id):
+            if key in existing_edges:
+                summary["attempted"].append({"src": src_id, "dst": dst_id, "status": "already_connected", "reason": f"{src['reason']} + {dst['reason']}"})
+                summary["winning_pair"] = {"src": src_id, "dst": dst_id, "reason": "already connected"}
+                _log_autoconnect(f"[AutoConnect] Already connected {src_id} → {dst_id}; skipping connect call")
+                _log_autoconnect(f"[AutoConnect] Summary {json.dumps(summary, sort_keys=True)}")
+                return
+            summary["attempted"].append({"src": src_id, "dst": dst_id, "status": "attempted", "reason": f"{src['reason']} + {dst['reason']}"})
+            if _connect_pair(src_id, dst_id, existing_edges):
+                summary["winning_pair"] = {"src": src_id, "dst": dst_id, "reason": f"{src['reason']} + {dst['reason']}"}
+                _log_autoconnect(f"[AutoConnect] Summary {json.dumps(summary, sort_keys=True)}")
                 return
 
+    summary["exhausted_reason"] = "no candidate pair connected"
+    _log_autoconnect(f"[AutoConnect] Summary {json.dumps(summary, sort_keys=True)}")
     _log_autoconnect("[AutoConnect] Exhausted attempts; please connect manually.")
 
 
@@ -1006,35 +1098,46 @@ def autoconnect_panic_output():
 
     outs = _parse_aconnect("-o")
     ins = _parse_aconnect("-i")
+    existing_edges = _parse_aconnect_edges()
 
-    def match_port(entries, hints):
+    def best_match(entries, hints):
         for hint in hints:
-            h = hint.lower()
+            hint_lower = hint.lower()
             for client_id, client_name, port_id, port_name in entries:
-                text = f"{client_name} {port_name}".lower()
-                if h in text:
-                    return f"{client_id}:{port_id}", client_name, port_name
-        return None, None, None
+                if hint_lower == port_name.lower():
+                    return f"{client_id}:{port_id}", client_name, port_name, "exact port-name match"
+        for hint in hints:
+            hint_lower = hint.lower()
+            for client_id, client_name, port_id, port_name in entries:
+                if hint_lower in client_name.lower():
+                    return f"{client_id}:{port_id}", client_name, port_name, "client-name match"
+        return None, None, None, None
 
-    src_id, src_client, src_port = match_port(outs, src_hints)
-    dst_id, dst_client, dst_port = match_port(ins, dst_hints)
+    src_id, src_client, src_port, src_reason = best_match(outs, src_hints)
+    dst_id, dst_client, dst_port, dst_reason = best_match(ins, dst_hints)
 
     if not src_id or not dst_id:
         _log_autoconnect(f"[Panic] Could not locate ports (src={src_id}, dst={dst_id})")
         return
 
-    try:
-        subprocess.run(["aconnect", src_id, dst_id], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        _log_autoconnect(f"[Panic] Connected {src_client}:{src_port} ({src_id}) → {dst_client}:{dst_port} ({dst_id})")
+    if (src_id, dst_id) in existing_edges:
+        _log_autoconnect(f"[Panic] Already connected {src_id} → {dst_id}; src={src_reason}, dst={dst_reason}")
         PANIC_AUTOCONNECT_DONE = True
-    except subprocess.CalledProcessError as exc:
-        err = exc.stderr.decode("utf-8", errors="ignore").strip()
-        if not err:
-            err = str(exc)
-        _log_autoconnect(f"[Panic] Connect failed for {src_id} → {dst_id}: {err}")
+        return
+
+    if _connect_pair(src_id, dst_id, existing_edges):
+        _log_autoconnect(f"[Panic] Connected {src_client}:{src_port} ({src_id}) → {dst_client}:{dst_port} ({dst_id}); src={src_reason}, dst={dst_reason}")
+        PANIC_AUTOCONNECT_DONE = True
+    else:
+        _log_autoconnect(f"[Panic] Connect failed for {src_id} → {dst_id}")
 
 
-def _connect_pair(src_id: str, dst_id: str) -> bool:
+def _connect_pair(src_id: str, dst_id: str, existing_edges=None) -> bool:
+    if existing_edges is None:
+        existing_edges = _parse_aconnect_edges()
+    if (src_id, dst_id) in existing_edges:
+        _log_autoconnect(f"[AutoConnect] Already connected {src_id} → {dst_id}; skipping.")
+        return True
     for attempt in range(5):
         try:
             subprocess.run(
@@ -1044,6 +1147,7 @@ def _connect_pair(src_id: str, dst_id: str) -> bool:
                 stderr=subprocess.PIPE,
             )
             _log_autoconnect(f"[AutoConnect] Connected {src_id} → {dst_id}.")
+            existing_edges.add((src_id, dst_id))
             return True
         except subprocess.CalledProcessError as exc:
             err = exc.stderr.decode("utf-8", errors="ignore").strip()

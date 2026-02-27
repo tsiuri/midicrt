@@ -162,6 +162,10 @@
           "interval_hz": 10.0
         }
       }
+    },
+    "autoconnect": {
+      "fallback_sources": [],
+      "fallback_destinations": []
     }
   },
   "panic": {
