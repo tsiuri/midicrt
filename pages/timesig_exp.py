@@ -4,7 +4,7 @@ PAGE_ID = 15
 PAGE_NAME = "TimeSig Exp"
 
 from midicrt import draw_line
-from ui.adapters import build_widget_from_legacy_draw
+from ui.model import PageLinesWidget
 try:
     import plugins.ztimesig_exp as ztimesig_exp
 except Exception:
@@ -14,45 +14,38 @@ except Exception:
 def draw(state):
     cols = state["cols"]
     y0 = state.get("y_offset", 3)
+    for idx, line in enumerate(_build_widget_lines(state)):
+        draw_line(y0 + idx, line[:cols])
 
-    draw_line(y0, f"--- {PAGE_NAME} ---".ljust(cols))
+
+def _build_widget_lines(_state):
+    lines = [f"--- {PAGE_NAME} ---"]
     if ztimesig_exp is None:
-        draw_line(y0 + 1, "(plugin unavailable)".ljust(cols))
-        return
-
+        return lines + ["(plugin unavailable)"]
     info = ztimesig_exp.get_timesig_exp()
     if not info:
-        draw_line(y0 + 1, "No lock yet".ljust(cols))
-        return
-
+        return lines + ["No lock yet"]
     labels = info.get("labels") or []
     conf = info.get("confidence", 0.0)
     events = info.get("events", 0)
     total = info.get("events_total", events)
     pending = info.get("pending")
     top = info.get("top")
-
-    if len(labels) == 1:
-        ts = labels[0]
-    else:
-        ts = " / ".join(labels)
-
-    line = f"Best: {ts}  conf:{conf:0.2f}  events:{events}/{total}"
-    draw_line(y0 + 1, line[:cols])
-
+    ts = labels[0] if len(labels) == 1 else " / ".join(labels)
+    lines.append(f"Best: {ts}  conf:{conf:0.2f}  events:{events}/{total}")
     if pending:
         pend = " / ".join(pending) if isinstance(pending, (list, tuple)) else str(pending)
-        draw_line(y0 + 2, f"Pending change: {pend}"[:cols])
+        lines.append(f"Pending change: {pend}")
     else:
-        draw_line(y0 + 2, "".ljust(cols))
-
-    draw_line(y0 + 4, "Top candidates:".ljust(cols))
+        lines.append("")
+    lines.extend(["", "Top candidates:"])
     if not top:
-        draw_line(y0 + 5, "(no data)".ljust(cols))
-        return
+        lines.append("(no data)")
+        return lines
     for i, (label, score) in enumerate(top[:3]):
-        draw_line(y0 + 5 + i, f"{i+1}) {label:<5}  score:{score:0.3f}"[:cols])
+        lines.append(f"{i+1}) {label:<5}  score:{score:0.3f}")
+    return lines
 
 
 def build_widget(state):
-    return build_widget_from_legacy_draw(draw, state, draw_line)
+    return PageLinesWidget(page_id=PAGE_ID, page_name=PAGE_NAME, lines=_build_widget_lines(state))

@@ -15,6 +15,7 @@ from ui.model import (
     MicrotimingHistogramWidget,
     ModuleHealthWidget,
     NotesWidget,
+    PageLinesWidget,
     PianoRollWidget,
     Segment,
     Spacer,
@@ -73,6 +74,8 @@ class TextRenderer:
             ]
         if isinstance(widget, NotesWidget):
             return widget.lines
+        if isinstance(widget, PageLinesWidget):
+            return [Line.plain(t) for t in widget.lines]
         if isinstance(widget, EventLogWidget):
             out = [Line.plain(widget.title), Line.plain(widget.filter_summary)]
             out.extend(Line.plain(e) for e in widget.entries)

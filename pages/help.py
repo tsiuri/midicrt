@@ -3,10 +3,16 @@ PAGE_ID = 0
 PAGE_NAME = "Help / Keys"
 
 from midicrt import draw_line
-from ui.adapters import build_widget_from_legacy_draw
+from ui.model import PageLinesWidget
 
 def draw(state):
-    lines = [
+    lines = _build_widget_lines(state)
+    for i, l in enumerate(lines):
+        draw_line(2 + i, l)
+
+
+def _build_widget_lines(_state):
+    return [
         "[0] Help / Keybindings",
         "1 - Notes view",
         "2 - MIDI Ports",
@@ -23,9 +29,7 @@ def draw(state):
         "0 - This help screen",
         "Q - Quit program",
     ]
-    for i, l in enumerate(lines):
-        draw_line(2 + i, l)
 
 
 def build_widget(state):
-    return build_widget_from_legacy_draw(draw, state, draw_line)
+    return PageLinesWidget(page_id=PAGE_ID, page_name=PAGE_NAME, lines=_build_widget_lines(state))

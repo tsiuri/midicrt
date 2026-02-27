@@ -54,6 +54,15 @@ class TextBlock(Widget):
 
 
 @dataclass(frozen=True)
+class PageLinesWidget(Widget):
+    """Generic structured page payload for non-captured page adapters."""
+
+    page_id: int
+    page_name: str
+    lines: List[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
 class Spacer(Widget):
     """Fixed number of blank rows."""
 
