@@ -9,8 +9,8 @@ import harmony as _harmony
 from midicrt import draw_line, INSTRUMENT_NAMES
 from plugins import polydisplay
 from plugins import zharmony
-from engine.page_contracts import build_legacy_page_view_contract
-from ui.view_contracts import lines_from_page_view_contract
+from engine.page_contracts import capture_legacy_page_view
+from ui.view_contracts import page_view_lines
 from ui.model import Line, NotesWidget
 
 term = midicrt.term
@@ -189,6 +189,5 @@ def draw(state):
 
 
 def build_widget(state):
-    payload = build_legacy_page_view_contract(draw, state, draw_line).as_dict()
-    lines = lines_from_page_view_contract(payload)
-    return NotesWidget(lines=[Line.plain(t) for t in lines])
+    payload = capture_legacy_page_view(draw, state, draw_line).to_dict()
+    return NotesWidget(lines=[Line.plain(t) for t in page_view_lines(payload)])

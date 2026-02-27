@@ -4,7 +4,7 @@ PAGE_ID = 15
 PAGE_NAME = "TimeSig Exp"
 
 from midicrt import draw_line
-from pages.legacy_contract_bridge import build_widget_from_contract
+from pages.legacy_contract_bridge import build_widget_from_legacy_contract
 try:
     import plugins.ztimesig_exp as ztimesig_exp
 except Exception:
@@ -55,4 +55,4 @@ def draw(state):
 
 
 def build_widget(state):
-    return build_widget_from_contract(draw, state, draw_line)
+    return build_widget_from_legacy_contract(draw, state, draw_line)

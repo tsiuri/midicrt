@@ -7,7 +7,7 @@ from collections import deque
 import time
 from blessed import Terminal
 from midicrt import draw_line
-from pages.legacy_contract_bridge import build_widget_from_contract
+from pages.legacy_contract_bridge import build_widget_from_legacy_contract
 
 term = Terminal()
 
@@ -103,4 +103,4 @@ def draw(state):
 
 
 def build_widget(state):
-    return build_widget_from_contract(draw, state, draw_line)
+    return build_widget_from_legacy_contract(draw, state, draw_line)

@@ -4,7 +4,7 @@ PAGE_NAME = "CC Monitor"
 
 from midicrt import draw_line
 from collections import defaultdict, deque
-from pages.legacy_contract_bridge import build_widget_from_contract
+from pages.legacy_contract_bridge import build_widget_from_legacy_contract
 
 # Store last few CC messages per channel
 _recent_ccs = defaultdict(lambda: deque(maxlen=6))
@@ -33,4 +33,4 @@ def draw(state):
 
 
 def build_widget(state):
-    return build_widget_from_contract(draw, state, draw_line)
+    return build_widget_from_legacy_contract(draw, state, draw_line)

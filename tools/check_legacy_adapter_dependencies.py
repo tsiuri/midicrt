@@ -4,51 +4,50 @@ import ast
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-TARGETS = {"engine.adapters.legacy_page_events", "ui.adapters"}
-EXCLUDE = {
-    Path("tools/check_legacy_adapter_dependencies.py"),
-}
+FORBIDDEN = {"engine.adapters.legacy_page_events", "ui.adapters"}
+SELF = Path("tools/check_legacy_adapter_dependencies.py")
 
 
-def _iter_py_files() -> list[Path]:
-    return [p for p in ROOT.rglob("*.py") if ".venv" not in p.parts and p.relative_to(ROOT) not in EXCLUDE]
+def python_files() -> list[Path]:
+    return [
+        path for path in ROOT.rglob("*.py")
+        if ".git" not in path.parts and ".venv" not in path.parts and path.relative_to(ROOT) != SELF
+    ]
 
 
-def _imports_target(tree: ast.AST) -> list[str]:
+def scan_file(path: Path) -> list[str]:
     found: list[str] = []
+    tree = ast.parse(path.read_text(encoding="utf-8"))
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
                 name = alias.name
-                if name in TARGETS or any(name.startswith(f"{target}.") for target in TARGETS):
+                if name in FORBIDDEN or any(name.startswith(f"{item}.") for item in FORBIDDEN):
                     found.append(name)
         elif isinstance(node, ast.ImportFrom):
             module = node.module or ""
-            if module in TARGETS or any(module.startswith(f"{target}.") for target in TARGETS):
+            if module in FORBIDDEN or any(module.startswith(f"{item}.") for item in FORBIDDEN):
                 found.append(module)
     return found
 
 
 def main() -> int:
-    violations: list[tuple[Path, list[str]]] = []
-    for py_file in _iter_py_files():
-        rel = py_file.relative_to(ROOT)
-        if rel.as_posix().startswith(".git/"):
-            continue
+    violations: list[tuple[str, list[str]]] = []
+    for path in python_files():
+        rel = path.relative_to(ROOT)
         try:
-            tree = ast.parse(py_file.read_text(encoding="utf-8"))
+            imports = scan_file(path)
         except Exception:
             continue
-        found = _imports_target(tree)
-        if found:
-            violations.append((rel, found))
+        if imports:
+            violations.append((rel.as_posix(), sorted(set(imports))))
 
     if violations:
-        print("Found forbidden legacy adapter dependencies:")
-        for rel, mods in violations:
-            uniq = ", ".join(sorted(set(mods)))
-            print(f" - {rel}: {uniq}")
+        print("Forbidden legacy adapter dependencies found:")
+        for rel, imports in violations:
+            print(f" - {rel}: {', '.join(imports)}")
         return 1
+
     print("No forbidden legacy adapter dependencies found.")
     return 0
 

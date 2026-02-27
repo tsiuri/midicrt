@@ -7,7 +7,7 @@ import time
 import midicrt
 from midicrt import draw_line
 import plugins.zvoicemonitor as zvoice
-from pages.legacy_contract_bridge import build_widget_from_contract
+from pages.legacy_contract_bridge import build_widget_from_legacy_contract
 
 NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 
@@ -111,4 +111,4 @@ def draw(state):
 
 
 def build_widget(state):
-    return build_widget_from_contract(draw, state, draw_line)
+    return build_widget_from_legacy_contract(draw, state, draw_line)

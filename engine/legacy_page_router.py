@@ -6,8 +6,6 @@ from typing import Any, Callable
 
 @dataclass
 class LegacyPageRouter:
-    """Compatibility router for legacy page ``handle``/``on_tick`` hooks."""
-
     pages_provider: Callable[[], dict[int, Any]] | None = None
     current_page_provider: Callable[[], int] | None = None
     plugin_state_provider: Callable[[], dict[str, Any]] | None = None
@@ -19,7 +17,6 @@ class LegacyPageRouter:
     def route(self, event: dict[str, Any]) -> None:
         if not self.enabled or not callable(self.pages_provider):
             return
-
         pages = self.pages_provider()
         if not isinstance(pages, dict) or not pages:
             return
@@ -30,7 +27,6 @@ class LegacyPageRouter:
 
         if kind == "clock":
             self._route_background_ticks(pages, current_page)
-
         if msg is not None and kind in self._MIDI_BG_KINDS:
             self._route_midi_handlers(pages, current_page, msg)
 

@@ -5,9 +5,7 @@ from typing import Any, Callable
 
 
 @dataclass(frozen=True)
-class PageViewContract:
-    """Contract envelope for line-oriented page views produced by engine code."""
-
+class LegacyPageViewPayload:
     contract: str
     version: int
     page_id: int
@@ -16,7 +14,7 @@ class PageViewContract:
     y_offset: int
     lines: tuple[str, ...]
 
-    def as_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "contract": self.contract,
             "version": int(self.version),
@@ -40,32 +38,26 @@ class _LineCapture:
             self.lines[y_int] = str(text)[: self.cols]
 
 
-def _normalize_state(state: dict[str, Any]) -> tuple[int, int, int, int]:
+def capture_legacy_page_view(
+    draw_fn: Callable[[dict[str, Any]], None],
+    state: dict[str, Any],
+    draw_line_ref: Callable[[int, str], None],
+) -> LegacyPageViewPayload:
     cols = int(state.get("cols", 100))
     rows = int(state.get("rows", 30))
     y_offset = int(state.get("y_offset", 0))
     page_id = int(state.get("current_page", 0))
-    return cols, rows, y_offset, page_id
 
-
-def build_legacy_page_view_contract(
-    draw_fn: Callable[[dict[str, Any]], None],
-    state: dict[str, Any],
-    draw_line_ref: Callable[[int, str], None],
-) -> PageViewContract:
-    """Capture a legacy draw(state) page into an explicit contract payload."""
-
-    cols, rows, y_offset, page_id = _normalize_state(state)
     cap = _LineCapture(cols=cols, rows=rows)
     module_globals = draw_fn.__globals__
-    old = module_globals.get("draw_line", draw_line_ref)
+    old_draw_line = module_globals.get("draw_line", draw_line_ref)
     module_globals["draw_line"] = cap.draw_line
     try:
         draw_fn(state)
     finally:
-        module_globals["draw_line"] = old
+        module_globals["draw_line"] = old_draw_line
 
-    return PageViewContract(
+    return LegacyPageViewPayload(
         contract="legacy.page.view",
         version=1,
         page_id=page_id,

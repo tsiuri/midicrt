@@ -11,10 +11,11 @@ from engine.ipc import SnapshotPublisher
 from engine.modules import LegacyPluginModule, PianoRollViewModule
 from engine.modules.interfaces import ScreenSaverModule, UserActivityModule
 from engine.adapters.aconnect_parser import parse_aconnect_output
-from ui.model import Frame, Line, TextBlock
+from ui.model import Frame
 from ui.renderers.text import TextRenderer
-from engine.page_contracts import build_legacy_page_view_contract
-from ui.view_contracts import widget_from_page_view_contract
+from engine.page_contracts import capture_legacy_page_view
+from ui.view_contracts import widget_from_page_view
+from ui.model import Line, TextBlock
 
 # Ensure the running script is importable as `midicrt` so plugin/page imports do
 # not re-execute this module under a different name.
@@ -33,19 +34,19 @@ class _LegacyLineCapture:
             self.lines[y_int] = str(text)[: self.cols]
 
 
-def _legacy_widget_from_draw(draw_fn, state, draw_line_ref):
+def _widget_from_legacy_draw(draw_fn, state, draw_line_ref):
     cols = int(state.get("cols", 100))
     rows = int(state.get("rows", 30))
     y_offset = int(state.get("y_offset", 0))
-    cap = _LegacyLineCapture(cols, rows)
-    mod_globals = draw_fn.__globals__
-    old = mod_globals.get("draw_line", draw_line_ref)
-    mod_globals["draw_line"] = cap.draw_line
+    capture = _LegacyLineCapture(cols=cols, rows=rows)
+    module_globals = draw_fn.__globals__
+    old_draw_line = module_globals.get("draw_line", draw_line_ref)
+    module_globals["draw_line"] = capture.draw_line
     try:
         draw_fn(state)
     finally:
-        mod_globals["draw_line"] = old
-    return TextBlock(lines=[Line.plain(t) for t in cap.lines[y_offset:]])
+        module_globals["draw_line"] = old_draw_line
+    return TextBlock(lines=[Line.plain(text) for text in capture.lines[y_offset:]])
 
 term = Terminal()
 text_renderer = TextRenderer(term)
@@ -193,9 +194,9 @@ try:
     if isinstance(_fallback_dests, list):
         AUTOCONNECT_FALLBACK_DESTINATIONS = [str(v).strip() for v in _fallback_dests if str(v).strip()]
     _tempo_metrics_cfg = _core_cfg.get("tempo_metrics", {}) if isinstance(_core_cfg.get("tempo_metrics", {}), dict) else {}
-    _ff_cfg = _core_cfg.get("feature_flags", {}) if isinstance(_core_cfg.get("feature_flags", {}), dict) else {}
-    CORE_FEATURE_FLAGS["contract_page_views"] = bool(_ff_cfg.get("contract_page_views", CORE_FEATURE_FLAGS["contract_page_views"]))
-    CORE_FEATURE_FLAGS["contract_legacy_event_router"] = bool(_ff_cfg.get("contract_legacy_event_router", CORE_FEATURE_FLAGS["contract_legacy_event_router"]))
+    _feature_flags_cfg = _core_cfg.get("feature_flags", {}) if isinstance(_core_cfg.get("feature_flags", {}), dict) else {}
+    CORE_FEATURE_FLAGS["contract_page_views"] = bool(_feature_flags_cfg.get("contract_page_views", CORE_FEATURE_FLAGS["contract_page_views"]))
+    CORE_FEATURE_FLAGS["contract_legacy_event_router"] = bool(_feature_flags_cfg.get("contract_legacy_event_router", CORE_FEATURE_FLAGS["contract_legacy_event_router"]))
     TEMPO_METRICS_CFG = {
         "interval_window": max(2, int(_tempo_metrics_cfg.get("interval_window", TEMPO_METRICS_CFG["interval_window"]))),
         "baseline_window": max(2, int(_tempo_metrics_cfg.get("baseline_window", TEMPO_METRICS_CFG["baseline_window"]))),
@@ -734,10 +735,10 @@ def _ui_loop_body():
                     widget = page.build_widget(state)
                 elif hasattr(page, "draw"):
                     if CORE_FEATURE_FLAGS.get("contract_page_views", False):
-                        payload = build_legacy_page_view_contract(page.draw, state, draw_line).as_dict()
-                        widget = widget_from_page_view_contract(payload)
+                        payload = capture_legacy_page_view(page.draw, state, draw_line).to_dict()
+                        widget = widget_from_page_view(payload)
                     else:
-                        widget = _legacy_widget_from_draw(page.draw, state, draw_line)
+                        widget = _widget_from_legacy_draw(page.draw, state, draw_line)
                 else:
                     widget = None
                 if widget is None:

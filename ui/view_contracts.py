@@ -5,21 +5,20 @@ from typing import Any
 from ui.model import Column, Line, TextBlock, Widget
 
 
-def widget_from_page_view_contract(payload: dict[str, Any]) -> Widget:
-    """Convert a contract payload to a text widget."""
-
-    contract = str(payload.get("contract", ""))
-    if contract != "legacy.page.view":
-        return Column(children=[TextBlock(lines=[Line.plain(f"[view error] unsupported contract: {contract}")])])
-
-    return TextBlock(lines=[Line.plain(text) for text in lines_from_page_view_contract(payload)])
+LEGACY_PAGE_VIEW_CONTRACT = "legacy.page.view"
 
 
-def lines_from_page_view_contract(payload: dict[str, Any]) -> list[str]:
-    contract = str(payload.get("contract", ""))
-    if contract != "legacy.page.view":
+def page_view_lines(payload: dict[str, Any]) -> list[str]:
+    if str(payload.get("contract", "")) != LEGACY_PAGE_VIEW_CONTRACT:
         return []
     lines = payload.get("lines", [])
     if not isinstance(lines, list):
         return []
-    return [str(text) for text in lines]
+    return [str(line) for line in lines]
+
+
+def widget_from_page_view(payload: dict[str, Any]) -> Widget:
+    contract = str(payload.get("contract", ""))
+    if contract != LEGACY_PAGE_VIEW_CONTRACT:
+        return Column(children=[TextBlock(lines=[Line.plain(f"[view error] unsupported contract: {contract}")])])
+    return TextBlock(lines=[Line.plain(line) for line in page_view_lines(payload)])
