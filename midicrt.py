@@ -34,6 +34,9 @@ PANIC_DST_HINTS = [
         "USB MIDI Interface,USB MIDI,MIDI 1",
     ).split(",") if h.strip()
 ]
+PANIC_RETRY_ENABLE = True
+PANIC_RETRY_INTERVAL = 1.0
+PANIC_RETRY_INTERVAL_CAP = 30.0
 
 
 def _append_startup_log(message: str):
@@ -110,6 +113,13 @@ try:
         PANIC_DST_HINTS = [h.strip() for h in hints.split(",") if h.strip()]
     elif isinstance(hints, list):
         PANIC_DST_HINTS = [str(h).strip() for h in hints if str(h).strip()]
+    PANIC_RETRY_ENABLE = bool(_panic_cfg.get("retry_enable", PANIC_RETRY_ENABLE))
+    PANIC_RETRY_INTERVAL = float(_panic_cfg.get("retry_interval", PANIC_RETRY_INTERVAL))
+    PANIC_RETRY_INTERVAL_CAP = float(_panic_cfg.get("retry_interval_cap", PANIC_RETRY_INTERVAL_CAP))
+    if PANIC_RETRY_INTERVAL <= 0.0:
+        PANIC_RETRY_INTERVAL = 1.0
+    if PANIC_RETRY_INTERVAL_CAP < PANIC_RETRY_INTERVAL:
+        PANIC_RETRY_INTERVAL_CAP = PANIC_RETRY_INTERVAL
 except Exception:
     pass
 
@@ -167,6 +177,9 @@ try:
     save_section("panic", {
         "output_name": str(PANIC_OUTPUT_NAME),
         "dst_hints": list(PANIC_DST_HINTS),
+        "retry_enable": bool(PANIC_RETRY_ENABLE),
+        "retry_interval": float(PANIC_RETRY_INTERVAL),
+        "retry_interval_cap": float(PANIC_RETRY_INTERVAL_CAP),
     })
 except Exception:
     pass
@@ -999,7 +1012,7 @@ def autoconnect_panic_output():
     """Attempt to connect panic output port to USB MIDI out."""
     global PANIC_AUTOCONNECT_DONE
     if PANIC_AUTOCONNECT_DONE or not PANIC_OUT_VIRTUAL:
-        return
+        return "skipped"
 
     src_hints = [PANIC_OUTPUT_NAME]
     dst_hints = PANIC_DST_HINTS
@@ -1020,18 +1033,82 @@ def autoconnect_panic_output():
     dst_id, dst_client, dst_port = match_port(ins, dst_hints)
 
     if not src_id or not dst_id:
-        _log_autoconnect(f"[Panic] Could not locate ports (src={src_id}, dst={dst_id})")
-        return
+        return "missing_ports"
+
+    if _connection_exists(src_id, dst_id):
+        PANIC_AUTOCONNECT_DONE = True
+        return "already_connected"
 
     try:
         subprocess.run(["aconnect", src_id, dst_id], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        _log_autoconnect(f"[Panic] Connected {src_client}:{src_port} ({src_id}) → {dst_client}:{dst_port} ({dst_id})")
         PANIC_AUTOCONNECT_DONE = True
+        return "connected"
     except subprocess.CalledProcessError as exc:
         err = exc.stderr.decode("utf-8", errors="ignore").strip()
         if not err:
             err = str(exc)
-        _log_autoconnect(f"[Panic] Connect failed for {src_id} → {dst_id}: {err}")
+        return f"connect_failed:{err}"
+
+
+def _connection_exists(src_id: str, dst_id: str) -> bool:
+    """Check whether an ALSA MIDI source is already connected to destination."""
+    src_client, src_port = src_id.split(":", 1)
+    dst_client, dst_port = dst_id.split(":", 1)
+    current_client = None
+    current_port = None
+    try:
+        result = subprocess.run(["aconnect", "-l"], capture_output=True, text=True, check=True)
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return False
+
+    for line in result.stdout.splitlines():
+        m_client = _client_re.match(line)
+        if m_client:
+            current_client = m_client.group(1)
+            current_port = None
+            continue
+        m_port = _port_re.match(line)
+        if m_port:
+            current_port = m_port.group(1)
+            continue
+        if current_client != src_client or current_port != src_port:
+            continue
+        if "Connecting To:" not in line:
+            continue
+        for tgt_client, tgt_port in re.findall(r"(\d+):(\d+)", line):
+            if tgt_client == dst_client and tgt_port == dst_port:
+                return True
+    return False
+
+
+def _panic_autoconnect_retry_loop():
+    """Retry panic-output autoconnect until connected or shutdown requested."""
+    if PANIC_AUTOCONNECT_DONE or not PANIC_OUT_VIRTUAL or not PANIC_RETRY_ENABLE:
+        return
+
+    state = "disconnected"
+    delay = max(0.1, PANIC_RETRY_INTERVAL)
+    max_delay = max(delay, PANIC_RETRY_INTERVAL_CAP)
+    while not exit_flag and not PANIC_AUTOCONNECT_DONE:
+        result = autoconnect_panic_output()
+        if result in {"connected", "already_connected"}:
+            if state == "retrying":
+                _log_autoconnect("[Panic] retrying→connected")
+            elif state == "disconnected":
+                _log_autoconnect("[Panic] disconnected→connected")
+            state = "connected"
+            break
+
+        failed_connect = isinstance(result, str) and result.startswith("connect_failed:")
+        if result in {"missing_ports", "skipped"} or failed_connect:
+            if state == "disconnected":
+                _log_autoconnect("[Panic] disconnected→retrying")
+            state = "retrying"
+        time.sleep(delay)
+        delay = min(max_delay, delay * 2.0)
+
+    if state == "retrying" and not PANIC_AUTOCONNECT_DONE:
+        _log_autoconnect("[Panic] retrying→failed-final")
 
 
 def _connect_pair(src_id: str, dst_id: str) -> bool:
@@ -1260,6 +1337,7 @@ def main(profile="run_tui"):
                 target_name = "GreenCRT Monitor"
             autoconnect_dynamic(target_name)
         autoconnect_panic_output()
+        threading.Thread(target=_panic_autoconnect_retry_loop, daemon=True, name="panic-autoconnect-retry").start()
 
         threading.Thread(target=ui_loop, daemon=True).start()
         threading.Thread(target=keyboard_listener, daemon=True).start()
