@@ -93,7 +93,7 @@ class SnapshotBridgeTest(unittest.TestCase):
             {"snapshots": [{"schema_version": 4, "transport": {"tick": 5}}, None]},
         ]
 
-        bridge = SnapshotBridge("/tmp/test.sock", reconnect_delay_s=0.01)
+        bridge = SnapshotBridge("/tmp/test.sock", reconnect_backoff_min_s=0.01, reconnect_backoff_max_s=0.01, reconnect_backoff_base_s=0.01, reconnect_backoff_jitter_s=0.0)
         with mock.patch("web.observer.SnapshotClient", _FakeSnapshotClient):
             bridge.start()
             for _ in range(50):
@@ -113,7 +113,7 @@ class SnapshotBridgeTest(unittest.TestCase):
             {"snapshots": [{"schema_version": 4, "transport": {"tick": 11}}, None]},
         ]
 
-        bridge = SnapshotBridge("/tmp/test.sock", reconnect_delay_s=0.01)
+        bridge = SnapshotBridge("/tmp/test.sock", reconnect_backoff_min_s=0.01, reconnect_backoff_max_s=0.01, reconnect_backoff_base_s=0.01, reconnect_backoff_jitter_s=0.0)
         with mock.patch("web.observer.SnapshotClient", _FakeSnapshotClient):
             bridge.start()
             for _ in range(100):
@@ -125,8 +125,33 @@ class SnapshotBridgeTest(unittest.TestCase):
 
         self.assertGreaterEqual(seq, 2)
         self.assertEqual(snap["transport"]["tick"], 11)
-        self.assertGreaterEqual(meta["reconnect_attempts"], 1)
+        self.assertGreaterEqual(meta["successful_reconnects"], 1)
+        self.assertEqual(meta["consecutive_failures"], 0)
 
+
+
+    def test_reconnect_classifies_no_data_and_socket_errors(self):
+        _FakeSnapshotClient.plans = [
+            {"connect": OSError("down"), "snapshots": []},
+            {"snapshots": [None]},
+            {"snapshots": [{"schema_version": 4, "transport": {"tick": 15}}, None]},
+        ]
+
+        bridge = SnapshotBridge("/tmp/test.sock", reconnect_backoff_min_s=0.01, reconnect_backoff_max_s=0.01, reconnect_backoff_base_s=0.01, reconnect_backoff_jitter_s=0.0)
+        with mock.patch("web.observer.SnapshotClient", _FakeSnapshotClient):
+            bridge.start()
+            for _ in range(120):
+                seq, _snap, _meta = bridge.current()
+                if seq >= 1:
+                    break
+                asyncio.run(asyncio.sleep(0.01))
+            bridge.stop()
+
+        _seq, _snap, meta = bridge.current()
+        self.assertEqual(meta["last_error_code"], "no-data")
+        self.assertGreaterEqual(meta["total_failures"], 2)
+        self.assertEqual(meta["consecutive_failures"], 0)
+        self.assertIsNotNone(meta["last_successful_connect_ts"])
 
 class DashboardServerTest(unittest.IsolatedAsyncioTestCase):
     async def test_healthz_reports_bridge_meta_and_throttle(self):
@@ -134,7 +159,7 @@ class DashboardServerTest(unittest.IsolatedAsyncioTestCase):
         server.bridge.current = lambda: (
             3,
             {"schema_version": 4, "transport": {"tick": 10}},
-            {"connected": True, "reconnect_attempts": 2, "last_update_age_ms": 25.0},
+            {"connected": True, "consecutive_failures": 0, "total_failures": 2, "successful_reconnects": 1, "last_successful_connect_ts": 1700000000.0, "last_error_code": "", "last_update_age_ms": 25.0},
         )
         resp = await server._healthz(mock.Mock())
         payload = getattr(resp, "text", None)
@@ -145,7 +170,7 @@ class DashboardServerTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(data["ok"])
         self.assertEqual(data["seq"], 3)
         self.assertEqual(data["max_broadcast_hz"], 12.0)
-        self.assertEqual(data["bridge"]["reconnect_attempts"], 2)
+        self.assertEqual(data["bridge"]["total_failures"], 2)
         self.assertIn("telemetry", data)
 
     async def test_ws_initial_payload_includes_metrics(self):
@@ -153,7 +178,7 @@ class DashboardServerTest(unittest.IsolatedAsyncioTestCase):
         server.bridge.current = lambda: (
             7,
             {"schema_version": 4, "transport": {"tick": 77}},
-            {"connected": True, "reconnect_attempts": 0, "last_update_age_ms": 15.5},
+            {"connected": True, "consecutive_failures": 0, "total_failures": 0, "successful_reconnects": 0, "last_successful_connect_ts": 1700000000.0, "last_error_code": "", "last_update_age_ms": 15.5},
         )
 
         fake_ws = _FakeWS()
@@ -194,8 +219,8 @@ class DashboardServerTest(unittest.IsolatedAsyncioTestCase):
 
         seqs = iter(
             [
-                (1, {"schema_version": 4, "transport": {"tick": 1}}, {"connected": True, "last_update_age_ms": 4.0}),
-                (1, {"schema_version": 4, "transport": {"tick": 1}}, {"connected": True, "last_update_age_ms": 4.0}),
+                (1, {"schema_version": 4, "transport": {"tick": 1}}, {"connected": True, "consecutive_failures": 0, "total_failures": 0, "successful_reconnects": 0, "last_successful_connect_ts": 1700000000.0, "last_error_code": "", "last_update_age_ms": 4.0}),
+                (1, {"schema_version": 4, "transport": {"tick": 1}}, {"connected": True, "consecutive_failures": 0, "total_failures": 0, "successful_reconnects": 0, "last_successful_connect_ts": 1700000000.0, "last_error_code": "", "last_update_age_ms": 4.0}),
             ]
         )
         server.bridge.current = lambda: next(seqs)

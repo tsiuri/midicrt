@@ -34,6 +34,9 @@ PANIC_DST_HINTS = [
         "USB MIDI Interface,USB MIDI,MIDI 1",
     ).split(",") if h.strip()
 ]
+PANIC_RETRY_ENABLE = True
+PANIC_RETRY_INTERVAL = 1.0
+PANIC_RETRY_INTERVAL_CAP = 30.0
 
 
 def _append_startup_log(message: str):
@@ -110,6 +113,13 @@ try:
         PANIC_DST_HINTS = [h.strip() for h in hints.split(",") if h.strip()]
     elif isinstance(hints, list):
         PANIC_DST_HINTS = [str(h).strip() for h in hints if str(h).strip()]
+    PANIC_RETRY_ENABLE = bool(_panic_cfg.get("retry_enable", PANIC_RETRY_ENABLE))
+    PANIC_RETRY_INTERVAL = float(_panic_cfg.get("retry_interval", PANIC_RETRY_INTERVAL))
+    PANIC_RETRY_INTERVAL_CAP = float(_panic_cfg.get("retry_interval_cap", PANIC_RETRY_INTERVAL_CAP))
+    if PANIC_RETRY_INTERVAL <= 0.0:
+        PANIC_RETRY_INTERVAL = 1.0
+    if PANIC_RETRY_INTERVAL_CAP < PANIC_RETRY_INTERVAL:
+        PANIC_RETRY_INTERVAL_CAP = PANIC_RETRY_INTERVAL
 except Exception:
     pass
 
@@ -180,6 +190,9 @@ try:
     save_section("panic", {
         "output_name": str(PANIC_OUTPUT_NAME),
         "dst_hints": list(PANIC_DST_HINTS),
+        "retry_enable": bool(PANIC_RETRY_ENABLE),
+        "retry_interval": float(PANIC_RETRY_INTERVAL),
+        "retry_interval_cap": float(PANIC_RETRY_INTERVAL_CAP),
     })
 except Exception:
     pass
@@ -1091,7 +1104,7 @@ def autoconnect_panic_output():
     """Attempt to connect panic output port to USB MIDI out."""
     global PANIC_AUTOCONNECT_DONE
     if PANIC_AUTOCONNECT_DONE or not PANIC_OUT_VIRTUAL:
-        return
+        return "skipped"
 
     src_hints = [PANIC_OUTPUT_NAME]
     dst_hints = PANIC_DST_HINTS
@@ -1117,8 +1130,11 @@ def autoconnect_panic_output():
     dst_id, dst_client, dst_port, dst_reason = best_match(ins, dst_hints)
 
     if not src_id or not dst_id:
-        _log_autoconnect(f"[Panic] Could not locate ports (src={src_id}, dst={dst_id})")
-        return
+        return "missing_ports"
+
+    if _connection_exists(src_id, dst_id):
+        PANIC_AUTOCONNECT_DONE = True
+        return "already_connected"
 
     if (src_id, dst_id) in existing_edges:
         _log_autoconnect(f"[Panic] Already connected {src_id} → {dst_id}; src={src_reason}, dst={dst_reason}")
@@ -1364,6 +1380,7 @@ def main(profile="run_tui"):
                 target_name = "GreenCRT Monitor"
             autoconnect_dynamic(target_name)
         autoconnect_panic_output()
+        threading.Thread(target=_panic_autoconnect_retry_loop, daemon=True, name="panic-autoconnect-retry").start()
 
         threading.Thread(target=ui_loop, daemon=True).start()
         threading.Thread(target=keyboard_listener, daemon=True).start()
