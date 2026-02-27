@@ -7,7 +7,7 @@ import time
 import midicrt
 from midicrt import draw_line
 import plugins.zvoicemonitor as zvoice
-from ui.adapters import build_widget_from_legacy_draw
+from ui.model import PageLinesWidget
 
 NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 
@@ -110,5 +110,46 @@ def draw(state):
             draw_line(y0 + 12 + j, "".ljust(cols))
 
 
+def _build_widget_lines(state):
+    cols = int(state.get("cols", 95))
+    stats = zvoice.get_voice_stats()
+    total = stats.get("total", 0)
+    peak = stats.get("peak_total", 0)
+    per_ch = stats.get("per_ch", {})
+    peak_ch = stats.get("peak_ch", {})
+    per_ch_limits = stats.get("per_ch_limits", [zvoice.POLY_LIMIT_CH] * 16)
+    over_warn = stats.get("over_warned", {})
+    events = stats.get("events", [])
+    lines = [f"--- {PAGE_NAME} ---", f"Active total: {total}  Peak: {peak}  Limit global {zvoice.POLY_LIMIT_GLOBAL}"]
+    names = getattr(midicrt, "INSTRUMENT_NAMES", [f"Ch{c}" for c in range(1, 17)])
+    col_width = max(24, cols // 2)
+    for i in range(8):
+        ch_left, ch_right = i + 1, i + 9
+        left = _fmt_chan(ch_left, per_ch.get(ch_left, 0), per_ch_limits[ch_left - 1], col_width, names, peak=peak_ch.get(ch_left, 0), warn=over_warn.get(ch_left, False))
+        right = _fmt_chan(ch_right, per_ch.get(ch_right, 0), per_ch_limits[ch_right - 1], col_width, names, peak=peak_ch.get(ch_right, 0), warn=over_warn.get(ch_right, False)) if ch_right <= 16 else ""
+        lines.append((left + right)[:cols])
+    lines.append("Over-limit events:")
+    if not events:
+        lines.extend(["(none yet)", "", ""])
+    else:
+        now = time.time()
+        for i, ev in enumerate(events[:3]):
+            if len(ev) >= 9:
+                ts, ch, note, total_now, ch_now, ch_lim, hit_global, hit_ch, tag = ev
+            else:
+                ts, ch, note, total_now, ch_now, ch_lim, hit_global, hit_ch = ev
+                tag = "instant"
+            age = now - ts
+            name = names[ch - 1] if 0 < ch <= len(names) else f"Ch{ch}"
+            flags = []
+            if hit_global: flags.append("global")
+            if hit_ch: flags.append("ch")
+            if tag == "sustain": flags.append("sustain")
+            lines.append(f"{i+1}) {age:4.1f}s  CH{ch:02d} {name} {_fmt_note(note)}  total:{total_now} ch:{ch_now}/{ch_lim}  {','.join(flags) if flags else '-'}")
+        for _ in range(len(events), 3):
+            lines.append("")
+    return lines
+
+
 def build_widget(state):
-    return build_widget_from_legacy_draw(draw, state, draw_line)
+    return PageLinesWidget(page_id=PAGE_ID, page_name=PAGE_NAME, lines=_build_widget_lines(state))

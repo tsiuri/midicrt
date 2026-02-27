@@ -6,7 +6,7 @@ PAGE_NAME = "Chord+Key"
 from midicrt import draw_line
 from harmony import NOTE_NAMES, CHORDS
 import plugins.zharmony as zharmony
-from ui.adapters import build_widget_from_legacy_draw
+from ui.model import PageLinesWidget
 
 
 def _note_name(pc):
@@ -80,42 +80,37 @@ def _stable_key_lines(stable):
 
 
 def draw(state):
+    lines = _build_widget_lines(state)
     cols = state["cols"]
     y0 = state.get("y_offset", 3)
+    for idx, line in enumerate(lines):
+        draw_line(y0 + idx, line[:cols])
 
+
+def _build_widget_lines(_state):
     pcs = zharmony.get_recent_pcs()
     stable = zharmony.get_stable_key()
+    lines = [f"--- {PAGE_NAME} ---", f"Recent PCs: {_format_pcs(pcs)}", "Chord candidates:"]
 
-    draw_line(y0, f"--- {PAGE_NAME} ---".ljust(cols))
-    draw_line(y0 + 1, f"Recent PCs: {_format_pcs(pcs)}"[:cols])
-
-    draw_line(y0 + 2, "Chord candidates:".ljust(cols))
     chords = _chord_candidates(pcs)
     if not chords:
-        draw_line(y0 + 3, "(no chord match yet)".ljust(cols))
-        draw_line(y0 + 4, "".ljust(cols))
-        draw_line(y0 + 5, "".ljust(cols))
+        lines.extend(["(no chord match yet)", "", ""])
     else:
         for i, cand in enumerate(chords):
             miss = " ".join(_note_name(pc) for pc in cand["missing"]) or "-"
             pct = int(round(cand["ratio"] * 100))
-            line = f"{i+1}) {cand['label']}  {pct:3d}%  missing:{miss}"
-            draw_line(y0 + 3 + i, line[:cols])
-        for j in range(len(chords), 3):
-            draw_line(y0 + 3 + j, "".ljust(cols))
+            lines.append(f"{i+1}) {cand['label']}  {pct:3d}%  missing:{miss}")
+        for _ in range(len(chords), 3):
+            lines.append("")
 
-    yk = y0 + 7
-    draw_line(yk, "Stabilized key:".ljust(cols))
+    lines.append("")
+    lines.append("Stabilized key:")
     k1, k2 = _stable_key_lines(stable)
-    draw_line(yk + 1, k1[:cols])
-    draw_line(yk + 2, k2[:cols])
-
+    lines.extend([k1, k2])
     func = zharmony.get_last_function_label()
-    if func:
-        draw_line(yk + 3, f"Function: {func}"[:cols])
-    else:
-        draw_line(yk + 3, "Function: ?"[:cols])
+    lines.append(f"Function: {func}" if func else "Function: ?")
+    return lines
 
 
 def build_widget(state):
-    return build_widget_from_legacy_draw(draw, state, draw_line)
+    return PageLinesWidget(page_id=PAGE_ID, page_name=PAGE_NAME, lines=_build_widget_lines(state))

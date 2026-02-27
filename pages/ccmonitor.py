@@ -4,7 +4,7 @@ PAGE_NAME = "CC Monitor"
 
 from midicrt import draw_line
 from collections import defaultdict, deque
-from ui.adapters import build_widget_from_legacy_draw
+from ui.model import PageLinesWidget
 
 # Store last few CC messages per channel
 _recent_ccs = defaultdict(lambda: deque(maxlen=6))
@@ -16,21 +16,21 @@ def handle(msg):
 
 def draw(state):
     """Draw the CC summary table."""
+    lines = _build_widget_lines(state)
     y0 = int(state.get("y_offset", 3))
     cols = int(state.get("cols", 95))
-    draw_line(y0, f"--- {PAGE_NAME} ---"[:cols])
-    y = y0 + 1
+    for idx, line in enumerate(lines):
+        draw_line(y0 + idx, line[:cols])
+
+
+def _build_widget_lines(_state):
+    lines = [f"--- {PAGE_NAME} ---"]
     for ch in range(1, 17):
         events = list(_recent_ccs[ch])
-        if events:
-            # e.g., CC07:100 CC74:080 CC10:064
-            cc_str = "  ".join(f"CC{num:02d}:{val:03d}" for num, val in events[-6:])
-        else:
-            cc_str = ""
-        line = f"{ch:02d}  {cc_str}"
-        draw_line(y, line[:cols])
-        y += 1
+        cc_str = "  ".join(f"CC{num:02d}:{val:03d}" for num, val in events[-6:]) if events else ""
+        lines.append(f"{ch:02d}  {cc_str}")
+    return lines
 
 
 def build_widget(state):
-    return build_widget_from_legacy_draw(draw, state, draw_line)
+    return PageLinesWidget(page_id=PAGE_ID, page_name=PAGE_NAME, lines=_build_widget_lines(state))

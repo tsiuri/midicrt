@@ -129,8 +129,8 @@ frequency cap (`publish_hz`) still bounds outgoing snapshot rate.
 | 3 Transport | `TransportWidget` | ✅ | ✅ | ✅ | Structured fields (`running`, `bpm`, `bar`, `tick`, `time_signature`). |
 | 6 Event Log | `EventLogWidget` | ✅ | ✅ | ✅ | Structured title/filter/entries/marker contract. |
 | 8 Piano Roll | `PianoRollWidget` | ✅ | ✅ | ✅ | Primary parity target already migrated. |
-| Footer/Status | `FooterStatusWidget` | ✅ | ✅ | ✅ | Produced in main UI composition (`midicrt.py`) via `ui/composition.py`; rendered in `ui/renderers/text/renderer.py`, `ui/renderers/pixel.py`, and `fb/compositor_renderer.py`. |
-| Remaining pages | `TextBlock` via adapter | ✅ | ✅ | ✅ | `build_widget(state)` delegates to legacy `draw(state)` capture. |
+| Footer/Status | `FooterStatusWidget` | ✅ | ✅ | ✅ | Contract defined; integration in plugin/footer path pending. |
+| Remaining pages | `PageLinesWidget` | ✅ | ✅ | ✅ | Page widgets now emit structured lines without legacy draw-capture fallback. |
 
 ### Known parity gaps
 

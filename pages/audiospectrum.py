@@ -12,7 +12,7 @@ from math import log10
 from collections import deque
 from blessed import Terminal
 from midicrt import draw_line
-from ui.adapters import build_widget_from_legacy_draw
+from ui.model import PageLinesWidget
 
 term = Terminal()
 
@@ -702,5 +702,31 @@ def draw(state):
         _draw_bars(top, bottom, left, right, levels)
 
 
+def _build_widget_lines(state):
+    cols = int(state.get("cols", 95))
+    rows = int(state.get("rows", 30))
+    lines = [f"--- {PAGE_NAME} ---"]
+    if _error_msg:
+        return lines + [_error_msg, "Controls: [ ] bins, g/h gain, s/a smoothing"]
+    with _lock:
+        devs = list(_inputs)
+        idx = _device_index
+        levels = list(_last_levels) if _last_levels else [0.0] * max(8, min(_bins, cols - 2))
+    if not devs:
+        dev_txt = "(no inputs found)"
+    elif idx is None:
+        dev_txt = "default"
+    else:
+        j = max(0, min(idx, len(devs)-1)); dev_txt = f"{j+1}/{len(devs)} {devs[j][1]}"
+    lines.append(f"Input:{'OK' if _ready else '…'}  Dev:{dev_txt}  SR:{_sr}  Bins:{_bins}  Gain:{_gain_db:+.1f}dB  Smooth:{_smooth:.2f}")
+    lines.append(f"dB:{int(FLOOR_DB)}/{int(CEIL_DB)}  Disp:{DISPLAY_SCALE:.2f}  Freq:{_freq_scale}  Agg:{_agg_mode}  LC:{int(FMIN_HZ)}Hz  HPF:{'on' if HPF_ON else 'off'}  Auto:{'on' if _auto_adapt else 'off'}")
+    lines.extend(["Controls: [ ] bins  g/h gain  s/a smooth  j/k disp  z auto  Z reset", "          f/v floor  c/x ceil  l lin/log  m avg/max  n/N lowcut  p HPF", "          ,/. device  0 default  r refresh"])
+    height = max(1, rows - 11)
+    width = max(1, cols - 3)
+    rows_txt = _bar_rows(height, width, levels)
+    lines.extend((" " + r) for r in rows_txt)
+    return lines
+
+
 def build_widget(state):
-    return build_widget_from_legacy_draw(draw, state, draw_line)
+    return PageLinesWidget(page_id=PAGE_ID, page_name=PAGE_NAME, lines=_build_widget_lines(state))

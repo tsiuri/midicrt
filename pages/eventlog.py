@@ -9,7 +9,6 @@ from blessed import Terminal
 from midicrt import draw_line
 from configutil import load_section, save_section
 from ui.model import EventLogWidget
-from ui.adapters import build_widget_from_legacy_draw
 
 term = Terminal()
 
