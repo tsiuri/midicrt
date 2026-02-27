@@ -675,9 +675,17 @@ def _ui_loop_body():
 
         # --- HEADER (row 0) — scrolling marquee when wider than screen
         _now = time.time()
-        page_titles = "  ".join(
-            f"[{pid}:{p.PAGE_NAME}]" for pid, p in sorted(PAGES.items())
-        )
+        # page_titles only changes when PAGES changes (rare) — cache join + doubled string.
+        if not hasattr(ui_loop, "_header_title_str"):
+            ui_loop._header_title_str = ""
+            ui_loop._header_doubled = ""
+        page_titles = ui_loop._header_title_str
+        if page_titles != last_header or not page_titles:
+            page_titles = "  ".join(
+                f"[{pid}:{p.PAGE_NAME}]" for pid, p in sorted(PAGES.items())
+            )
+            ui_loop._header_title_str = page_titles
+            ui_loop._header_doubled = (page_titles + "    ") * 2
         if page_titles != last_header:
             last_header = page_titles
             _header_scroll_offset = 0.0
@@ -688,10 +696,8 @@ def _ui_loop_body():
             dt = _now - _header_scroll_last_time
             _header_scroll_offset += HEADER_SCROLL_SPEED * dt
             _header_scroll_last_time = _now
-            sep = "    "
-            full = page_titles + sep
-            offset = int(_header_scroll_offset) % len(full)
-            draw_line(0, (full * 2)[offset:offset + SCREEN_COLS])
+            offset = int(_header_scroll_offset) % (len(page_titles) + 4)
+            draw_line(0, ui_loop._header_doubled[offset:offset + SCREEN_COLS])
 
         # --- TRANSPORT (row 1)
         transport_widget = build_transport_widget(ui_snapshot)
@@ -825,7 +831,7 @@ def _ui_loop_body():
                     SCREEN_ROWS,
                     _plugin_draw_takes_state,
                 )
-                ui_loop._plugin_cache_next_t = now_plugins + (1.0 / 30.0)
+                ui_loop._plugin_cache_next_t = now_plugins + 0.1  # 10 Hz
             overlay_rows = compose_overlay_rows(
                 getattr(ui_loop, "_plugin_overlay_cache"),
                 cols=SCREEN_COLS,

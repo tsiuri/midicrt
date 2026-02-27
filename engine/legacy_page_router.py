@@ -13,6 +13,7 @@ class LegacyPageRouter:
     enabled: bool = True
 
     _MIDI_BG_KINDS = {"note_on", "note_off", "control_change", "program_change"}
+    _bg_tick_div: int = 0  # counts clock ticks; on_tick fired every 5th (~24 Hz at 300 BPM)
 
     def route(self, event: dict[str, Any]) -> None:
         if not self.enabled or not callable(self.pages_provider):
@@ -31,7 +32,9 @@ class LegacyPageRouter:
         current_page = int(self.current_page_provider() if callable(self.current_page_provider) else -1)
 
         if kind == "clock":
-            self._route_background_ticks(pages, current_page)
+            self._bg_tick_div = (self._bg_tick_div + 1) % 5
+            if self._bg_tick_div == 0:
+                self._route_background_ticks(pages, current_page)
         if msg is not None and kind in self._MIDI_BG_KINDS:
             self._route_midi_handlers(pages, current_page, msg)
 
