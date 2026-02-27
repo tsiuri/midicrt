@@ -1,15 +1,23 @@
 # CODEOWNERS for lane-aligned review routing.
-# Explicit lane roots are aligned with docs/parallel_dev_playbook.md.
+# Explicit lane roots aligned to docs/parallel_dev_playbook.md.
 
-/engine/               @tsiuri/platform-lane
-/pages/                @tsiuri/logic-lane
-/plugins/              @tsiuri/logic-lane
-/tests/                @tsiuri/qa-contract-lane
-/web/                  @tsiuri/observer-lane
-/docs/                 @tsiuri/qa-contract-lane
-/.github/workflows/    @tsiuri/platform-lane @tsiuri/qa-contract-lane
+# Platform lane
+/engine/                         @tsiuri/platform-lane
+/fb/                             @tsiuri/platform-lane
+/ui/                             @tsiuri/platform-lane
+/.github/workflows/              @tsiuri/platform-lane
 
-# Additional platform-owned runtime/plumbing roots from the playbook.
-/fb/                   @tsiuri/platform-lane
-/ui/                   @tsiuri/platform-lane
-/scripts/              @tsiuri/platform-lane
+# Logic lane
+/pages/                          @tsiuri/logic-lane
+/plugins/                        @tsiuri/logic-lane
+/engine/deep_research/logic.py   @tsiuri/logic-lane
+/tests/fixtures/                 @tsiuri/logic-lane
+
+# QA-contract lane
+/tests/                          @tsiuri/qa-contract-lane
+/.ci/                            @tsiuri/qa-contract-lane
+/docs/contracts/                 @tsiuri/qa-contract-lane
+
+# Observer lane
+/web/                            @tsiuri/observer-lane
+/scripts/run_web_observer.py     @tsiuri/observer-lane

@@ -46,3 +46,8 @@
   - <!-- links -->
 - Artifacts published for downstream lanes:
   - <!-- links -->
+
+
+## Governance gate verification
+- [ ] CODEOWNER reviewers requested.
+- [ ] All touched lane owners approved.
