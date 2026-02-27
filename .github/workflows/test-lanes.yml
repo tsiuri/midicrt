@@ -30,12 +30,16 @@ jobs:
               - 'tests/test_scheduler_overload.py'
               - 'tests/test_schema_contract.py'
               - 'tests/test_deep_research_replay_contracts.py'
+              - 'tests/test_deep_research_contract_compat.py'
+              - 'tools/check_deep_research_contract_rollout.py'
               - '.github/workflows/test-lanes.yml'
             track_b:
               - 'engine/deep_research/logic.py'
               - 'tests/fixtures/deep_research_sequences.json'
               - 'tests/test_deep_research_tracks.py'
+              - 'tests/test_deep_research_contract_compat.py'
               - 'tests/test_engine_replay_determinism.py'
+              - 'tools/check_deep_research_contract_rollout.py'
               - '.github/workflows/test-lanes.yml'
             observer:
               - 'web/**'
@@ -44,6 +48,37 @@ jobs:
               - 'tests/test_web_observer_bridge.py'
               - 'tests/test_ipc_pubsub.py'
               - '.github/workflows/test-lanes.yml'
+
+
+  deep_research_contract_guard:
+    name: deep_research_contract_guard
+    runs-on: ubuntu-latest
+    needs: detect_changes
+    if: github.event_name != 'pull_request' || needs.detect_changes.outputs.track_a == 'true' || needs.detect_changes.outputs.track_b == 'true'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Ensure origin/master is available
+        run: git fetch origin master --depth=1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest
+          pip install -e .
+
+      - name: Validate contract rollout declarations
+        run: python tools/check_deep_research_contract_rollout.py
+
+      - name: Run DeepResearch compatibility tests
+        run: PYTHONPATH=. pytest -q tests/test_deep_research_contract_compat.py
 
   track_a_tests:
     name: track_a_tests
@@ -178,6 +213,7 @@ jobs:
   ci_lane_summary:
     runs-on: ubuntu-latest
     needs:
+      - deep_research_contract_guard
       - track_a_tests
       - track_b_tests
       - integration_observer_tests
