@@ -6,14 +6,12 @@ PAGE_NAME = "Piano Roll Exp"
 import os
 import sys
 import time
-from uuid import uuid4
 
-import mido
 from blessed import Terminal
 
 from configutil import load_section, save_section
-from engine.memory import session_model
-from engine.memory.session_model import SessionModel, build_session_model
+from engine.memory.session_model import SessionModel
+import midicrt as mc
 from midicrt import draw_line
 from ui.model import Column, Line, PianoRollCell, PianoRollWidget, Spacer, TextBlock
 
@@ -59,123 +57,36 @@ _memory_mode = False
 _last_running = False
 _last_tick = 0
 
-_current_session = None
-_session_history = []
 _view_session_idx = -1
 _view_page_idx = 0
 _last_roll_cols = 16
-_session_export_seq = 0
 _memory_status = ""
+_view_session_id = ""
 
 
-def _project_root() -> str:
-    return os.path.dirname(os.path.dirname(__file__))
+def _engine():
+    eng = getattr(mc, "ENGINE", None)
+    return eng
 
 
-def _abs_export_dir() -> str:
-    out = _MEMORY_EXPORT_DIR
-    if os.path.isabs(out):
-        return out
-    return os.path.join(_project_root(), out)
-
-
-def _new_session(start_tick: int, bpm: float) -> SessionModel:
-    session = build_session_model(
-        session_id=f"pianoroll-exp-{uuid4().hex[:12]}",
-        start_tick=int(start_tick),
-        bpm=float(bpm if bpm > 0 else 120.0),
-        ppqn=24,
-    )
-    session.start_time = time.time()
-    session.stop_time = None
-    return session
-
-
-def _append_session(session: SessionModel) -> None:
-    global _session_history
-    _session_history.append(session)
-    max_keep = max(1, int(_MEMORY_MAX_SESSIONS))
-    if len(_session_history) > max_keep:
-        _session_history = _session_history[-max_keep:]
-
-
-def _close_active_note(session: SessionModel, ch: int, note: int, end_tick: int, emit_synth_off: bool) -> None:
-    session.close_active_note(channel=int(ch), note=int(note), end_tick=int(end_tick), emit_synth_off=bool(emit_synth_off))
-
-
-def _flush_active_notes(session: SessionModel, end_tick: int, emit_synth_off: bool = True) -> None:
-    session.flush_active_notes(end_tick=int(end_tick), emit_synth_off=bool(emit_synth_off))
-
-
-def _export_session_midi(session: SessionModel) -> str | None:
-    events = list(session.events or [])
-    if not events:
-        return None
-
-    midi = mido.MidiFile(ticks_per_beat=480)
-    track = mido.MidiTrack()
-    midi.tracks.append(track)
-
-    bpm = float(session.header.bpm or 120.0)
-    track.append(mido.MetaMessage("set_tempo", tempo=int(mido.bpm2tempo(bpm)), time=0))
-    track.append(mido.MetaMessage("track_name", name="midicrt pianoroll_exp", time=0))
-
-    ticks_per_clock = midi.ticks_per_beat / 24.0
-    start_tick = int(session.header.start_tick)
-
-    indexed = list(events)
-    indexed.sort(key=lambda ev: (int(ev.tick), int(ev.seq)))
-
-    prev = 0
-    for event in indexed:
-        rel = max(0, int((int(event.tick) - start_tick) * ticks_per_clock))
-        delta = max(0, rel - prev)
-        prev = rel
-        try:
-            msg = session_model.to_mido_message(event)
-            if msg is not None:
-                track.append(msg.copy(time=delta))
-        except Exception:
-            pass
-
-    out_dir = _abs_export_dir()
-    os.makedirs(out_dir, exist_ok=True)
-
-    global _session_export_seq
-    _session_export_seq += 1
-    stamp = time.strftime("%Y%m%d-%H%M%S")
-    out_path = os.path.join(out_dir, f"pianoroll-exp-{stamp}-{_session_export_seq:04d}.mid")
+def _memory_list() -> list[dict]:
+    eng = _engine()
+    if eng is None:
+        return []
     try:
-        midi.save(out_path)
-        return out_path
+        return eng.memory_list()
+    except Exception:
+        return []
+
+
+def _memory_get(session_id: str) -> SessionModel | None:
+    eng = _engine()
+    if eng is None:
+        return None
+    try:
+        return eng.memory_get(session_id)
     except Exception:
         return None
-
-
-def _begin_session(tick_now: int, bpm_now: float) -> None:
-    global _current_session, _memory_status
-    if _current_session is not None:
-        _finalize_session(tick_now)
-    _current_session = _new_session(start_tick=tick_now, bpm=bpm_now)
-    _memory_status = "REC"
-
-
-def _finalize_session(tick_now: int) -> None:
-    global _current_session, _view_session_idx, _view_page_idx, _memory_status
-    if _current_session is None:
-        return
-    session = _current_session
-    _flush_active_notes(session, end_tick=tick_now, emit_synth_off=True)
-    session.header.stop_tick = int(max(int(tick_now), int(session.header.start_tick)))
-    session.stop_time = time.time()
-    out_path = _export_session_midi(session)
-    session.export_path = out_path
-    _append_session(session)
-    _view_session_idx = len(_session_history) - 1
-    _view_page_idx = max(0, _session_page_count(session, _roll_cols_from_screen_cols(100)) - 1)
-    _memory_status = f"saved:{os.path.basename(out_path)}" if out_path else "saved"
-    _current_session = None
-
 
 def _roll_cols_from_screen_cols(cols: int) -> int:
     return max(16, int(cols) - int(base.LEFT_MARGIN) - 2)
@@ -212,14 +123,24 @@ def _session_page_count(session: SessionModel, roll_cols: int) -> int:
 
 
 def _selected_session(running: bool) -> tuple[SessionModel | None, bool]:
-    global _view_session_idx
-    if running and _current_session is not None:
-        return _current_session, True
-    if not _session_history:
+    global _view_session_idx, _view_session_id
+    current = _memory_get("current")
+    if running and current is not None:
+        return current, True
+
+    sessions = _memory_list()
+    if not sessions:
+        _view_session_idx = -1
+        _view_session_id = ""
         return None, False
-    if _view_session_idx < 0 or _view_session_idx >= len(_session_history):
-        _view_session_idx = len(_session_history) - 1
-    return _session_history[_view_session_idx], False
+
+    ids = [str(item.get("id", "")) for item in sessions if str(item.get("id", ""))]
+    if _view_session_id and _view_session_id in ids:
+        _view_session_idx = ids.index(_view_session_id)
+    if _view_session_idx < 0 or _view_session_idx >= len(ids):
+        _view_session_idx = len(ids) - 1
+    _view_session_id = ids[_view_session_idx]
+    return _memory_get(_view_session_id), False
 
 
 def _build_layout_window(state: dict) -> tuple[int, int, int, int, int]:
@@ -428,6 +349,7 @@ def _build_memory_view(state: dict, build_grid: bool) -> dict:
     running = bool(state.get("running", False))
     tick_now = int(state.get("tick", _last_tick))
 
+    sessions_meta = _memory_list()
     session, live = _selected_session(running=running)
 
     timeline = " " * roll_cols
@@ -473,11 +395,11 @@ def _build_memory_view(state: dict, build_grid: bool) -> dict:
                 marks.append(" ")
         timeline = "".join(marks)
 
-        sess_pos = f"S{(_view_session_idx + 1) if (_view_session_idx >= 0) else len(_session_history)}"
+        sess_pos = f"S{(_view_session_idx + 1) if (_view_session_idx >= 0) else len(sessions_meta)}"
         if live:
             header_right = f"REC {sess_pos}  P{page_idx + 1}/{page_count}"
         else:
-            header_right = f"MEM {sess_pos}/{len(_session_history)}  P{page_idx + 1}/{page_count}"
+            header_right = f"MEM {sess_pos}/{len(sessions_meta)}  P{page_idx + 1}/{page_count}"
 
     cc_rows_cap = int(max(0.0, min(0.5, float(_CC_LANE_MAX_RATIO))) * float(total_rows))
     cc_rows_cap = max(0, cc_rows_cap)
@@ -548,7 +470,7 @@ def _build_memory_view(state: dict, build_grid: bool) -> dict:
 
     footer_left = (
         f"Range: {base._notename(base.pitch_low)}-{base._notename(base.pitch_high)}  "
-        f"T/col:{base.TICKS_PER_COL}  Active:{active_count}  Cols:{roll_cols}  Mem:{len(_session_history)}"
+        f"T/col:{base.TICKS_PER_COL}  Active:{active_count}  Cols:{roll_cols}  Mem:{len(sessions_meta)}"
     )
     if _memory_status:
         footer_left = f"{footer_left}  {_memory_status}"
@@ -616,99 +538,47 @@ def _view_to_widget(view: dict) -> Column:
 # Page hooks
 # -----------------------------------------------------------------------------
 def handle(msg):
-    global _memory_status
-
-    if not _memory_mode:
-        return base.handle(msg)
-
-    session = _current_session
-    if session is None:
-        return
-
-    kind = getattr(msg, "type", "")
-    if kind not in {"note_on", "note_off", "control_change", "program_change", "pitchwheel", "aftertouch", "polytouch"}:
-        return
-
-    abs_tick = int(_last_tick)
-    session.append_event_from_message(abs_tick, msg)
-
-    if kind == "note_on":
-        ch = int(getattr(msg, "channel", 0)) + 1
-        note = int(getattr(msg, "note", -1))
-        vel = int(getattr(msg, "velocity", 0))
-        if vel > 0:
-            _close_active_note(session, ch, note, end_tick=abs_tick, emit_synth_off=True)
-            session.active_notes[(ch, note)] = (abs_tick, vel)
-            session.recent_hits.append((note, ch, vel, time.time()))
-            if len(session.recent_hits) > 256:
-                session.recent_hits = session.recent_hits[-256:]
-        else:
-            # zero-velocity note_on closes active note per MIDI convention
-            _close_active_note(session, ch, note, end_tick=abs_tick, emit_synth_off=False)
-        return
-
-    if kind == "note_off":
-        ch = int(getattr(msg, "channel", 0)) + 1
-        note = int(getattr(msg, "note", -1))
-        _close_active_note(session, ch, note, end_tick=abs_tick, emit_synth_off=False)
-        return
-
-    if kind == "control_change" and int(getattr(msg, "control", -1)) == 123:
-        ch = int(getattr(msg, "channel", 0)) + 1
-        session.close_channel_active_notes(channel=ch, end_tick=abs_tick, emit_synth_off=True)
-        return
-
-    if kind == "control_change":
-        ch = int(getattr(msg, "channel", 0)) + 1
-        cc = int(getattr(msg, "control", -1))
-        value = int(getattr(msg, "value", 0))
-        session.cc_events.append((abs_tick, ch, cc, value, time.time()))
-        if len(session.cc_events) > 4096:
-            session.cc_events = session.cc_events[-4096:]
-        key = (int(ch), int(cc))
-        if key not in session.cc_order:
-            # New CCs claim the top slot; existing rows keep position.
-            session.cc_order.insert(0, key)
-            if len(session.cc_order) > 256:
-                del session.cc_order[256:]
-        return
+    return base.handle(msg)
 
 
 def on_tick(state):
-    global _last_running, _last_tick
+    global _last_running, _last_tick, _memory_status
 
     # keep baseline page-8 behavior/state hot in both modes
     base.on_tick(state)
 
     running = bool(state.get("running", False))
     tick_now = int(state.get("tick", _last_tick))
-    bpm_now = float(state.get("bpm", 120.0) or 120.0)
     _last_tick = tick_now
 
-    if _memory_mode:
-        if running and not _last_running:
-            _begin_session(tick_now=tick_now, bpm_now=bpm_now)
-        elif (not running) and _last_running:
-            _finalize_session(tick_now=tick_now)
-        if running and _current_session is not None:
-            _current_session.header.stop_tick = tick_now
+    status = {}
+    eng = _engine()
+    if eng is not None:
+        try:
+            status = eng.memory_status()
+        except Exception:
+            status = {}
+    if status.get("armed") and status.get("current_id"):
+        _memory_status = "REC"
+    elif _memory_mode:
+        _memory_status = "MEM mode"
 
     _last_running = running
 
 
 def keypress(ch):
-    global _memory_mode, _view_page_idx, _view_session_idx, _memory_status
+    global _memory_mode, _view_page_idx, _view_session_idx, _view_session_id, _memory_status
 
     s = str(ch)
     if s.lower() == _MEMORY_TOGGLE_KEY:
-        if _memory_mode:
-            if _current_session is not None:
-                _finalize_session(tick_now=_last_tick)
-            _memory_mode = False
+        eng = _engine()
+        if eng is not None:
+            try:
+                _memory_mode = bool(eng.memory_toggle())
+            except Exception:
+                _memory_mode = not _memory_mode
         else:
-            _memory_mode = True
-            if _last_running and _current_session is None:
-                _begin_session(tick_now=_last_tick, bpm_now=120.0)
+            _memory_mode = not _memory_mode
         _memory_status = "MEM mode" if _memory_mode else "LIVE mode"
         return True
 
@@ -717,36 +587,48 @@ def keypress(ch):
         return bool(base.keypress(ch))
 
     if _memory_mode and (not _last_running):
-        if _session_history:
-            if _view_session_idx < 0 or _view_session_idx >= len(_session_history):
-                _view_session_idx = len(_session_history) - 1
+        sessions = _memory_list()
+        if sessions:
+            ids = [str(item.get("id", "")) for item in sessions if str(item.get("id", ""))]
+            if _view_session_id in ids:
+                _view_session_idx = ids.index(_view_session_id)
+            elif _view_session_idx < 0 or _view_session_idx >= len(ids):
+                _view_session_idx = len(ids) - 1
+                _view_session_id = ids[_view_session_idx]
         if s == ",":
-            if not _session_history:
+            if not sessions:
                 return True
             cur = _view_session_idx
             if cur > 0:
                 cur -= 1
                 _view_session_idx = cur
-                prev_pages = max(1, _session_page_count(_session_history[cur], _last_roll_cols))
-                _view_page_idx = min(max(0, int(_view_page_idx)), prev_pages - 1)
+                _view_session_id = str(sessions[cur].get("id", ""))
+                prev_session = _memory_get(_view_session_id)
+                if prev_session is not None:
+                    prev_pages = max(1, _session_page_count(prev_session, _last_roll_cols))
+                    _view_page_idx = min(max(0, int(_view_page_idx)), prev_pages - 1)
             return True
         if s == ".":
-            if not _session_history:
+            if not sessions:
                 return True
             cur = _view_session_idx
-            if cur < (len(_session_history) - 1):
+            if cur < (len(sessions) - 1):
                 _view_session_idx = cur + 1
-                next_pages = max(1, _session_page_count(_session_history[_view_session_idx], _last_roll_cols))
-                _view_page_idx = min(max(0, int(_view_page_idx)), next_pages - 1)
+                _view_session_id = str(sessions[_view_session_idx].get("id", ""))
+                next_session = _memory_get(_view_session_id)
+                if next_session is not None:
+                    next_pages = max(1, _session_page_count(next_session, _last_roll_cols))
+                    _view_page_idx = min(max(0, int(_view_page_idx)), next_pages - 1)
             return True
         if ch.is_sequence and ch.name == "KEY_LEFT":
             _view_page_idx = max(0, int(_view_page_idx) - 1)
             return True
         if ch.is_sequence and ch.name == "KEY_RIGHT":
-            if _session_history:
-                cur = _view_session_idx
-                page_count = max(1, _session_page_count(_session_history[cur], _last_roll_cols))
-                _view_page_idx = min(page_count - 1, int(_view_page_idx) + 1)
+            if sessions and _view_session_id:
+                current_session = _memory_get(_view_session_id)
+                if current_session is not None:
+                    page_count = max(1, _session_page_count(current_session, _last_roll_cols))
+                    _view_page_idx = min(page_count - 1, int(_view_page_idx) + 1)
             return True
 
     # Fall back to normal piano-roll controls (range pan, style toggle, visibility, etc.)
