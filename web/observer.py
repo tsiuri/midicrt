@@ -216,6 +216,53 @@ class DashboardServer:
             }
         )
 
+
+
+    @staticmethod
+    def _observer_views(snapshot: dict[str, Any]) -> dict[str, Any]:
+        views = snapshot.get("views") if isinstance(snapshot.get("views"), dict) else {}
+        diagnostics = snapshot.get("diagnostics") if isinstance(snapshot.get("diagnostics"), dict) else {}
+        transport = snapshot.get("transport") if isinstance(snapshot.get("transport"), dict) else {}
+
+        tempo_quality = views.get("tempo_quality") if isinstance(views.get("tempo_quality"), dict) else {}
+        microtiming = views.get("microtiming") if isinstance(views.get("microtiming"), dict) else {}
+        capture_status = views.get("capture_status") if isinstance(views.get("capture_status"), dict) else {}
+        module_health = views.get("module_health") if isinstance(views.get("module_health"), dict) else {}
+
+        scheduler = diagnostics.get("scheduler") if isinstance(diagnostics.get("scheduler"), dict) else {}
+        cards = module_health.get("cards") if isinstance(module_health.get("cards"), list) else []
+        if not cards:
+            overloaded = scheduler.get("overloaded_modules") if isinstance(scheduler.get("overloaded_modules"), list) else []
+            cards = [
+                {"name": str(name), "status": "warn", "latency_ms": 0.0, "drop_rate": 0.0, "detail": "overloaded"}
+                for name in overloaded
+            ]
+
+        return {
+            "tempo_quality": {
+                "bpm": float(tempo_quality.get("bpm", transport.get("bpm", 0.0)) or 0.0),
+                "confidence": float(tempo_quality.get("confidence", transport.get("confidence", 0.0)) or 0.0),
+                "stability": float(tempo_quality.get("stability", 0.0) or 0.0),
+                "lock_state": str(tempo_quality.get("lock_state", "unlocked")),
+                "meter": str(tempo_quality.get("meter", transport.get("meter_estimate", ""))),
+            },
+            "microtiming": {
+                "title": str(microtiming.get("title", "Microtiming")),
+                "buckets": microtiming.get("buckets", []),
+                "total_samples": int(microtiming.get("total_samples", 0) or 0),
+            },
+            "capture_status": {
+                "armed": bool(capture_status.get("armed", False)),
+                "state": str(capture_status.get("state", "idle")),
+                "target_path": str(capture_status.get("target_path", "")),
+                "last_commit": str(capture_status.get("last_commit", "")),
+                "last_commit_age_s": capture_status.get("last_commit_age_s"),
+            },
+            "module_health": {
+                "cards": cards,
+            },
+        }
+
     def _payload_for(
         self,
         seq: int,
@@ -244,6 +291,7 @@ class DashboardServer:
             },
             "deep_research": deep_meta,
             "schema_health": self._schema_health(snapshot, bridge_meta),
+            "observer_views": self._observer_views(snapshot),
             "read_only": {
                 "mutation_endpoints": [],
                 "command_execution_paths": [],
