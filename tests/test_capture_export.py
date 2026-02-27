@@ -5,7 +5,16 @@ import sys
 import tempfile
 import types
 import unittest
+import typing
 from unittest import mock
+
+if not hasattr(typing, "NotRequired"):
+    try:
+        from typing_extensions import NotRequired as _NotRequired
+
+        typing.NotRequired = _NotRequired
+    except Exception:  # pragma: no cover
+        typing.NotRequired = object
 
 try:
     import mido
@@ -134,6 +143,48 @@ class CaptureExportTest(unittest.TestCase):
             msg_notes = [m for m in midi.tracks[0] if not m.is_meta]
             self.assertEqual([m.note for m in msg_notes], [64, 64])
 
+    def test_commit_last_bars_uses_bar_aligned_window(self):
+        payload = json.loads(FIXTURE.read_text())
+        with tempfile.TemporaryDirectory() as tmp:
+            eng = self._engine(tmp)
+            for ev in payload["capture_events"]:
+                msg = mido.Message.from_bytes(ev["bytes"])
+                eng._capture_events.append(
+                    {
+                        "timestamp": ev["timestamp"],
+                        "beat_tick": ev["beat_tick"],
+                        "kind": ev["kind"],
+                        "msg": msg,
+                    }
+                )
+            with eng._lock:
+                eng.state.tick_counter = payload["tick_now"]
+                eng.state.bpm = payload["bpm"]
+
+            with mock.patch("engine.core.time.strftime", return_value="20260101-120000"), mock.patch(
+                "engine.core.time.time", return_value=payload["now"]
+            ):
+                ok, _message, path = eng.capture_recent_to_file(
+                    bars=payload["bars"],
+                    trigger="commit",
+                    bar_aligned=True,
+                )
+
+            self.assertTrue(ok)
+            midi = mido.MidiFile(path)
+            actual = [
+                {
+                    "type": m.type,
+                    "channel": getattr(m, "channel", None),
+                    "note": getattr(m, "note", None),
+                    "velocity": getattr(m, "velocity", None),
+                    "time": m.time,
+                }
+                for m in midi.tracks[0]
+                if not m.is_meta
+            ]
+            self.assertEqual(actual, payload["expected_messages_bar_aligned"])
+
     def test_deterministic_export_from_fixture_replay(self):
         payload = json.loads(FIXTURE.read_text())
         with tempfile.TemporaryDirectory() as tmp:
@@ -173,6 +224,12 @@ class CaptureExportTest(unittest.TestCase):
                 if not m.is_meta
             ]
             self.assertEqual(actual, payload["expected_messages"])
+            snap = eng.get_snapshot()["schema"]
+            meta = snap["retrospective_capture"]["capture_metadata"]
+            self.assertEqual(meta["event_count"], len(payload["expected_messages"]))
+            self.assertEqual(meta["quantization_mode"], "none")
+            self.assertEqual(meta["export_path"], path)
+            self.assertEqual(meta["effective_tempo_map_segment"]["bpm"], payload["bpm"])
 
 
 if __name__ == "__main__":
