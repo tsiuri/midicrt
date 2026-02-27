@@ -141,6 +141,28 @@ def validate_deep_research_sequence_fixture(case: dict[str, Any], fixture_path: 
                     f"{fixture_path.name}: expected.chord_candidates[{index}].{optional} must be a string"
                 )
 
+
+    time_signature = expected.get("time_signature")
+    if not isinstance(time_signature, dict):
+        raise FixtureValidationError(f"{fixture_path.name}: expected.time_signature must be an object")
+    if not isinstance(time_signature.get("current_signature"), str):
+        raise FixtureValidationError(
+            f"{fixture_path.name}: expected.time_signature.current_signature must be a string"
+        )
+    if not isinstance(time_signature.get("confidence"), (int, float)):
+        raise FixtureValidationError(
+            f"{fixture_path.name}: expected.time_signature.confidence must be numeric"
+        )
+    if not isinstance(time_signature.get("stability_window"), int):
+        raise FixtureValidationError(
+            f"{fixture_path.name}: expected.time_signature.stability_window must be an int"
+        )
+    pending_change = time_signature.get("pending_change")
+    if pending_change is not None and not isinstance(pending_change, str):
+        raise FixtureValidationError(
+            f"{fixture_path.name}: expected.time_signature.pending_change must be a string or null"
+        )
+
     key_estimate = expected.get("key_estimate")
     if key_estimate is not None:
         if not isinstance(key_estimate, dict):

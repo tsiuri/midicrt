@@ -39,12 +39,20 @@ except ModuleNotFoundError:  # pragma: no cover - local fallback for offline env
     sys.modules["mido"] = mido
 
 from engine.core import MidiEngine
+from engine.deep_research import build_contract, run_research
 from engine.state.schema import normalize_deep_research_payload
 from ui.client import normalize_snapshot
 
 
 REPLAY_FIXTURE = pathlib.Path(__file__).parent / "fixtures" / "capture_replay.json"
 CONTRACT_FIXTURE = pathlib.Path(__file__).parent / "fixtures" / "deep_research_contract_cases.json"
+
+SEQUENCE_FIXTURE_DIR = pathlib.Path(__file__).parent / "fixtures" / "deep_research_sequences"
+METER_CHANGE_SEQUENCE_FIXTURES = [
+    "transport_tick_meter_change_stable_44.json",
+    "transport_tick_meter_change_pending_78.json",
+    "transport_tick_meter_change_committed_78.json",
+]
 
 
 class _UiClockProbe:
@@ -206,6 +214,33 @@ class DeepResearchReplayContractsTest(unittest.TestCase):
                 self.assertEqual(has_deep, case["expect_has_deep_research"])
                 if has_deep:
                     self.assertEqual(normalized["deep_research"]["version"], case["expected_version"])
+
+    def test_meter_change_sequence_validates_stability_and_pending_change(self):
+        observed = []
+        for fixture_name in METER_CHANGE_SEQUENCE_FIXTURES:
+            fixture = json.loads((SEQUENCE_FIXTURE_DIR / fixture_name).read_text())
+            snapshot = {
+                "schema": {
+                    "schema_version": fixture["schema_version"],
+                    "timestamp": 222.0,
+                    "transport": fixture["transport"],
+                    "active_notes": fixture["active_notes"],
+                    "module_outputs": {},
+                }
+            }
+            contract = build_contract(snapshot, fixture["event"])
+            observed.append(run_research(contract)["time_signature"])
+
+        self.assertEqual(observed[0]["current_signature"], "4/4")
+        self.assertIsNone(observed[0]["pending_change"])
+        self.assertGreater(observed[0]["stability_window"], observed[1]["stability_window"])
+
+        self.assertEqual(observed[1]["current_signature"], "4/4")
+        self.assertEqual(observed[1]["pending_change"], "7/8")
+
+        self.assertEqual(observed[2]["current_signature"], "7/8")
+        self.assertIsNone(observed[2]["pending_change"])
+        self.assertGreater(observed[2]["stability_window"], observed[1]["stability_window"])
 
     def test_schema_contract_validation_for_deep_research_fields(self):
         fixture = json.loads(CONTRACT_FIXTURE.read_text())

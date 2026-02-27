@@ -76,6 +76,12 @@
         "median_offset": 0.0
       },
       "per_channel": {}
+    },
+    "time_signature": {
+      "current_signature": "4/4",
+      "confidence": 0.0,
+      "stability_window": 0,
+      "pending_change": null
     }
   }
 }

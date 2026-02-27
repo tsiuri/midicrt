@@ -22,6 +22,7 @@ class ResearchResult:
     chord_candidates: list[dict[str, Any]]
     key_estimate: dict[str, Any] | None
     microtiming: dict[str, Any]
+    time_signature: dict[str, Any]
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -31,6 +32,7 @@ class ResearchResult:
             "chord_candidates": self.chord_candidates,
             "key_estimate": self.key_estimate,
             "microtiming": self.microtiming,
+            "time_signature": self.time_signature,
         }
 
 
@@ -277,6 +279,130 @@ def _compute_microtiming(transport: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _as_signature(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    label = value.strip()
+    if "/" not in label:
+        return None
+    beats, denom = label.split("/", 1)
+    if not beats.isdigit() or not denom.isdigit():
+        return None
+    return f"{int(beats)}/{int(denom)}"
+
+
+def _as_positive_int(value: Any) -> int:
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, (int, float)):
+        return max(0, int(value))
+    return 0
+
+
+def _extract_timesig_candidate(payload: Any) -> dict[str, Any] | None:
+    if not isinstance(payload, dict):
+        return None
+
+    current = _as_signature(payload.get("current_signature"))
+    if current is None:
+        for field in ("signature", "meter_estimate", "label"):
+            current = _as_signature(payload.get(field))
+            if current:
+                break
+    if current is None:
+        labels = payload.get("labels")
+        if isinstance(labels, list):
+            for label in labels:
+                current = _as_signature(label)
+                if current:
+                    break
+
+    pending = _as_signature(payload.get("pending_change"))
+    if pending is None:
+        pending_value = payload.get("pending")
+        if isinstance(pending_value, dict):
+            pending = _as_signature(pending_value.get("signature"))
+            if pending is None:
+                p_labels = pending_value.get("labels")
+                if isinstance(p_labels, list):
+                    for label in p_labels:
+                        pending = _as_signature(label)
+                        if pending:
+                            break
+    if pending is None:
+        for field in ("pending_signature", "next_signature"):
+            pending = _as_signature(payload.get(field))
+            if pending:
+                break
+        if pending is None:
+            p_labels = payload.get("pending_labels")
+            if isinstance(p_labels, list):
+                for label in p_labels:
+                    pending = _as_signature(label)
+                    if pending:
+                        break
+
+    confidence = _coerce_float(payload.get("confidence")) or 0.0
+    stability = 0
+    for field in ("stability_window", "window", "window_events", "stable_ticks"):
+        stability = _as_positive_int(payload.get(field))
+        if stability > 0:
+            break
+
+    if current is None and pending is None and confidence <= 0.0 and stability == 0:
+        return None
+
+    return {
+        "current_signature": current,
+        "confidence": max(0.0, min(1.0, confidence)),
+        "stability_window": stability,
+        "pending_change": pending,
+    }
+
+
+def _compute_time_signature(transport: dict[str, Any], module_outputs: dict[str, Any]) -> dict[str, Any]:
+    candidates: list[dict[str, Any]] = []
+    for source in (
+        transport.get("timesig"),
+        transport.get("timesig_exp"),
+        module_outputs.get("timesig"),
+        module_outputs.get("timesig_exp"),
+    ):
+        candidate = _extract_timesig_candidate(source)
+        if candidate:
+            candidates.append(candidate)
+
+    for field in ("meter_estimate", "signature"):
+        label = _as_signature(transport.get(field))
+        if label:
+            candidates.append(
+                {
+                    "current_signature": label,
+                    "confidence": max(0.0, min(1.0, _coerce_float(transport.get("confidence")) or 0.0)),
+                    "stability_window": _as_positive_int(transport.get("stability_window")),
+                    "pending_change": _as_signature(transport.get("pending_change")),
+                }
+            )
+            break
+
+    best = max(candidates, key=lambda item: (item["confidence"], item["stability_window"]), default=None)
+    if best is None:
+        return {
+            "current_signature": "4/4",
+            "confidence": 0.0,
+            "stability_window": 0,
+            "pending_change": None,
+        }
+
+    current_signature = best["current_signature"] or "4/4"
+    return {
+        "current_signature": current_signature,
+        "confidence": _round4(float(best["confidence"])),
+        "stability_window": int(best["stability_window"]),
+        "pending_change": best["pending_change"],
+    }
+
+
 def run_research(contract: ResearchContract) -> dict[str, Any]:
     """Track B logic: consumes only frozen contract input."""
     expected_version = current_contract_version()
@@ -284,6 +410,7 @@ def run_research(contract: ResearchContract) -> dict[str, Any]:
         return _contract_version_error(expected_version, contract.contract_version)
 
     transport = thaw_payload(contract.transport)
+    module_outputs = thaw_payload(contract.module_outputs)
     active_notes = dict(contract.active_notes)
     flattened = [note for notes in active_notes.values() for note in notes]
     active_total = len(flattened)
@@ -301,6 +428,7 @@ def run_research(contract: ResearchContract) -> dict[str, Any]:
     key_estimate = _compute_key_estimate(flattened)
     _annotate_harmonic_function(chord_candidates, key_estimate)
     microtiming = _compute_microtiming(transport)
+    time_signature = _compute_time_signature(transport, module_outputs if isinstance(module_outputs, dict) else {})
 
     return ResearchResult(
         motif_span=motif_span,
@@ -317,4 +445,5 @@ def run_research(contract: ResearchContract) -> dict[str, Any]:
             }
         ),
         microtiming=microtiming,
+        time_signature=time_signature,
     ).as_dict()
