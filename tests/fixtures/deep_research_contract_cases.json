@@ -69,6 +69,84 @@
       "expect_has_deep_research": false,
       "expected_module_health_status": "degraded",
       "expected_capture_armed": true
+    },
+    {
+      "name": "legacy_wrapper_missing_optional_sections",
+      "input": {
+        "type": "snapshot",
+        "payload": {
+          "schema": {
+            "schema_version": 5,
+            "transport": {
+              "tick": 80,
+              "bar": 5,
+              "running": false,
+              "bpm": 110.0
+            }
+          }
+        }
+      },
+      "expect_has_deep_research": false,
+      "expect_missing_optional_sections": [
+        "module_health",
+        "retrospective_capture",
+        "views"
+      ]
+    },
+    {
+      "name": "legacy_wrapper_malformed_nested_views_passthrough",
+      "input": {
+        "type": "snapshot",
+        "payload": {
+          "schema": {
+            "schema_version": 5,
+            "transport": {
+              "tick": 81,
+              "bar": 5,
+              "running": true,
+              "bpm": 111.0
+            },
+            "views": "malformed-view-payload"
+          }
+        }
+      },
+      "expect_has_deep_research": false,
+      "expected_views_type": "str"
+    },
+    {
+      "name": "mixed_legacy_new_envelope_prefers_payload_schema_and_metadata",
+      "input": {
+        "type": "snapshot",
+        "schema_version": 99,
+        "transport": {
+          "tick": 1,
+          "bar": 1,
+          "running": false,
+          "bpm": 60.0
+        },
+        "payload": {
+          "schema": {
+            "schema_version": 5,
+            "transport": {
+              "tick": 93,
+              "bar": 6,
+              "running": true,
+              "bpm": 133.0
+            }
+          },
+          "deep_research": {
+            "version": 8,
+            "result": {
+              "signature": "mixed"
+            }
+          },
+          "module_health": {
+            "status": "ok"
+          }
+        }
+      },
+      "expect_has_deep_research": false,
+      "expected_tick": 1
     }
   ],
   "schema_contract": [
@@ -125,6 +203,42 @@
         },
         "future_field": {
           "kept": true
+        }
+      }
+    },
+    {
+      "name": "version_skew_string_and_float_are_idempotent",
+      "input": {
+        "version": "11",
+        "timestamp": 44,
+        "produced_at": "44.00",
+        "source_snapshot_version": "5",
+        "source_snapshot_timestamp": "43.5",
+        "source_tick": "144",
+        "late_policy": "drop",
+        "stale": 0,
+        "applied": 1,
+        "dropped": 0,
+        "drop_reason": null,
+        "result": {
+          "signature": "skew"
+        }
+      },
+      "expected": {
+        "version": 11,
+        "timestamp": 44.0,
+        "produced_at": 44.0,
+        "source_snapshot_version": 5,
+        "source_snapshot_timestamp": 43.5,
+        "source_tick": 144,
+        "lag_ms": 0.0,
+        "late_policy": "drop",
+        "stale": false,
+        "applied": true,
+        "dropped": false,
+        "drop_reason": "None",
+        "result": {
+          "signature": "skew"
         }
       }
     },
