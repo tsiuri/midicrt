@@ -1,71 +1,87 @@
 # Parallel Pilot Evidence Index
 
-Use this index as the single source of links for pilot GO/NO-GO review.
-Update links daily during WB-005 and mark each entry as `pending` or `complete`.
+Updated: 2026-02-27
 
-## Pilot metadata
+## Operating directives (enforced)
 
-- Pilot window start (UTC): `YYYY-MM-DD`
-- Pilot window end (UTC): `YYYY-MM-DD`
-- Decision date (UTC): `YYYY-MM-DD`
-- Decision owner: `<name>`
+1. Launch Wave A in parallel with three lanes only:
+   - WB-001 implementation team.
+   - WB-003 implementation team.
+   - WB-000 maintainer sync team.
+2. Run a daily 15-minute blocker triage focused on:
+   - unresolved gate failures,
+   - stale branch baselines,
+   - cross-lane approval misses.
+3. Do **not** start WB-005 until WB-001, WB-003, and WB-000 are all merged and green in CI.
+4. Once WB-005 readiness check passes, start pilot Day 1 with evidence capture enabled.
+5. Enforce: **no new planning docs unless tied to a failing gate**; only merge work that closes blocker checklist items.
 
-## Required evidence links
+## Wave A launch board
 
-| Evidence item | Path / Link | Status | Notes |
-|---|---|---|---|
-| Daily incident log | `docs/pilot_incident_log_template.md` | pending | Must include date, lane, severity, root cause, resolution for each incident. |
-| Merged PR export | [`artifacts/pilot/merged_prs.json`](../artifacts/pilot/merged_prs.json) | pending | Source for merged PR denominator in conflict metric. |
-| Conflict-event export | [`artifacts/pilot/conflict_events.json`](../artifacts/pilot/conflict_events.json) | pending | Raw conflict-resolution events observed during window. |
-| Conflict-rate summary | [`artifacts/pilot/conflict_rate_summary.json`](../artifacts/pilot/conflict_rate_summary.json) | pending | Machine-readable numerator/denominator + computed rate. |
-| CI run export | [`artifacts/pilot/ci_runs.json`](../artifacts/pilot/ci_runs.json) | pending | Raw workflow run data for timing analysis. |
-| CI timing summary | [`artifacts/pilot/ci_timing_summary.json`](../artifacts/pilot/ci_timing_summary.json) | pending | Produced by daily orchestrator (median/p95). |
-| Contract-governance violations tally | `<link>` | pending | Count and evidence of any unreviewed breaking merges. |
-| Final pilot report | `docs/parallel_pilot_report_YYYY-MM-DD.md` | pending | Narrative summary and remediation items. |
-| Formal GO/NO-GO decision record | `<link>` | pending | Final decision artifact with approver sign-off. |
+| Lane | Team | Scope | Status | Merge/CI gate |
+|---|---|---|---|---|
+| WB-001 | Implementation team | Ownership guard (`CODEOWNERS` + required review path) | In progress | Must be merged and green |
+| WB-003 | Implementation team | PR metadata validator (lane + branch policy) | In progress | Must be merged and green |
+| WB-000 | Maintainer sync team | Baseline sync with `origin/master` | In progress | Must be merged and green |
+| WB-005 | Pilot team | Real pilot execution | Blocked | Starts only after all three lanes above are merged+green |
 
-## Daily execution checklist (WB-005)
+## Daily blocker triage (15 minutes)
 
-- [ ] Day 1 (`YYYY-MM-DD`) — exports refreshed, orchestrator run, links verified.
-- [ ] Day 2 (`YYYY-MM-DD`) — exports refreshed, orchestrator run, links verified.
-- [ ] Day 3 (`YYYY-MM-DD`) — exports refreshed, orchestrator run, links verified.
-- [ ] Day 4 (`YYYY-MM-DD`) — exports refreshed, orchestrator run, links verified.
-- [ ] Day 5 (`YYYY-MM-DD`) — exports refreshed, orchestrator run, links verified.
+- **Cadence:** once per day, fixed 15-minute window.
+- **Required agenda:**
+  1. Gate failures unresolved since previous day.
+  2. Branch baseline drift/staleness.
+  3. Cross-lane approval misses.
+- **Exit criteria:** every open blocker has a clear owner and next action due within 24 hours.
 
-## Metric extraction commands
+## WB-005 readiness gate and Day 1 trigger
 
-Run these commands and attach resulting artifacts to this index.
+Readiness is **PASS** only when all checks are true:
 
-```bash
-# 0) One-time setup: create missing pilot artifacts with deterministic skeletons.
-bash artifacts/pilot/bootstrap.sh
+- [ ] WB-001 merged.
+- [ ] WB-003 merged.
+- [ ] WB-000 merged.
+- [ ] WB-001 CI status green.
+- [ ] WB-003 CI status green.
+- [ ] WB-000 CI status green.
 
-# 1) Daily aggregation orchestrator (stable output paths under artifacts/pilot/).
-python scripts/run_parallel_pilot_daily.py \
-  --window-start 2026-03-04T00:00:00Z \
-  --window-end 2026-03-08T23:59:59Z
+When all checks pass:
 
-# 2) Reference commands run by the orchestrator.
-python scripts/calc_conflict_rate.py \
-  --merged-prs artifacts/pilot/merged_prs.json \
-  --conflict-events artifacts/pilot/conflict_events.json \
-  --window-start 2026-03-04T00:00:00Z \
-  --window-end 2026-03-08T23:59:59Z \
-  --output artifacts/pilot/conflict_rate_summary.json
+- [ ] Mark WB-005 status as `ready`.
+- [ ] Start pilot Day 1.
+- [ ] Enable evidence capture and refresh artifacts:
+  - `artifacts/pilot/merged_prs.json`
+  - `artifacts/pilot/conflict_events.json`
+  - `artifacts/pilot/conflict_rate_summary.json`
+  - `artifacts/pilot/ci_runs.json`
+  - `artifacts/pilot/ci_timing_summary.json`
 
-python scripts/aggregate_ci_timings.py \
-  --input artifacts/pilot/ci_runs.json \
-  --output artifacts/pilot/ci_timing_summary.json
+## Daily burn-down summary (one page)
 
-# 3) Conflict rate formula used in summary artifact.
-# conflict_rate = conflict_resolution_events / merged_pr_count
-```
+Create one entry per day using the template below.
 
-## Sign-off checklist
+### YYYY-MM-DD
 
-- [ ] All required evidence links populated.
-- [ ] Conflict rate threshold evaluated (`< 10%`).
-- [ ] CI median threshold evaluated (`< 8 minutes`), p95 recorded.
-- [ ] Contract-governance violations evaluated (`must be 0`).
-- [ ] Severity-1 coordination incidents evaluated (`must be 0`).
-- [ ] Final GO/NO-GO decision published.
+**Blocker status**
+- Gate failures: `<open/closed + key IDs>`
+- Baseline freshness: `<fresh/stale + branch SHA context>`
+- Cross-lane approvals: `<met/missed + impacted PRs>`
+
+**Newly closed items**
+- `<checklist item ID>` — `<what closed today, PR/CI evidence>`
+- `<checklist item ID>` — `<what closed today, PR/CI evidence>`
+
+**Remaining risks**
+- `<risk>` — owner: `<name>` — mitigation by `<date>`
+- `<risk>` — owner: `<name>` — mitigation by `<date>`
+
+## Evidence links
+
+| Evidence item | Path | Status |
+|---|---|---|
+| Daily incident log | `docs/pilot_incident_log_template.md` | pending |
+| Merged PR export | `artifacts/pilot/merged_prs.json` | pending |
+| Conflict-event export | `artifacts/pilot/conflict_events.json` | pending |
+| Conflict-rate summary | `artifacts/pilot/conflict_rate_summary.json` | pending |
+| CI run export | `artifacts/pilot/ci_runs.json` | pending |
+| CI timing summary | `artifacts/pilot/ci_timing_summary.json` | pending |
