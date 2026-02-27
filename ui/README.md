@@ -130,7 +130,7 @@ frequency cap (`publish_hz`) still bounds outgoing snapshot rate.
 | 6 Event Log | `EventLogWidget` | ✅ | ✅ | ✅ | Structured title/filter/entries/marker contract. |
 | 8 Piano Roll | `PianoRollWidget` | ✅ | ✅ | ✅ | Primary parity target already migrated. |
 | Footer/Status | `FooterStatusWidget` | ✅ | ✅ | ✅ | Contract defined; integration in plugin/footer path pending. |
-| Remaining pages | `TextBlock` via adapter | ✅ | ✅ | ✅ | `build_widget(state)` delegates to legacy `draw(state)` capture. |
+| Remaining pages | `PageLinesWidget` | ✅ | ✅ | ✅ | Page widgets now emit structured lines without legacy draw-capture fallback. |
 
 ### Known parity gaps
 

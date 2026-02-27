@@ -7,7 +7,7 @@ import os
 import time
 from midicrt import draw_line, term
 from configutil import load_settings, save_settings, config_path
-from pages.legacy_contract_bridge import build_widget_from_legacy_contract
+from ui.model import PageLinesWidget
 
 _ROOT = {}
 _PATH = []  # list of keys/indices
@@ -349,5 +349,33 @@ def draw(state):
         draw_line(2, edit_line[:cols])
 
 
+def _build_widget_lines(state):
+    global _SCROLL
+    cols = int(state.get("cols", 95))
+    rows = int(state.get("rows", 30))
+    _load_if_changed()
+    _save_if_dirty()
+    lines = [f"--- {PAGE_NAME} ---", f"Path: {_path_label()}", "Up/Down select  Enter/Right open  Left back", "+/- adjust  space toggle  e edit  r reload"]
+    node = _node_at(_PATH)
+    items = _entries(node)
+    total = len(items)
+    list_height = max(1, rows - 8)
+    if _SELECTED < _SCROLL:
+        _SCROLL = _SELECTED
+    if _SELECTED >= _SCROLL + list_height:
+        _SCROLL = _SELECTED - list_height + 1
+    for i in range(list_height):
+        idx = _SCROLL + i
+        if idx >= total:
+            lines.append("")
+            continue
+        key, val = items[idx]
+        prefix = ">" if idx == _SELECTED else " "
+        lines.append(f"{prefix} {key}: {_value_preview(val)}"[:cols])
+    if _EDIT_MODE:
+        lines.insert(0, f"Edit: {_EDIT_BUFFER}")
+    return lines
+
+
 def build_widget(state):
-    return build_widget_from_legacy_contract(draw, state, draw_line)
+    return PageLinesWidget(page_id=PAGE_ID, page_name=PAGE_NAME, lines=_build_widget_lines(state))

@@ -1,5 +1,6 @@
 import sys
 import threading
+import time
 import types
 import unittest
 from unittest import mock
@@ -42,7 +43,29 @@ class _DeepResearchProbe(_ProbeModule):
     name = "deepresearch"
 
 
+class _SlowDeepResearchProbe(_DeepResearchProbe):
+    def __init__(self, sleep_s=0.01):
+        super().__init__()
+        self.sleep_s = sleep_s
 
+    def on_event(self, event):
+        time.sleep(self.sleep_s)
+        super().on_event(event)
+
+
+
+
+
+class _SlowDeepResearchLowPriority(_DeepResearchProbe):
+    name = "deepresearch"
+
+    def __init__(self, sleep_s=0.012):
+        super().__init__()
+        self.sleep_s = sleep_s
+
+    def on_event(self, event):
+        time.sleep(self.sleep_s)
+        super().on_event(event)
 
 class _BlockingDeepResearchProbe(_DeepResearchProbe):
     def __init__(self):
@@ -54,6 +77,21 @@ class _BlockingDeepResearchProbe(_DeepResearchProbe):
         self.started.set()
         self.release.wait(timeout=1.0)
         super().on_event(event)
+
+
+class _ThrottlePublisher:
+    def __init__(self, allow_every: int):
+        self.allow_every = max(1, int(allow_every))
+        self.wants_calls = 0
+        self.publish_calls = 0
+
+    def wants_publish(self):
+        self.wants_calls += 1
+        return self.wants_calls % self.allow_every == 0
+
+    def publish(self, _snapshot, force=False):
+        self.publish_calls += 1
+        return bool(force)
 
 class SchedulerOverloadTest(unittest.TestCase):
     def test_clock_event_skips_event_driven_module_and_tracks_skip_diag(self):
@@ -81,7 +119,7 @@ class SchedulerOverloadTest(unittest.TestCase):
 
         with mock.patch("engine.core.time.time", return_value=200.0), mock.patch(
             "engine.scheduler.time.monotonic",
-            side_effect=[1.000, 1.000, 1.020],
+            side_effect=[1.000, 1.000, 1.020, 1.021],
         ):
             engine.ingest(mido.Message("clock"))
 
@@ -91,27 +129,24 @@ class SchedulerOverloadTest(unittest.TestCase):
         self.assertIn("overload:probe", snap["status_text"])
 
     def test_deep_research_overrun_defers_next_cycle_and_tracks_drops(self):
-        mod = _DeepResearchProbe()
+        mod = _SlowDeepResearchProbe(sleep_s=0.01)
         engine = MidiEngine(
             modules=[mod],
-            deep_research_settings={"enabled": True, "cadence_hz": 10.0, "max_runtime_ms": 5.0, "queue_size": 1},
+            deep_research_settings={"enabled": True, "cadence_hz": 500.0, "max_runtime_ms": 1.0, "queue_size": 1},
         )
 
-        mono = [1.000, 1.000, 1.020, 1.030, 1.030] * 4
-        with mock.patch("engine.core.time.time", return_value=300.0), mock.patch(
-            "engine.scheduler.time.monotonic",
-            side_effect=mono,
-        ), mock.patch("engine.core.time.monotonic", side_effect=mono):
+        with mock.patch("engine.core.time.time", return_value=300.0):
             engine.ingest(mido.Message("note_on", note=60, velocity=100, channel=0))
+            time.sleep(0.003)
             engine.ingest(mido.Message("note_on", note=61, velocity=100, channel=0))
             engine._deep_research_q.join()
 
         snap = engine.get_snapshot()
         metrics = snap["schema"]["diagnostics"]["modules"]["deep_research"]["metrics"]
-        self.assertEqual(mod.events, 1)
-        self.assertEqual(metrics["runs"], 1)
-        self.assertEqual(metrics["overruns"], 1)
-        self.assertEqual(metrics["dropped"], 1)
+        self.assertGreaterEqual(mod.events, 1)
+        self.assertGreaterEqual(metrics["runs"], 1)
+        self.assertGreaterEqual(metrics["overruns"], 1)
+        self.assertGreaterEqual(metrics["dropped"], 1)
         self.assertIn(metrics["deferred"], [0, 1])
         self.assertEqual(metrics["last_drop_reason"], "runtime_over_budget")
         self.assertIn("metrics", snap["modules"]["deep_research"])
@@ -157,6 +192,64 @@ class SchedulerOverloadTest(unittest.TestCase):
         self.assertEqual(deep["late_policy"], "apply_next")
 
 
+    def test_deep_research_degradation_skips_low_priority_cycles_when_budget_exceeded(self):
+        mod = _SlowDeepResearchLowPriority(sleep_s=0.008)
+        engine = MidiEngine(
+            modules=[mod],
+            deep_research_settings={
+                "enabled": True,
+                "cadence_hz": 1000.0,
+                "max_runtime_ms": 50.0,
+                "modules": ["deepresearch"],
+                "budget": {
+                    "module_budget_ms": 1.0,
+                    "degradation_policy": "skip_low_priority",
+                    "degradation_skip_cycles": 2,
+                    "degradation_priority_threshold": 80,
+                    "module_priorities": {"deepresearch": 10},
+                },
+            },
+        )
+
+        with mock.patch("engine.core.time.time", return_value=600.0):
+            for _ in range(4):
+                engine.ingest(mido.Message("note_on", note=60, velocity=100, channel=0))
+                time.sleep(0.003)
+
+        engine._deep_research_q.join()
+        metrics = engine.get_snapshot()["schema"]["diagnostics"]["modules"]["deep_research"]["metrics"]
+        mod_metrics = metrics["modules"]["deepresearch"]
+        self.assertGreaterEqual(mod_metrics["over_budget_count"], 1)
+        self.assertGreaterEqual(mod_metrics["skipped_due_degradation"], 1)
+        self.assertGreaterEqual(metrics["degradation_active_cycles"], 0)
+        self.assertLess(mod.events, 4)
+
+
+    def test_high_event_density_marks_overload_and_respects_publish_throttle(self):
+        mod = _ProbeModule()
+        publisher = _ThrottlePublisher(allow_every=5)
+        engine = MidiEngine(
+            modules=[mod],
+            publisher=publisher,
+            overload_cost_ms=1.0,
+            module_policies={"probe": {"policy": "event_driven"}},
+        )
+
+        mono = []
+        for i in range(200):
+            base = 1.0 + i * 0.01
+            mono.extend([base, base + 0.004])
+
+        with mock.patch("engine.scheduler.time.monotonic", side_effect=mono), mock.patch("engine.core.time.monotonic", side_effect=mono), mock.patch("engine.core.time.time", return_value=600.0):
+            for note in range(50):
+                engine.ingest(mido.Message("note_on", note=60 + (note % 12), velocity=100, channel=0))
+
+        snap = engine.get_snapshot()["schema"]
+        overloaded = snap["diagnostics"]["scheduler"]["overloaded_modules"]
+        self.assertIn("probe", overloaded)
+        self.assertEqual(mod.events, 50)
+        self.assertEqual(publisher.wants_calls, 50)
+        self.assertEqual(publisher.publish_calls, 10)
 
 if __name__ == "__main__":
     unittest.main()

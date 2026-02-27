@@ -5,7 +5,7 @@ PAGE_NAME = "Stuck Heatmap"
 
 from midicrt import draw_line
 import plugins.zstucknotes as zstucknotes
-from pages.legacy_contract_bridge import build_widget_from_legacy_contract
+from ui.model import PageLinesWidget
 
 NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 
@@ -58,5 +58,29 @@ def draw(state):
         draw_line(y0 + 8, "".ljust(cols))
 
 
+def _build_widget_lines(_state):
+    stats = zstucknotes.get_stuck_stats()
+    pc_counts = stats.get("pc_counts", {})
+    note_counts = stats.get("note_counts", {})
+    row1, row2 = [], []
+    for i, name in enumerate(NOTE_NAMES):
+        token = f"{name}:{pc_counts.get(i, 0)}"
+        (row1 if i < 6 else row2).append(token)
+    lines = [
+        f"--- {PAGE_NAME} ---",
+        "Counts by pitch class (warn/crit events):",
+        "  ".join(row1),
+        "  ".join(row2),
+        "",
+        "Top stuck notes:",
+    ]
+    if not note_counts:
+        lines.extend(["(none yet)", "", ""])
+    else:
+        top = sorted(note_counts.items(), key=lambda kv: kv[1], reverse=True)[:5]
+        lines.extend([" | ".join(f"{_fmt_note(n)}:{c}" for n, c in top), "", ""])
+    return lines
+
+
 def build_widget(state):
-    return build_widget_from_legacy_contract(draw, state, draw_line)
+    return PageLinesWidget(page_id=PAGE_ID, page_name=PAGE_NAME, lines=_build_widget_lines(state))

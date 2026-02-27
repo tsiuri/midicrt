@@ -8,6 +8,7 @@ from collections import OrderedDict
 import time
 from blessed import Terminal
 from pages.legacy_contract_bridge import build_widget_from_legacy_contract
+from ui.model import PageLinesWidget
 
 term = Terminal()
 
@@ -22,43 +23,33 @@ def handle(msg):
         _recent[key] = (time.time(), msg.value)
 
 def draw(state):
+    lines = _build_widget_lines(state)
     y0 = 3
-    draw_line(y0, f"--- {PAGE_NAME} ---")
-
-    now = time.time()
-    y = y0 + 2
-    max_y = state["rows"] - 3
     max_cols = state["cols"]
+    for idx, line in enumerate(lines):
+        draw_line(y0 + idx, line[: max_cols - 1])
+
+
+def _build_widget_lines(state):
+    now = time.time()
+    rows = int(state.get("rows", 30))
+    cols = int(state.get("cols", 95))
+    lines = [f"--- {PAGE_NAME} ---", ""]
 
     label_width = 18
-    # Reserve 34 columns for right-side meter zone (1 more than before)
-    bar_region_width = max_cols - label_width - 34
-    if bar_region_width < 8:
-        bar_region_width = 8
-
-    for (ch, cc), (ts, val) in _recent.items():
-        if y >= max_y:
-            break
-
+    bar_region_width = max(8, cols - label_width - 34)
+    max_rows = max(0, rows - 5)
+    for (ch, cc), (ts, val) in list(_recent.items())[:max_rows]:
         age = now - ts
         bar_len = min(bar_region_width, int((val / 127) * bar_region_width))
         bar = "█" * bar_len
         label = f"Ch{ch:02d} CC{cc:03d}:{val:03d}"
-
-        # persistent age indicator (no disappearance)
-        if age < 2:
-            age_str = term.reverse("LIVE") + term.normal
-        else:
-            age_str = f"{age:5.1f}s"
-
-        # compose and safely clamp to screen width
-        line = f"{label:<{label_width}}{bar:<{bar_region_width}}  {age_str} "
-        draw_line(y, line[:max_cols - 1])
-        y += 1
-
+        age_str = "LIVE" if age < 2 else f"{age:5.1f}s"
+        lines.append(f"{label:<{label_width}}{bar:<{bar_region_width}}  {age_str} ")
     if not _recent:
-        draw_line(y, "(no CC activity)")
+        lines.append("(no CC activity)")
+    return lines
 
 
 def build_widget(state):
-    return build_widget_from_legacy_contract(draw, state, draw_line)
+    return PageLinesWidget(page_id=PAGE_ID, page_name=PAGE_NAME, lines=_build_widget_lines(state))

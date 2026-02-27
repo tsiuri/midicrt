@@ -282,7 +282,15 @@
     "budget": {
       "max_compute_ms": 30.0,
       "timeout_ms": 45.0,
-      "on_budget_exceeded": "skip_cycle"
+      "on_budget_exceeded": "skip_cycle",
+      "module_budget_ms": 12.0,
+      "degradation_policy": "skip_low_priority",
+      "degradation_skip_cycles": 1,
+      "degradation_priority_threshold": 50,
+      "module_priorities": {
+        "deepresearch": 80,
+        "deep_research": 80
+      }
     },
     "feature_flags": {
       "emit_views": true,

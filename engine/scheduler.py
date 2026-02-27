@@ -17,6 +17,11 @@ class DeepResearchPolicy:
     enabled: bool = True
     cadence_hz: float = 2.0
     max_runtime_ms: float = 30.0
+    module_budget_ms: float = 12.0
+    degradation_policy: str = "none"
+    degradation_skip_cycles: int = 1
+    degradation_priority_threshold: int = 50
+    module_priorities: dict[str, int] | None = None
 
 
 class ModuleScheduler:
@@ -44,7 +49,9 @@ class ModuleScheduler:
             "next_due_ts": 0.0,
             "defer_cycle": False,
             "last_drop_reason": "",
+            "degradation_active_cycles": 0,
         }
+        self._deep_module_state: dict[str, dict[str, Any]] = {}
 
     def _policy_for(self, name: str) -> ModulePolicy:
         raw = self._cfg.get(name, {}) if isinstance(self._cfg.get(name, {}), dict) else {}
@@ -57,22 +64,81 @@ class ModuleScheduler:
 
     def _deep_policy(self) -> DeepResearchPolicy:
         raw = self._deep_cfg if isinstance(self._deep_cfg, dict) else {}
+        budget = raw.get("budget", {}) if isinstance(raw.get("budget"), dict) else {}
         enabled = bool(raw.get("enabled", True))
         cadence_hz = float(raw.get("cadence_hz", raw.get("interval_hz", 2.0)))
         max_runtime_ms = float(raw.get("max_runtime_ms", raw.get("max_compute_ms", 30.0)))
+        module_budget_ms = float(
+            budget.get(
+                "module_budget_ms",
+                budget.get("module_runtime_budget_ms", raw.get("module_budget_ms", max_runtime_ms)),
+            )
+        )
+        degradation_policy = str(budget.get("degradation_policy", "none")).strip().lower() or "none"
+        if degradation_policy not in {"none", "skip_low_priority", "throttle_low_priority"}:
+            degradation_policy = "none"
+        degradation_skip_cycles = int(budget.get("degradation_skip_cycles", 1))
+        degradation_priority_threshold = int(budget.get("degradation_priority_threshold", 50))
+        module_priorities = budget.get("module_priorities", raw.get("module_priorities", {}))
+        normalized_priorities = module_priorities if isinstance(module_priorities, dict) else {}
         return DeepResearchPolicy(
             enabled=enabled,
             cadence_hz=max(0.1, cadence_hz),
             max_runtime_ms=max(0.1, max_runtime_ms),
+            module_budget_ms=max(0.1, module_budget_ms),
+            degradation_policy=degradation_policy,
+            degradation_skip_cycles=max(1, degradation_skip_cycles),
+            degradation_priority_threshold=degradation_priority_threshold,
+            module_priorities=normalized_priorities,
         )
 
-    def should_run_deep_research(self, now: float | None = None) -> bool:
+    def _deep_module_slot(self, name: str) -> dict[str, Any]:
+        return self._deep_module_state.setdefault(
+            name,
+            {
+                "last_runtime_ms": 0.0,
+                "avg_runtime_ms": 0.0,
+                "max_runtime_ms": 0.0,
+                "runs": 0,
+                "over_budget_count": 0,
+                "skipped_due_degradation": 0,
+                "priority": 50,
+                "over_budget": False,
+            },
+        )
+
+    def _module_priority(self, name: str, pol: DeepResearchPolicy) -> int:
+        raw = pol.module_priorities or {}
+        if name in raw:
+            return int(raw.get(name, 50))
+        lname = str(name).strip().lower()
+        if lname in raw:
+            return int(raw.get(lname, 50))
+        return 50
+
+    def should_run_deep_research(self, module_name: str, now: float | None = None) -> bool:
         now = time.monotonic() if now is None else now
         pol = self._deep_policy()
         slot = self._deep_state
+        mod_slot = self._deep_module_slot(module_name)
+        priority = self._module_priority(module_name, pol)
+        mod_slot["priority"] = priority
         if not pol.enabled:
             slot["skips"] = int(slot.get("skips", 0)) + 1
             return False
+        active_degrade_cycles = int(slot.get("degradation_active_cycles", 0))
+        low_priority = priority < pol.degradation_priority_threshold
+        if active_degrade_cycles > 0 and low_priority:
+            should_skip = pol.degradation_policy == "skip_low_priority"
+            if pol.degradation_policy == "throttle_low_priority":
+                should_skip = (int(mod_slot.get("skipped_due_degradation", 0)) % 2) == 0
+            if should_skip:
+                mod_slot["skipped_due_degradation"] = int(mod_slot.get("skipped_due_degradation", 0)) + 1
+                slot["skips"] = int(slot.get("skips", 0)) + 1
+                slot["last_drop_reason"] = "degraded_skip"
+                if pol.degradation_policy == "skip_low_priority":
+                    slot["degradation_active_cycles"] = max(0, active_degrade_cycles - 1)
+                return False
         if bool(slot.get("defer_cycle", False)):
             slot["defer_cycle"] = False
             slot["deferred"] = int(slot.get("deferred", 0)) + 1
@@ -106,6 +172,42 @@ class ModuleScheduler:
             slot["last_drop_reason"] = "runtime_over_budget"
         return runtime_ms, overrun
 
+    def end_deep_research_module(self, module_name: str, runtime_ms: float) -> bool:
+        pol = self._deep_policy()
+        slot = self._deep_state
+        mod_slot = self._deep_module_slot(module_name)
+        mod_slot["runs"] = int(mod_slot.get("runs", 0)) + 1
+        mod_slot["last_runtime_ms"] = runtime_ms
+        prev_avg = float(mod_slot.get("avg_runtime_ms", 0.0))
+        alpha = 0.25
+        mod_slot["avg_runtime_ms"] = runtime_ms if prev_avg <= 0.0 else ((1.0 - alpha) * prev_avg + alpha * runtime_ms)
+        mod_slot["max_runtime_ms"] = max(float(mod_slot.get("max_runtime_ms", 0.0)), runtime_ms)
+        over_budget = runtime_ms > pol.module_budget_ms
+        mod_slot["over_budget"] = over_budget
+        if over_budget:
+            mod_slot["over_budget_count"] = int(mod_slot.get("over_budget_count", 0)) + 1
+            slot["degradation_active_cycles"] = max(
+                int(slot.get("degradation_active_cycles", 0)),
+                pol.degradation_skip_cycles,
+            )
+        return over_budget
+
+    def deep_module_diag(self) -> dict[str, dict[str, Any]]:
+        out: dict[str, dict[str, Any]] = {}
+        for name in sorted(self._deep_module_state):
+            slot = self._deep_module_state[name]
+            out[name] = {
+                "last_runtime_ms": round(float(slot.get("last_runtime_ms", 0.0)), 3),
+                "avg_runtime_ms": round(float(slot.get("avg_runtime_ms", 0.0)), 3),
+                "max_runtime_ms": round(float(slot.get("max_runtime_ms", 0.0)), 3),
+                "runs": int(slot.get("runs", 0)),
+                "over_budget_count": int(slot.get("over_budget_count", 0)),
+                "skipped_due_degradation": int(slot.get("skipped_due_degradation", 0)),
+                "priority": int(slot.get("priority", 50)),
+                "over_budget": bool(slot.get("over_budget", False)),
+            }
+        return out
+
     def drop_deep_research_cycle(self, reason: str = "queue_drop") -> None:
         slot = self._deep_state
         slot["dropped"] = int(slot.get("dropped", 0)) + 1
@@ -119,6 +221,10 @@ class ModuleScheduler:
             "enabled": pol.enabled,
             "cadence_hz": pol.cadence_hz,
             "max_runtime_ms": pol.max_runtime_ms,
+            "module_budget_ms": pol.module_budget_ms,
+            "degradation_policy": pol.degradation_policy,
+            "degradation_skip_cycles": pol.degradation_skip_cycles,
+            "degradation_priority_threshold": pol.degradation_priority_threshold,
             "last_start_ts": float(slot.get("last_start_ts", 0.0)),
             "last_end_ts": float(slot.get("last_end_ts", 0.0)),
             "last_runtime_ms": round(float(slot.get("last_runtime_ms", 0.0)), 3),
@@ -128,6 +234,8 @@ class ModuleScheduler:
             "deferred": int(slot.get("deferred", 0)),
             "overruns": int(slot.get("overruns", 0)),
             "last_drop_reason": str(slot.get("last_drop_reason", "")),
+            "degradation_active_cycles": int(slot.get("degradation_active_cycles", 0)),
+            "modules": self.deep_module_diag(),
         }
 
     def should_run(self, name: str, event_kind: str, now: float | None = None) -> bool:

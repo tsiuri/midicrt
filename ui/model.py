@@ -54,6 +54,15 @@ class TextBlock(Widget):
 
 
 @dataclass(frozen=True)
+class PageLinesWidget(Widget):
+    """Generic structured page payload for non-captured page adapters."""
+
+    page_id: int
+    page_name: str
+    lines: List[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
 class Spacer(Widget):
     """Fixed number of blank rows."""
 
@@ -180,3 +189,32 @@ class ModuleHealthWidget(Widget):
     """Collection of module health cards."""
 
     cards: List[ModuleHealthCard] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class OverlayEntry:
+    """Deterministic plugin-overlay contract shared by renderers.
+
+    kind values are constrained to: "badge", "alert", "counter".
+    """
+
+    plugin_id: str
+    z_index: int
+    row: int
+    col: int = 0
+    kind: str = "badge"
+    text: str = ""
+    severity: str = "info"
+    label: str = ""
+    value: str = ""
+    counter_name: str = ""
+    counter_value: int | float | str = ""
+    reverse: bool = False
+    bold: bool = False
+
+
+@dataclass(frozen=True)
+class OverlayLayerWidget(Widget):
+    """Overlay items emitted by plugins and composed in z-order."""
+
+    entries: List[OverlayEntry] = field(default_factory=list)

@@ -9,7 +9,7 @@ import sys
 from blessed import Terminal
 from midicrt import draw_line
 from configutil import load_section, save_section
-from pages.legacy_contract_bridge import build_widget_from_legacy_contract
+from ui.model import PageLinesWidget
 
 audio = sys.modules.get("pages.audiospectrum")
 if audio is None:
@@ -187,5 +187,24 @@ def draw(state):
         draw_line(y0 + 3, "".ljust(cols))
 
 
+def _build_widget_lines(_state):
+    if audio is None:
+        return [f"--- {PAGE_NAME} ---", "Audio page not available."]
+    block, _seq, sr, _ts = audio.get_last_audio_block()
+    lines = [f"--- {PAGE_NAME} ---"]
+    if _error_msg:
+        lines.append(_error_msg)
+        return lines
+    dev_desc = audio.get_device_desc()
+    lines.append(f"Input:{'OK' if block is not None else '…'}  Dev:{dev_desc}  SR:{sr}")
+    if _last_note:
+        lines.append(f"Note:{_last_note:<4}  Pitch:{_smoothed_hz:7.2f} Hz  Cents:{_last_cents:+6.1f}  Conf:{_last_conf:.2f}  Level:{_last_db:5.1f} dB")
+        lines.append("Tuning: " + _meter(_last_cents, 64))
+    else:
+        lines.append(f"Listening...  Conf:{_last_conf:.2f}  Level:{_last_db:5.1f} dB")
+        lines.append("")
+    return lines
+
+
 def build_widget(state):
-    return build_widget_from_legacy_contract(draw, state, draw_line)
+    return PageLinesWidget(page_id=PAGE_ID, page_name=PAGE_NAME, lines=_build_widget_lines(state))

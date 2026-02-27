@@ -242,12 +242,26 @@ class DashboardServer:
 
         scheduler = diagnostics.get("scheduler") if isinstance(diagnostics.get("scheduler"), dict) else {}
         cards = module_health.get("cards") if isinstance(module_health.get("cards"), list) else []
+        deep_metrics = (diagnostics.get("modules", {}).get("deep_research", {}).get("metrics", {})
+                        if isinstance(diagnostics.get("modules"), dict) else {})
+        deep_modules = deep_metrics.get("modules", {}) if isinstance(deep_metrics, dict) else {}
         if not cards:
             overloaded = scheduler.get("overloaded_modules") if isinstance(scheduler.get("overloaded_modules"), list) else []
             cards = [
                 {"name": str(name), "status": "warn", "latency_ms": 0.0, "drop_rate": 0.0, "detail": "overloaded"}
                 for name in overloaded
             ]
+
+        warnings = []
+        for name in sorted(deep_modules):
+            info = deep_modules.get(name, {}) if isinstance(deep_modules.get(name), dict) else {}
+            if int(info.get("over_budget_count", 0)) > 0 or int(info.get("skipped_due_degradation", 0)) > 0:
+                warnings.append({
+                    "module": str(name),
+                    "over_budget_count": int(info.get("over_budget_count", 0)),
+                    "skipped_due_degradation": int(info.get("skipped_due_degradation", 0)),
+                    "last_runtime_ms": float(info.get("last_runtime_ms", 0.0)),
+                })
 
         return {
             "tempo_quality": {
@@ -282,6 +296,7 @@ class DashboardServer:
             },
             "module_health": {
                 "cards": cards,
+                "warnings": warnings,
             },
         }
 
@@ -302,6 +317,7 @@ class DashboardServer:
             "stale": bool(deep.get("stale", False)) if deep else None,
             "lag_ms": deep.get("lag_ms") if deep else None,
         }
+        observer_views = self._observer_views(snapshot)
         payload = {
             "seq": seq,
             "snapshot": snapshot,
@@ -310,10 +326,11 @@ class DashboardServer:
                 "sequence_gap": sequence_gap,
                 "last_update_age_ms": bridge_meta.get("last_update_age_ms"),
                 "fanout": telemetry or {"queue_dropped": 0, "queue_coalesced": 0},
+                "module_health": observer_views.get("module_health", {}),
             },
             "deep_research": deep_meta,
             "schema_health": self._schema_health(snapshot, bridge_meta),
-            "observer_views": self._observer_views(snapshot),
+            "observer_views": observer_views,
             "read_only": {
                 **self._read_only_contract(),
                 "bounded_stream_rate_hz": self.max_broadcast_hz,

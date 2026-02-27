@@ -9,7 +9,7 @@ from collections import deque
 from blessed import Terminal
 import mido
 from midicrt import draw_line
-from pages.legacy_contract_bridge import build_widget_from_legacy_contract
+from ui.model import PageLinesWidget
 
 term = Terminal()
 
@@ -125,20 +125,19 @@ def draw(state):
     _expire_notes()
     cols = state['cols']
     y0 = state.get('y_offset', 3)
+    for idx, line in enumerate(_build_widget_lines(state)):
+        draw_line(y0 + idx, line[:cols])
 
-    draw_line(y0, f"--- {PAGE_NAME} ---".ljust(cols))
 
+def _build_widget_lines(_state):
     status = (
         f"Dev: {out_name if out_port else '(not open)'}  "
         f"Ch:{channel:02d}  Oct:{octave:+d}  Vel:{velocity:03d}  Gate:{gate_ms}ms  "
         f"Active:{len(active)}"
     )
-    draw_line(y0 + 1, status[:cols])
-
     help1 = "Keys: z s x d c v g b h n j m (, l . ; /) — white/black keys"
     help2 = "[,] ch-+/  [-]/[+] oct  [-]/[=] vel  g/h gate"
-    draw_line(y0 + 3, help1[:cols])
-    draw_line(y0 + 4, help2[:cols])
+    return [f"--- {PAGE_NAME} ---", status, "", help1, help2]
 
 def update(state):
     _expire_notes()
@@ -146,4 +145,4 @@ def update(state):
 
 
 def build_widget(state):
-    return build_widget_from_legacy_contract(draw, state, draw_line)
+    return PageLinesWidget(page_id=PAGE_ID, page_name=PAGE_NAME, lines=_build_widget_lines(state))

@@ -118,12 +118,31 @@ jobs:
           fixture_path = 'tests/fixtures/deep_research_contract_cases.json'
           fixture_updated = fixture_path in changed
 
+          fixture = json.loads(Path(fixture_path).read_text(encoding='utf-8'))
+          ipc_cases = fixture.get('ipc_compat', []) if isinstance(fixture, dict) else []
+
+          def _is_compat_case(case):
+              if not isinstance(case, dict):
+                  return False
+              inp = case.get('input')
+              if not isinstance(inp, dict):
+                  return False
+              if isinstance(inp.get('schema'), dict):
+                  return True
+              payload = inp.get('payload')
+              return isinstance(payload, dict) and isinstance(payload.get('schema'), dict)
+
+          compat_mode_hits = sum(1 for case in ipc_cases if _is_compat_case(case))
+          normalization_fallback_cases = compat_mode_hits
+
           Path('ci_evidence_contract.json').write_text(
               json.dumps(
                   {
                       'contract_version': version,
                       'fixture_updated': fixture_updated,
                       'fixture_path': fixture_path,
+                      'compat_mode_hits': compat_mode_hits,
+                      'normalization_fallback_cases': normalization_fallback_cases,
                   },
                   indent=2,
               ) + '\n',
@@ -267,6 +286,8 @@ jobs:
             f"- Contract version: `{contract.get('contract_version', 'not-collected')}`",
             f"- Fixture updates: `{contract.get('fixture_updated', 'not-collected')}` ({contract.get('fixture_path', 'n/a')})",
             f"- Replay determinism status: `{determinism.get('determinism_status', 'not-collected')}`",
+            f"- Compatibility mode hits: `{contract.get('compat_mode_hits', 'not-collected')}`",
+            f"- Normalization fallback cases: `{contract.get('normalization_fallback_cases', 'not-collected')}`",
           ]
 
           summary_md = '\n'.join(lines) + '\n'

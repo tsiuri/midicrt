@@ -7,7 +7,7 @@ from collections import deque
 import time
 from blessed import Terminal
 from midicrt import draw_line
-from pages.legacy_contract_bridge import build_widget_from_legacy_contract
+from ui.model import PageLinesWidget
 
 term = Terminal()
 
@@ -102,5 +102,31 @@ def draw(state):
     draw_line(last_y, merged)
 
 
+def _build_widget_lines(state):
+    cols = int(state.get("cols", 95))
+    rows = int(state.get("rows", 30))
+    lines = [f"--- {PAGE_NAME} ---", ""]
+    top = 5
+    bottom = rows - 2
+    visible_rows = max(5, min(VISIBLE_ROWS_TARGET, bottom - top))
+    if len(log_buffer) == 0:
+        lines.append("(no program-change events yet)")
+        return lines
+    start_index = max(0, len(log_buffer) - visible_rows - scroll_offset)
+    visible = list(log_buffer)[start_index:start_index + visible_rows]
+    for line in visible:
+        lines.append(line[:cols])
+    total = len(log_buffer)
+    pos = max(0, total - visible_rows - scroll_offset)
+    percent = int((pos / max(1, total - visible_rows)) * 100)
+    marker = f"  ⟵ end of log ({percent:3d}%)" if scroll_offset == 0 else f"  ⟵ offset {scroll_offset} ({percent:3d}%)"
+    base = visible[-1] if visible else ""
+    usable_cols = cols - 4
+    space = max(0, usable_cols - len(base) - len(marker))
+    merged = (base[:usable_cols] + " " * space + marker)[:cols - 1]
+    lines[-1] = merged
+    return lines
+
+
 def build_widget(state):
-    return build_widget_from_legacy_contract(draw, state, draw_line)
+    return PageLinesWidget(page_id=PAGE_ID, page_name=PAGE_NAME, lines=_build_widget_lines(state))

@@ -46,7 +46,7 @@ class _FakeSnapshotClient:
     plans = []
 
     def __init__(self, *args, **kwargs):
-        self._plan = _FakeSnapshotClient.plans.pop(0)
+        self._plan = _FakeSnapshotClient.plans.pop(0) if _FakeSnapshotClient.plans else {"snapshots": [None]}
 
     def connect(self):
         action = self._plan.get("connect")
@@ -159,6 +159,39 @@ class SnapshotBridgeTest(unittest.TestCase):
         self.assertGreaterEqual(meta["total_failures"], 2)
         self.assertEqual(meta["consecutive_failures"], 0)
         self.assertIsNotNone(meta["last_successful_connect_ts"])
+
+    def test_reconnect_backoff_grows_with_failures_and_is_capped(self):
+        _FakeSnapshotClient.plans = [
+            {"connect": OSError("down-1"), "snapshots": []},
+            {"connect": OSError("down-2"), "snapshots": []},
+            {"connect": OSError("down-3"), "snapshots": []},
+            {"snapshots": [{"schema_version": 4, "transport": {"tick": 21}}, None]},
+        ]
+
+        bridge = SnapshotBridge(
+            "/tmp/test.sock",
+            reconnect_backoff_min_s=0.01,
+            reconnect_backoff_max_s=0.03,
+            reconnect_backoff_base_s=0.01,
+            reconnect_backoff_jitter_s=0.0,
+        )
+        sleeps = []
+
+        def _fake_sleep(duration):
+            sleeps.append(duration)
+
+        with mock.patch("web.observer.SnapshotClient", _FakeSnapshotClient), mock.patch("web.observer.time.sleep", side_effect=_fake_sleep), mock.patch("web.observer.random.uniform", return_value=0.0):
+            bridge.start()
+            for _ in range(80):
+                seq, _snap, _meta = bridge.current()
+                if seq >= 1:
+                    break
+                asyncio.run(asyncio.sleep(0.005))
+            bridge.stop()
+
+        self.assertGreaterEqual(seq, 1)
+        self.assertGreaterEqual(len(sleeps), 3)
+        self.assertEqual(sleeps[:3], [0.05, 0.05, 0.05])
 
 class DashboardServerTest(unittest.IsolatedAsyncioTestCase):
     async def test_healthz_reports_bridge_meta_and_throttle(self):
@@ -278,6 +311,7 @@ class DashboardServerTest(unittest.IsolatedAsyncioTestCase):
                 "compat_mode": "native",
                 "transport": {"tick": 9},
                 "deep_research": {"produced_at": 1234.5, "source_tick": 4, "stale": True, "lag_ms": 987.0},
+                "diagnostics": {"modules": {"deep_research": {"metrics": {"modules": {"deepresearch": {"over_budget_count": 2, "skipped_due_degradation": 1, "last_runtime_ms": 11.2}}}}}},
                 "views": {
                     "tempo_quality": {"jitter_ms": 2.4, "drift_ppm": -0.5},
                     "microtiming": {"title": "Microtiming", "total_samples": 12, "buckets": ["early", "late"]},
@@ -309,6 +343,8 @@ class DashboardServerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(data["observer_views"]["capture_status"]["buffer_fill"], 14)
         self.assertEqual(data["read_only"]["bounded_stream_rate_hz"], 20.0)
         self.assertEqual(data["read_only"]["mode"], "strict-read-only")
+        self.assertEqual(data["metrics"]["module_health"]["warnings"][0]["module"], "deepresearch")
+        self.assertEqual(data["observer_views"]["module_health"]["warnings"][0]["over_budget_count"], 2)
 
     async def test_read_only_method_guard_rejects_mutation_methods(self):
         server = DashboardServer(socket_path="/tmp/test.sock", host="127.0.0.1", port=0)

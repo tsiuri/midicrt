@@ -12,6 +12,7 @@ from engine.modules import LegacyPluginModule, PianoRollViewModule
 from engine.modules.interfaces import ScreenSaverModule, UserActivityModule
 from engine.adapters.aconnect_parser import parse_aconnect_output
 from ui.model import Frame
+from ui.composition import build_footer_widget, build_transport_widget
 from ui.renderers.text import TextRenderer
 from engine.page_contracts import capture_legacy_page_view
 from ui.view_contracts import widget_from_page_view
@@ -50,6 +51,7 @@ def _widget_from_legacy_draw(draw_fn, state, draw_line_ref):
 
 term = Terminal()
 text_renderer = TextRenderer(term)
+_ui_line_renderer = TextRenderer(term)
 ACTIVE_PROFILE = "run_tui"
 ACTIVE_RENDER_BACKEND = "text"
 _compositor = None   # set to CompositorRenderer when profile=run_compositor
@@ -577,10 +579,6 @@ def _ui_loop_body():
     global _auto_scroll_offset, _auto_scroll_last_time, _auto_last_msg, _auto_last_window
     _frame_budget = 1.0 / FPS
     _do_plugin_draw = not os.environ.get("MIDICRT_DISABLE_PLUGIN_DRAW")
-    if _compositor is not None:
-        from fb.terminal_capture import TerminalCapture as _TerminalCapture
-    else:
-        _TerminalCapture = None
     # Cache plugin draw signatures once (avoid per-frame inspect overhead)
     _plugin_draw_takes_state = {}
     for _mod in PLUGINS:
@@ -625,6 +623,23 @@ def _ui_loop_body():
             "running": running,
             "bpm": bpm,
         }
+        schema_snapshot = {}
+        if ENGINE:
+            try:
+                schema_snapshot = (ENGINE.get_snapshot() or {}).get("schema", {})
+            except Exception:
+                schema_snapshot = {}
+        transport_schema = schema_snapshot.get("transport") if isinstance(schema_snapshot.get("transport"), dict) else {}
+        ui_snapshot = {
+            "transport": {
+                "running": bool(transport_schema.get("running", snapshot.get("running", False))),
+                "bpm": float(transport_schema.get("bpm", snapshot.get("bpm", 0.0))),
+                "bar": int(transport_schema.get("bar", snapshot.get("bar_counter", 0))),
+                "tick": int(transport_schema.get("tick", snapshot.get("tick_counter", 0))),
+                "time_signature": str(transport_schema.get("meter_estimate", "") or ""),
+            },
+            "status_text": str(schema_snapshot.get("status_text", "") or ""),
+        }
         state = plugin_state_dict()
 
         # --- HEADER (row 0) — scrolling marquee when wider than screen
@@ -648,9 +663,10 @@ def _ui_loop_body():
             draw_line(0, (full * 2)[offset:offset + SCREEN_COLS])
 
         # --- TRANSPORT (row 1)
-        status = "RUN" if snapshot["running"] else "STOP"
-        metronome = "●" if snapshot["running"] and (snapshot["tick_counter"] % 24) < 3 else "○"
-        base = f" {status:<4}  {snapshot['bpm']:6.1f} BPM   BAR {snapshot['bar_counter']:04d}   {metronome}"
+        transport_widget = build_transport_widget(ui_snapshot)
+        status = "RUN" if transport_widget.running else "STOP"
+        metronome = "●" if transport_widget.running and (transport_widget.tick % 24) < 3 else "○"
+        base = f" {status:<4}  {transport_widget.bpm:6.1f} BPM   BAR {transport_widget.bar:04d}   {metronome}"
         msg = AUTOCONNECT_LOG[-1] if AUTOCONNECT_LOG else ""
         if msg:
             msg = msg.strip()
@@ -684,16 +700,23 @@ def _ui_loop_body():
         else:
             draw_line(1, base)
 
-        # --- STATUS (row 2): show FPS directly (footer may also render it)
-        if _compositor is not None:
-            _frame_now = time.monotonic()
-            _frame_dt  = _frame_now - getattr(ui_loop, "_frame_last_t", _frame_now)
-            ui_loop._frame_last_t = _frame_now
-            global fps_status
-            fps_status = f"fps:{1.0/_frame_dt:.1f}" if _frame_dt > 0 else "fps:--"
-            draw_line(2, f"  {fps_status}")
-        else:
-            draw_line(2, "")
+        # --- STATUS (row 2): schema-backed footer payload
+        _frame_now = time.monotonic()
+        _frame_dt = _frame_now - getattr(ui_loop, "_frame_last_t", _frame_now)
+        ui_loop._frame_last_t = _frame_now
+        global fps_status
+        fps_status = f"fps:{1.0/_frame_dt:.1f}" if _frame_dt > 0 else "fps:--"
+        footer_right_parts = [p for p in (fps_status, _scheduler_health_status) if p]
+        if sysex_status and (time.time() - sysex_status_time) < 3.0:
+            footer_right_parts.append(sysex_status)
+        ui_snapshot["fps_status"] = fps_status
+        ui_snapshot["footer"] = {
+            "left": ui_snapshot.get("status_text", ""),
+            "right": " | ".join(footer_right_parts),
+        }
+        footer_widget = build_footer_widget(ui_snapshot)
+        footer_rendered = _ui_line_renderer.render(footer_widget, Frame(cols=SCREEN_COLS, rows=1))
+        draw_line(2, footer_rendered[0] if footer_rendered else "")
 
         # --- SCREENSAVER CHECK: skip all drawing if active
         # In compositor mode the screensaver writes zeros directly to fb0 via
@@ -756,39 +779,31 @@ def _ui_loop_body():
 
         # --- PLUGIN VISUALS (respect y_offset)
         if _do_plugin_draw and not _use_notes_page_cache:
+            now_plugins = time.monotonic()
+            if (
+                now_plugins >= getattr(ui_loop, "_plugin_cache_next_t", 0.0)
+                or not hasattr(ui_loop, "_plugin_overlay_cache")
+            ):
+                ui_loop._plugin_overlay_cache = capture_plugin_overlay_widget(
+                    PLUGINS,
+                    state,
+                    SCREEN_COLS,
+                    SCREEN_ROWS,
+                    _plugin_draw_takes_state,
+                )
+                ui_loop._plugin_cache_next_t = now_plugins + (1.0 / 30.0)
+            overlay_rows = compose_overlay_rows(
+                getattr(ui_loop, "_plugin_overlay_cache"),
+                cols=SCREEN_COLS,
+                rows=SCREEN_ROWS,
+                start_row=state.get("y_offset", 0),
+            )
             if _compositor is not None:
-                now_plugins = time.monotonic()
-                if (
-                    now_plugins >= getattr(ui_loop, "_plugin_cache_next_t", 0.0)
-                    or not hasattr(ui_loop, "_plugin_rows_cache")
-                ):
-                    _pcap = _TerminalCapture(SCREEN_COLS, SCREEN_ROWS)
-                    _saved = sys.stdout
-                    sys.stdout = _pcap
-                    for mod in PLUGINS:
-                        if hasattr(mod, "draw"):
-                            try:
-                                if _plugin_draw_takes_state.get(id(mod), False):
-                                    mod.draw(state)
-                                else:
-                                    mod.draw()
-                            except Exception:
-                                pass
-                    sys.stdout = _saved
-                    ui_loop._plugin_rows_cache = list(_pcap.rows_with_content())
-                    ui_loop._plugin_cache_next_t = now_plugins + (1.0 / 30.0)
-                for row_idx, row_text in getattr(ui_loop, "_plugin_rows_cache", []):
+                for row_idx, row_text in overlay_rows:
                     _compositor.draw_text_line(row_idx, row_text)
             else:
-                for mod in PLUGINS:
-                    if hasattr(mod, "draw"):
-                        try:
-                            if _plugin_draw_takes_state.get(id(mod), False):
-                                mod.draw(state)
-                            else:
-                                mod.draw()
-                        except Exception:
-                            pass
+                for row_idx, row_text in overlay_rows:
+                    draw_line(row_idx, row_text)
 
         if _compositor is not None and current_page == 1 and not _use_notes_page_cache:
             try:
