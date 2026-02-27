@@ -6,7 +6,9 @@
         "type": "snapshot",
         "payload": {
           "schema_version": 4,
-          "transport": {"tick": 9}
+          "transport": {
+            "tick": 9
+          }
         }
       },
       "expect_has_deep_research": false
@@ -18,11 +20,15 @@
         "payload": {
           "schema": {
             "schema_version": 4,
-            "transport": {"tick": 11}
+            "transport": {
+              "tick": 11
+            }
           },
           "deep_research": {
             "version": 3,
-            "result": {"signature": "ok"}
+            "result": {
+              "signature": "ok"
+            }
           }
         }
       },
@@ -59,8 +65,12 @@
         "applied": 0,
         "dropped": "",
         "drop_reason": "late_result",
-        "result": {"score": 99},
-        "future_field": {"kept": true}
+        "result": {
+          "score": 99
+        },
+        "future_field": {
+          "kept": true
+        }
       },
       "expected": {
         "version": 7,
@@ -75,9 +85,25 @@
         "applied": false,
         "dropped": false,
         "drop_reason": "late_result",
-        "result": {"score": 99},
-        "future_field": {"kept": true}
+        "result": {
+          "score": 99
+        },
+        "future_field": {
+          "kept": true
+        }
       }
     }
-  ]
+  ],
+  "rollout_guard": {
+    "current_contract_version": "1.0",
+    "must_fail_without_version_bump": {
+      "schema_change_paths": [
+        "engine/state/schema.py"
+      ],
+      "required_files": [
+        "engine/deep_research/platform.py",
+        "tests/fixtures/deep_research_contract_cases.json"
+      ]
+    }
+  }
 }

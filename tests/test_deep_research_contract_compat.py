@@ -1,11 +1,12 @@
+import json
+import pathlib
 import unittest
 
-from engine.deep_research import (
-    ResearchContract,
-    current_contract_version,
-    freeze_payload,
-    run_research,
-)
+from engine.deep_research import ResearchContract, current_contract_version, freeze_payload, run_research
+from engine.deep_research.platform import RESEARCH_CONTRACT_MAJOR_VERSION, RESEARCH_CONTRACT_MINOR_VERSION
+
+
+FIXTURE = pathlib.Path(__file__).parent / "fixtures" / "deep_research_contract_cases.json"
 
 
 class DeepResearchContractCompatTest(unittest.TestCase):
@@ -58,6 +59,17 @@ class DeepResearchContractCompatTest(unittest.TestCase):
         self.assertEqual(result["error"]["code"], "deep_research_contract_incompatible")
         self.assertEqual(result["error"]["expected_contract_version"], current_contract_version())
         self.assertEqual(result["error"]["actual_contract_version"], "2.0")
+
+    def test_rollout_fixture_matches_runtime_contract_version(self):
+        fixture = json.loads(FIXTURE.read_text())
+        expected = f"{RESEARCH_CONTRACT_MAJOR_VERSION}.{RESEARCH_CONTRACT_MINOR_VERSION}"
+        self.assertEqual(fixture["rollout_guard"]["current_contract_version"], expected)
+
+    def test_breaking_schema_change_must_fail_without_version_bump_contract(self):
+        fixture = json.loads(FIXTURE.read_text())
+        rollout = fixture["rollout_guard"]["must_fail_without_version_bump"]
+        self.assertIn("engine/state/schema.py", rollout["schema_change_paths"])
+        self.assertIn("engine/deep_research/platform.py", rollout["required_files"])
 
 
 if __name__ == "__main__":

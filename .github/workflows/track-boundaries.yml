@@ -21,6 +21,7 @@ jobs:
       - name: Enforce contributor track boundaries
         env:
           ALLOW_CROSS_TRACK: ${{ contains(join(github.event.pull_request.labels.*.name, ','), 'allow-cross-track') && '1' || '0' }}
+          ALLOW_CROSS_TRACK_LABEL: ${{ contains(join(github.event.pull_request.labels.*.name, ','), 'allow-cross-track') && '1' || '0' }}
         run: python3 tools/check_track_boundaries.py
 
       - name: Verify fixture - valid Track A only sample passes

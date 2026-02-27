@@ -2,6 +2,7 @@ import json
 import pathlib
 import unittest
 
+from engine.deep_research.platform import RESEARCH_CONTRACT_MAJOR_VERSION
 from engine.state.schema import SCHEMA_VERSION, build_snapshot
 from ui.client import normalize_snapshot
 
@@ -68,6 +69,14 @@ class SchemaContractTest(unittest.TestCase):
         self.assertEqual(snapshot["deep_research"]["timestamp"], 9.5)
         self.assertIn("future", snapshot["deep_research"])
 
+
+    def test_breaking_schema_change_must_fail_without_version_bump_case(self):
+        fixture = json.loads((pathlib.Path(__file__).parent / "fixtures" / "deep_research_contract_cases.json").read_text())
+        rollout = fixture["rollout_guard"]["must_fail_without_version_bump"]
+
+        self.assertIn("engine/state/schema.py", rollout["schema_change_paths"])
+        # Policy requires major bump for schema-breaking changes; major must be at least 1.
+        self.assertGreaterEqual(RESEARCH_CONTRACT_MAJOR_VERSION, 1)
 
 
 if __name__ == "__main__":
