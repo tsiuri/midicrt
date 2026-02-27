@@ -23,6 +23,41 @@ On MIDI/transport: your existing approach—**Mido** with the **RtMidi backend**
 
 Finally, for SysEx: your project uses the “special” manufacturer ID **0x7D** (non-commercial) and the current MIDI Association policy explicitly distinguishes special IDs (including 0x7D) and their intended usage. citeturn0search0turn0search9 I recommend keeping 0x7D for private/local control, and optionally offering a configurable manufacturer ID for a future “public” protocol.
 
+## TODO: Full MIDI Session Recall (Page 16 Memory Sessions)
+
+Goal: complete recall for captured mini-sessions including notes/velocities, CC, and program changes, with deterministic playback/export/import behavior.
+
+### Scope
+- Capture and persist all core channel data in session memory:
+- `note_on`/`note_off` (including velocity + recovered durations)
+- `control_change`
+- `program_change`
+- (next-tier) pitch bend, channel pressure, aftertouch
+
+### Plan
+1. Canonical clip/session schema
+- Define one internal clip/session model for page 16 memory sessions:
+- ordered event stream (stable ordering for same-tick events)
+- note-state map for robust duration closeout
+- transport context (`start_tick`, PPQN mapping, tempo/time-signature metadata segment)
+
+2. Capture path upgrade
+- Expand experimental memory capture to store full event stream (not just note+CC subsets).
+- Keep both structured note spans for rendering and raw/event-level data for exact export.
+
+3. MIDI export/import round-trip
+- Export each committed session to `.mid` with tempo + time-signature meta where available.
+- Include all captured channel events (notes, CC, program changes, etc.).
+- Add import path so saved sessions can be loaded back into page 16 memory browser.
+
+4. Recall UI
+- Session browser metadata (length, channels, CC count, program-change count, filename).
+- Keep page/session navigation behavior identical for live-captured and imported sessions.
+
+5. Validation
+- Round-trip tests: capture -> export -> import -> re-export consistency checks.
+- Edge-case tests for overlapping notes, zero-velocity note_on, all-notes-off handling.
+
 ## Finished (implemented since this report)
 
 The modernization work outlined in this report has already advanced significantly in the live codebase. The following milestones are now complete.

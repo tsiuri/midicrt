@@ -74,6 +74,14 @@ _MINI_FLARE_CORE = _rgb565(0, 255, 80)
 _MINI_FLARE_GLOW = _rgb565(0, 140, 45)
 _BADGE_UPDATE_HZ = 24.0
 
+# Piano-roll guide lines (all monochrome-green friendly).
+_ROLL_H_DOT = _rgb565(0, 38, 15)        # faint between-note dotted rows
+_ROLL_H_DOT_C = _rgb565(0, 68, 27)      # slightly brighter on C rows
+_ROLL_V_BAR_DOT = _rgb565(0, 86, 33)    # dotted bar-tracking verticals
+_CC_LANE_BG = _rgb565(0, 24, 10)
+_CC_LANE_BAR = _rgb565(0, 120, 44)
+_CC_LANE_BAR_HI = _rgb565(0, 185, 64)
+
 
 class CompositorRenderer(TextRenderer):
     """Routes all midicrt rendering through fb/compositor (PIL → fb0).
@@ -591,7 +599,7 @@ class CompositorRenderer(TextRenderer):
         """Render the piano roll with pixel-resolution coloured note bars."""
         comp = self.comp
         cw, cell_h = comp.char_w, comp.char_h
-        LEFT_CHARS = 10   # matches pianoroll.py LEFT_MARGIN
+        LEFT_CHARS = max(1, int(getattr(widget, "left_margin", 10)))
 
         # --- Timeline row ---
         px_y = (PAGE_Y_OFFSET + y_row) * cell_h
@@ -626,11 +634,45 @@ class CompositorRenderer(TextRenderer):
 
         pitch_high = widget.pitch_high if widget.pitch_high else (widget.pitches[0] if widget.pitches else None)
         pitch_low = widget.pitch_low if widget.pitch_low else (widget.pitches[-1] if widget.pitches else None)
+        pitch_rows = min(len(widget.pitches), max(0, frame.rows - y_row))
         roll_top_px = (PAGE_Y_OFFSET + y_row) * cell_h
+        roll_bottom_px = roll_top_px + (pitch_rows * cell_h)
         x0 = LEFT_CHARS * cw
 
         spans = getattr(widget, "spans", None) or []
         columns = getattr(widget, "columns", None) or []
+        cc_lanes = getattr(widget, "cc_lanes", None) or []
+
+        # --- Faint dotted pitch separators + brighter C-row separators ---
+        if pitch_rows > 0 and roll_cols > 0:
+            x_left = x0
+            x_right = x0 + roll_cols * cw
+            buf = comp._buf
+            for row_idx in range(1, pitch_rows):
+                pitch = widget.pitches[row_idx]
+                dot_y = roll_top_px + row_idx * cell_h
+                if not (0 <= dot_y < buf.shape[0]):
+                    continue
+                dot_colour = _ROLL_H_DOT_C if (pitch % 12 == 0) else _ROLL_H_DOT
+                buf[dot_y, x_left + (row_idx & 1):x_right:4] = dot_colour
+
+        # --- Vertical dotted bar guides through the full roll area ---
+        if pitch_rows > 0 and roll_cols > 0:
+            ticks_per_col = max(1, int(getattr(widget, "ticks_per_col", 1)))
+            tick_anchor = int(getattr(widget, "tick_now", getattr(widget, "tick_right", 0)))
+            tick_left = tick_anchor - max(1, roll_cols - 1) * ticks_per_col
+            tick_right_edge = tick_anchor + ticks_per_col
+            px_per_tick = cw / ticks_per_col
+            x_left = x0
+            x_right = x0 + roll_cols * cw
+            bar_ticks = 24 * 4
+            first_bar = ((tick_left + bar_ticks - 1) // bar_ticks) * bar_ticks
+            t = first_bar
+            while t <= tick_right_edge:
+                px_x = x_left + int(round((t - tick_left) * px_per_tick))
+                if x_left <= px_x < x_right:
+                    comp._buf[roll_top_px:roll_bottom_px:3, px_x] = _ROLL_V_BAR_DOT
+                t += bar_ticks
 
         # Pitches that currently have any visible bar get reverse labels.
         highlight_pitches = set()
@@ -733,6 +775,36 @@ class CompositorRenderer(TextRenderer):
                             ch_idx = (int(cell.channel) - 1) if cell.channel is not None else 0
                             color = self._vel_lut[ch_idx % 16][min(cell.velocity, 127)]
                             comp.rect(x0 + i * cw + 1, px_y + 1, cw - 1, cell_h - 2, color)
+
+        # --- CC lanes (page 16 memory mode): native pixel bars, no ASCII ramp ---
+        if cc_lanes and roll_cols > 0:
+            x_left = x0
+            x_right = x0 + roll_cols * cw
+            for lane in cc_lanes:
+                if y_row >= frame.rows:
+                    break
+                px_y = (PAGE_Y_OFFSET + y_row) * cell_h
+                comp.rect(0, px_y, LEFT_CHARS * cw, cell_h, _CC_LANE_BG)
+                cc_num = int(lane.get("cc", 0))
+                ch_num = int(lane.get("ch", 1))
+                label = f"CC{cc_num:03d}:{ch_num:02d} \u2502"
+                comp.text(0, px_y, label, fg=GREEN_DIM)
+                # Baseline + bar guides.
+                comp.rect(x_left, px_y + cell_h - 1, max(1, x_right - x_left), 1, _ROLL_H_DOT)
+                values = lane.get("values", [])
+                if isinstance(values, list):
+                    for i, raw_v in enumerate(values[:roll_cols]):
+                        v = int(raw_v) if raw_v is not None else -1
+                        if v < 0:
+                            continue
+                        v = max(0, min(127, v))
+                        h = 1 + int((v / 127.0) * max(1, cell_h - 2))
+                        bar_x = x_left + i * cw + 1
+                        bar_w = max(1, cw - 2)
+                        bar_y = px_y + cell_h - 1 - h
+                        bar_col = _CC_LANE_BAR_HI if v >= 96 else _CC_LANE_BAR
+                        comp.rect(bar_x, bar_y, bar_w, h, bar_col)
+                y_row += 1
 
         return y_row
 

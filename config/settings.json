@@ -98,7 +98,7 @@
     "smoothing": 0.55
   },
   "screensaver": {
-    "idle_timeout": 1.0
+    "idle_timeout": 60.0
   },
   "pagecycle": {
     "enabled": true,
@@ -311,5 +311,10 @@
       "clip_match_history_window": 16,
       "clip_match_top_k": 3
     }
+  },
+  "pianoroll_exp": {
+    "memory_max_sessions": 32,
+    "memory_export_dir": "captures/pianoroll_exp",
+    "cc_lane_max_ratio": 0.25
   }
 }

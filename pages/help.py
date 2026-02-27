@@ -25,6 +25,8 @@ def _build_widget_lines(_state):
         "# - Voice Monitor",
         "$ - Config",
         "% - TimeSig Exp",
+        "^ - Piano Roll Exp",
+        "(Page 16) h - toggle memory mode (paged capture)",
         "(Page 8) y - Piano roll style toggle",
         "0 - This help screen",
         "Q - Quit program",

@@ -1301,13 +1301,30 @@ def _connect_pair(src_id: str, dst_id: str, existing_edges=None) -> bool:
 
 
 
-def _close_port_safely(port) -> None:
+def _close_port_safely(port, timeout_s: float = 0.5) -> None:
+    """Best-effort, non-blocking MIDI port close.
+
+    RtMidi close can occasionally hang during shutdown on this target.
+    Close in a daemon thread and continue if timeout expires.
+    """
     if port is None:
         return
-    try:
-        port.close()
-    except Exception:
-        pass
+
+    done = threading.Event()
+
+    def _do_close():
+        try:
+            port.close()
+        except Exception:
+            pass
+        finally:
+            done.set()
+
+    t = threading.Thread(target=_do_close, daemon=True, name="midi-close")
+    t.start()
+    t.join(max(0.0, float(timeout_s)))
+    if not done.is_set():
+        _append_runtime_log("[MIDI] port close timed out; continuing asynchronously")
 
 
 def _open_preferred_input():
@@ -1422,7 +1439,10 @@ def keyboard_listener():
             # wake from screensaver; swallow the keypress
             if _ss and _ss.is_active():
                 _ss.deactivate()
-                continue
+                # In compositor mode, screensaver "active" may be set even
+                # though blanking is skipped; do not force a double-tap.
+                if _compositor is None:
+                    continue
 
             # notify page cycler of user activity
             if _pc:
@@ -1442,6 +1462,11 @@ def keyboard_listener():
             if key.is_sequence and key.name == "KEY_ESCAPE":
                 exit_flag = True
                 break
+            elif key == "\x03":
+                # In some tty modes Ctrl-C arrives as a literal keypress
+                # instead of SIGINT. Treat it as quit for reliable restarts.
+                exit_flag = True
+                break
             elif key in "0123456789":
                 switch_page(key)
                 continue
@@ -1459,6 +1484,9 @@ def keyboard_listener():
                 continue
             elif key == "%":
                 switch_page(15)
+                continue
+            elif key == "^":
+                switch_page(16)
                 continue
             elif key.lower() == "t":
                 switch_page(10)

@@ -1,7 +1,7 @@
 """Widget tree and layout primitives for TTY-safe rendering."""
 
 from dataclasses import dataclass, field
-from typing import List
+from typing import Any, List
 
 
 @dataclass(frozen=True)
@@ -102,6 +102,7 @@ class PianoRollWidget(Widget):
     tick_right: int = 0
     tick_now: int = 0
     timeline: str = ""
+    cc_lanes: List[dict[str, Any]] = field(default_factory=list)
     left_margin: int = 10
     style_mode: str = "text"
 
