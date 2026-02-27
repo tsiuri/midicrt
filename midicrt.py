@@ -1176,6 +1176,55 @@ def _connect_pair(src_id: str, dst_id: str, existing_edges=None) -> bool:
     return False
 
 
+
+
+def _close_port_safely(port) -> None:
+    if port is None:
+        return
+    try:
+        port.close()
+    except Exception:
+        pass
+
+
+def _open_preferred_input():
+    """Open preferred MIDI input with hardware-first strategy + virtual fallback."""
+    direct_input_name = _pick_midi_input_name()
+    if direct_input_name:
+        port = mido.open_input(direct_input_name)
+        status = f"[MIDI] open success attempt=1 mode=direct port={direct_input_name}"
+        _log_autoconnect(status)
+        _append_runtime_log(status)
+        return port, direct_input_name, "direct"
+
+    port = mido.open_input("GreenCRT Monitor", virtual=True)
+    _install_midi_error_filter(port)
+    try:
+        target_name = getattr(port, "name", "GreenCRT Monitor")
+    except Exception:
+        target_name = "GreenCRT Monitor"
+    autoconnect_dynamic(target_name)
+    status = f"[MIDI] open success attempt=1 mode=virtual port={target_name}"
+    _log_autoconnect(status)
+    _append_runtime_log(status)
+    return port, target_name, "virtual"
+
+
+def _reopen_input_port(prev_port, attempt, reason):
+    _close_port_safely(prev_port)
+    backoff = min(5.0, 0.25 * (2 ** max(0, attempt - 1)))
+    fail_status = f"[MIDI] reopen attempt={attempt} waiting={backoff:.2f}s reason={reason}"
+    _log_autoconnect(fail_status)
+    _append_runtime_log(fail_status)
+    if not exit_flag:
+        time.sleep(backoff)
+    port, selected_name, mode = _open_preferred_input()
+    ok_status = f"[MIDI] reopen success attempt={attempt} mode={mode} port={selected_name}"
+    _log_autoconnect(ok_status)
+    _append_runtime_log(ok_status)
+    return port
+
+
 def _pick_midi_input_name() -> str | None:
     """Prefer direct hardware MIDI input before creating a virtual monitor port."""
     hints = [
@@ -1365,27 +1414,20 @@ def main(profile="run_tui"):
 
     midi_in_port = None
     try:
-        direct_input_name = _pick_midi_input_name()
-        if direct_input_name:
-            midi_in_port = mido.open_input(direct_input_name)
-            print(f"[Info] Listening on '{direct_input_name}'")
-        else:
-            midi_in_port = mido.open_input("GreenCRT Monitor", virtual=True)
-            _install_midi_error_filter(midi_in_port)
-            print("[Info] Listening on 'GreenCRT Monitor'")
-            time.sleep(0.25)  # give ALSA time to register the new virtual ports
-            try:
-                target_name = getattr(midi_in_port, "name", "GreenCRT Monitor")
-            except Exception:
-                target_name = "GreenCRT Monitor"
-            autoconnect_dynamic(target_name)
+        midi_in_port, selected_input_name, selected_mode = _open_preferred_input()
+        print(f"[Info] Listening on '{selected_input_name}' ({selected_mode})")
         autoconnect_panic_output()
         threading.Thread(target=_panic_autoconnect_retry_loop, daemon=True, name="panic-autoconnect-retry").start()
 
         threading.Thread(target=ui_loop, daemon=True).start()
         threading.Thread(target=keyboard_listener, daemon=True).start()
 
-        ENGINE.run_input_loop(midi_in_port, lambda: exit_flag)
+        ENGINE.run_input_loop(
+            midi_in_port,
+            lambda: exit_flag,
+            reopen_port=_reopen_input_port,
+            on_port_status=lambda msg: (_log_autoconnect(msg), _append_runtime_log(msg)),
+        )
     except KeyboardInterrupt:
         sys.stdout.write(term.normal)
     except Exception as e:
@@ -1396,16 +1438,8 @@ def main(profile="run_tui"):
             SNAPSHOT_PUBLISHER.stop()
         except Exception:
             pass
-        # Avoid shutdown hangs in RtMidiIn::closePort on ALSA.
-        if midi_in_port is not None:
-            try:
-                threading.Thread(
-                    target=lambda: midi_in_port.close(),
-                    daemon=True,
-                    name="midi-close",
-                ).start()
-            except Exception:
-                pass
+        # Ensure descriptor cleanup on shutdown.
+        _close_port_safely(midi_in_port)
         sys.stdout.write(term.normal)
 
 if __name__ == "__main__":
