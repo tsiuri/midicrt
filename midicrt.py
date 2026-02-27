@@ -10,6 +10,7 @@ from engine.core import MidiEngine
 from engine.ipc import SnapshotPublisher
 from engine.modules import LegacyPluginModule, PianoRollViewModule
 from engine.modules.interfaces import ScreenSaverModule, UserActivityModule
+from engine.adapters.aconnect_parser import parse_aconnect_output
 from ui.model import Frame
 from ui.renderers.text import TextRenderer
 from ui.adapters import build_widget_from_legacy_draw
@@ -865,25 +866,7 @@ def _parse_aconnect(flag: str):
         _log_autoconnect(f"[AutoConnect] Unable to run aconnect {flag}: {exc}")
         return []
 
-    entries = []
-    current = None
-    for line in result.stdout.splitlines():
-        m_client = _client_re.match(line)
-        if m_client:
-            current = (m_client.group(1), m_client.group(2))
-            continue
-        if current:
-            m_port = _port_re.match(line)
-            if m_port:
-                entries.append(
-                    (
-                        current[0],
-                        current[1],
-                        m_port.group(1),
-                        m_port.group(2),
-                    )
-                )
-    return entries
+    return parse_aconnect_output(result.stdout)
 
 
 def _parse_aconnect_edges():

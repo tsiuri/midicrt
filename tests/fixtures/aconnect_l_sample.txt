@@ -1,0 +1,12 @@
+client 0: 'System' [type=kernel]
+    0 'Timer           '
+    1 'Announce        '
+        Connecting To: 129:0
+client 24: 'USB MIDI Interface' [type=kernel,card=2]
+    0 'USB MIDI Interface MIDI 1'
+        Connected From: 20:0
+client 129: 'RtMidiIn Client' [type=user,pid=2453]
+    0 'GreenCRT Monitor'
+        Connected From: 24:0
+client 130: 'RtMidiIn Client' [type=user,pid=2454]
+    0 'Aux Monitor'
