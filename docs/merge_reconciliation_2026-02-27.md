@@ -26,3 +26,25 @@ Source-of-truth comparison between documented claims and current repository enfo
 ## Notes on non-mismatches reviewed
 - PR metadata fields for lane/branch/ticket are present in `.github/pull_request_template.md`.
 - No standalone CI validator for PR metadata presence/validity is found in current workflows; readiness docs that call this out as missing remain consistent with repo state.
+
+
+## Baseline sync reconciliation (2026-02-27)
+
+### Fetch attempt and pilot baseline
+- Attempted: `git remote add origin https://github.com/tsiuri/midicrt.git`
+- Attempted: `git fetch origin master --prune`
+- Result: blocked by network/proxy in this runtime (`CONNECT tunnel failed, response 403`).
+- **Pilot baseline SHA (provisional in this runtime):** `86d8d30bd27b80b244590e47bb50f8275599136d` (local `work` HEAD).
+- **Merge timestamp (recorded):** `2026-02-27T06:36:01Z`.
+
+### Documented merge strategy
+1. In maintainer environment with working GitHub access, re-run `git fetch origin master --prune`.
+2. Resolve baseline SHA as `git rev-parse origin/master` and replace the provisional SHA in:
+   - `docs/parallel_execution_board.md` (WB-000 row)
+   - `docs/contributor_tracks.md` (Start-from-here block)
+3. Reconcile local divergence with a no-feature sync path only:
+   - `git checkout work`
+   - `git merge --no-ff origin/master`
+   - resolve conflicts without introducing feature work; limit changes to upstream sync and reconciliation artifacts.
+4. Open/maintain a dedicated **baseline sync** PR containing only these sync commits.
+5. Require all contributor lanes to branch from the finalized baseline SHA once merge completes.

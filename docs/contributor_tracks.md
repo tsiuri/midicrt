@@ -25,3 +25,16 @@ Only use an override when the contract boundary itself changes and both tracks m
 For lane definitions, branch naming, PR size limits, and the dependent-work handoff protocol, see:
 
 - `docs/parallel_dev_playbook.md`
+
+## Start-from-here baseline (2026-02-27)
+
+> Use this block before starting any lane work.
+
+1. Sync refs (maintainer environment): `git fetch origin master --prune`
+2. Branch from the shared baseline SHA: `86d8d30bd27b80b244590e47bb50f8275599136d`
+3. Create lane branch from baseline: `git checkout -b <lane>/<ticket> 86d8d30bd27b80b244590e47bb50f8275599136d`
+4. Verify baseline anchor: `git rev-parse --short HEAD`
+5. Record lane start in PR description: baseline SHA + UTC start timestamp.
+
+If network fetch is unavailable in your runtime, treat this SHA as provisional and re-anchor to `origin/master` as soon as maintainer access is available.
+
