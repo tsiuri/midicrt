@@ -44,10 +44,22 @@ Track for a rolling 2-week window unless noted otherwise.
 - [ ] **Cross-lane conflict rate < 10% of PRs**
   - Metric: `% of merged PRs requiring conflict resolution across >1 lane`.
   - Threshold: `< 10%`.
+  - Capture method (required):
+    1. Export merged PRs for pilot window (base `master`) to `artifacts/pilot/merged_prs.json`.
+    2. Export conflict-resolution events to `artifacts/pilot/conflict_events.json`.
+       - Count a conflict-resolution event when a PR includes one of:
+         - GitHub `mergeable_state = dirty` transition before merge,
+         - explicit `git merge --continue`/`rebase --continue` note in PR timeline,
+         - labeled incident in `docs/pilot_incident_log_template.md` entries.
+    3. Compute with `scripts/calc_conflict_rate.py`:
+       `python scripts/calc_conflict_rate.py --merged-prs artifacts/pilot/merged_prs.json --conflict-events artifacts/pilot/conflict_events.json --window-start <ISO8601> --window-end <ISO8601> --output artifacts/pilot/conflict_rate_summary.json`.
+    4. Store machine-readable fields: `window_start`, `window_end`, `merged_pr_count`, `conflict_resolution_events`, `conflict_rate`.
+  - Evidence: summary JSON linked in `docs/parallel_pilot_evidence_index.md`.
 
 - [ ] **Median CI duration < 8 minutes**
   - Metric: median wall-clock time for required CI checks on merged PRs.
   - Threshold: `< 8:00`.
+  - Capture method: run `scripts/aggregate_ci_timings.py` against exported workflow-run JSON and archive output at `artifacts/pilot/ci_timing_summary.json`.
 
 - [ ] **Zero unreviewed contract-breaking merges**
   - Metric: count of breaking contract/version changes merged without required contract reviewer approval.
@@ -132,6 +144,7 @@ Run a controlled pilot with **2–3 simultaneous agents** before full rollout.
   - cross-lane merge conflicts,
   - CI latency regressions,
   - contract-version warnings/failures.
+- Log every incident in `docs/pilot_incident_log_template.md` (date, lane, severity, root cause, resolution).
 
 ### Day 5: pilot review and decision
 - Generate 1-week report with:
@@ -140,6 +153,7 @@ Run a controlled pilot with **2–3 simultaneous agents** before full rollout.
   - contract-governance violations,
   - top failure causes and remediation actions.
 - Record a formal go/no-go decision.
+- Publish `docs/parallel_pilot_evidence_index.md` with links to all supporting artifacts.
 
 ## Scale-up trigger (pilot -> full multi-agent)
 

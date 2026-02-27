@@ -16,8 +16,8 @@ Updated: 2026-02-27 (WB-004 closed)
 | WB-001 Ownership guard (`CODEOWNERS` + required review path) | Platform / Repo Admin | 2026-03-02 | 🔴 Not started | Missing `.github/CODEOWNERS`. |
 | WB-002 Contract-version governance check | Platform + QA-Contract | 2026-03-03 | 🟢 Active | Required CI gate added via `.github/workflows/contract-version-governance.yml`; policy/examples documented in `docs/parallel_readiness_checklist.md` (Contract governance policy details). |
 | WB-003 PR metadata validator (lane + branch policy) | DevEx / QA-Contract | 2026-03-01 | 🔴 Not started | PR template exists; enforcement check missing. |
-| WB-004 Fixture dependency map + validation | QA-Contract | 2026-03-04 | ✅ Complete | Dependency map + CI drift guard landed (`docs/fixture_dependency_map.md`, `.github/workflows/fixture-dependency-map-guard.yml`). |
-| WB-005 Real 1-week pilot execution (2–3 contributors) | Lane Leads | 2026-03-08 | 🔴 Not started | Must be run after WB-000..WB-004. |
+| WB-004 Fixture dependency map + validation | QA-Contract | 2026-03-04 | 🟡 In progress | Need committed dependency map artifact. |
+| WB-005 Real 1-week pilot execution (2–3 contributors) | Lane Leads | 2026-03-08 | 🟡 Ready to execute | Ready when WB-000..WB-004 are green and required pilot artifacts are pre-created (`docs/pilot_incident_log_template.md`, `docs/parallel_pilot_evidence_index.md`, `artifacts/pilot/*.json`). |
 
 ## Pilot metrics board (to be filled during real run)
 
@@ -45,7 +45,29 @@ Reference artifact: [Fixture Dependency Map](fixture_dependency_map.md).
 4. Re-issue formal GO/NO-GO with production evidence.
 
 
-## Evidence links
+## WB-005 readiness criteria (ready to execute)
 
-- WB-002 workflow: `.github/workflows/contract-version-governance.yml`
-- WB-002 policy and examples: `docs/parallel_readiness_checklist.md` → "Contract governance policy details (WB-002)"
+WB-005 may begin immediately once all items below are true:
+
+- WB-000 through WB-004 are complete (not blocked/in-progress).
+- Pilot artifact skeletons exist and are linked before Day 1:
+  - `docs/pilot_incident_log_template.md`
+  - `docs/parallel_pilot_evidence_index.md`
+- Pilot metrics capture paths are prepared:
+  - `artifacts/pilot/merged_prs.json`
+  - `artifacts/pilot/conflict_events.json`
+  - `artifacts/pilot/conflict_rate_summary.json`
+  - `artifacts/pilot/ci_runs.json`
+  - `artifacts/pilot/ci_timing_summary.json`
+
+## WB-005 required artifact list (for closeout)
+
+The WB-005 closeout review must include links to:
+
+1. Daily incident log entries (date, lane, severity, root cause, resolution).
+2. Conflict-rate summary JSON (`merged PR count` vs `conflict-resolution events`).
+3. CI timing summary JSON (median and p95).
+4. Contract-governance violation tally evidence.
+5. Final GO/NO-GO report and decision owner sign-off.
+
+All links should be indexed in `docs/parallel_pilot_evidence_index.md`.
