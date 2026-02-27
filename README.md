@@ -316,6 +316,7 @@ Aligned with `deep-research-report.md`, the project has moved from architecture 
 - harden observer behavior for long-running multi-client use.
 
 Before scaling to many simultaneous agents, use the go/no-go checklist: [`docs/parallel_readiness_checklist.md`](docs/parallel_readiness_checklist.md).
+Parallelizable migration slices are tracked on the execution board: [`docs/parallel_execution_board.md`](docs/parallel_execution_board.md).
 
 ### DeepResearch module contract (schema + versioning)
 
