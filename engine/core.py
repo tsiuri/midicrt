@@ -16,6 +16,7 @@ from engine.adapters import LegacyPageEventAdapter
 from engine.modules.interfaces import EngineModule
 from engine.scheduler import ModuleScheduler
 from engine.state.schema import build_snapshot, normalize_deep_research_payload
+from engine.deep_research.platform import resolve_feature_flags
 from engine.state.tempo_map import TempoMap
 
 
@@ -69,10 +70,12 @@ class MidiEngine:
         self._capture_seq = 0
         self._command_hooks = command_hooks if isinstance(command_hooks, dict) else {}
         self._deep_research_cfg = deep_research_settings if isinstance(deep_research_settings, dict) else {}
+        self._deep_research_flags = resolve_feature_flags(self._deep_research_cfg)
         if not self._deep_research_cfg and isinstance(module_policies, dict):
             alt = module_policies.get("deep_research", {})
             if isinstance(alt, dict):
                 self._deep_research_cfg = dict(alt)
+        self._deep_research_flags = resolve_feature_flags(self._deep_research_cfg)
         self._scheduler = ModuleScheduler(
             module_policies=module_policies,
             overload_cost_ms=overload_cost_ms,
@@ -158,6 +161,7 @@ class MidiEngine:
                 "dropped": False,
                 "drop_reason": "",
                 "event_kind": str(event.get("kind", "")),
+                "feature_flags": dict(self._deep_research_flags),
                 "result": {},
             }
         )
@@ -165,6 +169,8 @@ class MidiEngine:
 
     def _apply_deep_research_result(self, source_version: int, source_timestamp: float, source_tick: int, result: Any) -> None:
         now_ts = time.time()
+        include_metadata = self._deep_research_flags.get("enable_payload_metadata", True)
+        include_result = self._deep_research_flags.get("enable_payload_result", True)
         payload = {
             "version": int(source_version),
             "timestamp": now_ts,
@@ -177,9 +183,16 @@ class MidiEngine:
             "applied": True,
             "dropped": False,
             "drop_reason": "",
-            "result": deepcopy(result) if isinstance(result, dict) else {"value": deepcopy(result)},
+            "result": deepcopy(result) if include_result and isinstance(result, dict) else ({"value": deepcopy(result)} if include_result else {}),
         }
-        payload["lag_ms"] = max(0.0, (now_ts - float(source_timestamp)) * 1000.0)
+        if not include_metadata:
+            payload["produced_at"] = 0.0
+            payload["source_snapshot_version"] = 0
+            payload["source_snapshot_timestamp"] = 0.0
+            payload["source_tick"] = 0
+            payload["lag_ms"] = 0.0
+        else:
+            payload["lag_ms"] = max(0.0, (now_ts - float(source_timestamp)) * 1000.0)
         with self._lock:
             if source_version < self._deep_research_latest_snapshot_version:
                 payload["stale"] = True
@@ -199,6 +212,10 @@ class MidiEngine:
             active_notes = {ch: set(notes) for ch, notes in self.state.active_notes.items()}
 
         module_state, views = self._collect_module_outputs()
+        if not self._deep_research_flags.get("enable_ui_surface_module_outputs", True):
+            module_state = {}
+        if not self._deep_research_flags.get("enable_ui_surface_views", True):
+            views = {}
         module_names = [getattr(mod, "name", mod.__class__.__name__) for mod in self.modules]
         scheduler_diag = self._scheduler.diagnostics(module_names)
         with self._lock:
@@ -211,6 +228,8 @@ class MidiEngine:
                 self._deep_research_outgoing = dict(self._deep_research_pending)
                 self._deep_research_pending = None
             deep_research_payload = dict(self._deep_research_outgoing)
+        if not self._deep_research_flags.get("enable_ui_surface_deep_research", True):
+            deep_research_payload = {}
 
         schema_snapshot = build_snapshot(
             timestamp=time.time(),
@@ -611,6 +630,8 @@ class MidiEngine:
                     self.state.status_text = f"overload:{','.join(overloaded[:3])}"
 
     def _enqueue_deep_research(self, mod: Any, event: dict[str, Any], include_clock: bool) -> None:
+        if not self._deep_research_flags.get("enable_module_execution", True):
+            return
         if not self._scheduler.should_run_deep_research():
             return
         research_ctx = self._make_research_snapshot(event)

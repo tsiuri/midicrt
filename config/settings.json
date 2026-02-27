@@ -278,7 +278,15 @@
     "feature_flags": {
       "emit_views": true,
       "include_diagnostics": true,
-      "allow_partial_findings": true
+      "allow_partial_findings": true,
+      "enable_module_execution": true,
+      "enable_payload_result": true,
+      "enable_payload_metadata": true,
+      "enable_contract_module_outputs": true,
+      "enable_contract_views": true,
+      "enable_ui_surface_module_outputs": true,
+      "enable_ui_surface_views": true,
+      "enable_ui_surface_deep_research": true
     }
   }
 }

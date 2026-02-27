@@ -191,6 +191,18 @@ def normalize_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
     return _merge_optional_metadata(normalized, metadata_source)
 
 
+
+
+def _deep_research_status(snapshot: dict[str, Any]) -> str:
+    payload = snapshot.get("deep_research")
+    if not isinstance(payload, dict) or not payload:
+        return "deep_research unavailable"
+    result = payload.get("result")
+    if not isinstance(result, dict) or not result:
+        return "deep_research enabled (no result)"
+    keys = ",".join(sorted(result.keys())[:3])
+    return f"deep_research result[{keys}]"
+
 def render_snapshot(snapshot: dict[str, Any], cols: int = 80) -> list[str]:
     snapshot = normalize_snapshot(snapshot)
     transport = snapshot.get("transport", {})
@@ -219,6 +231,7 @@ def render_snapshot(snapshot: dict[str, Any], cols: int = 80) -> list[str]:
         "modules " + ", ".join(sorted(mods.keys())),
         "views " + ", ".join(sorted(views.keys())) if views else "views (none)",
         ("scheduler overload=" + ",".join(overloaded[:3])) if overloaded else "scheduler ok",
+        _deep_research_status(snapshot),
     ]
 
     return [ln[:cols].ljust(cols) for ln in lines]
