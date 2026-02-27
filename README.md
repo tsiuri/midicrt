@@ -320,7 +320,7 @@ Use this exact staged sequence whenever changing `ResearchContract` or DeepResea
 
 ### Hardening checklist (remaining)
 
-- [~] **Decoupling:** move residual page-specific compatibility shims out of core scheduling paths and into explicit adapters.
+- [x] **Decoupling:** moved residual page-specific compatibility shims out of core scheduling paths and into explicit adapters.
 - [~] **Tests:** broaden schema/IPC/tempo-map contract tests and add failure-mode coverage for renderer/runtime fallback.
 - [~] **Observer hardening:** validate reconnect/backpressure behavior under sustained snapshot fan-out and document operational limits.
 
@@ -330,7 +330,7 @@ Status tags: `[ ]` not started, `[~]` in progress, `[x]` done.
 
 Future roadmap entries should include both owner and rough estimate in days for planning reliability.
 
-1. `[~]` Engine/page decoupling pass — **Owner:** core/engine — **Estimate:** 3–4 days
+1. `[x]` Engine/page decoupling pass — **Owner:** core/engine — **Estimate:** merged (0 days remaining)
 2. `[~]` Contract + IPC + tempo-map test expansion — **Owner:** qa/infrastructure — **Estimate:** 2–3 days
 3. `[ ]` Observer hardening and runbook updates — **Owner:** runtime/ops — **Estimate:** 1–2 days
 
