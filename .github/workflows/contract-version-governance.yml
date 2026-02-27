@@ -1,0 +1,200 @@
+name: Contract Version Governance
+
+on:
+  pull_request:
+    types:
+      [opened, synchronize, reopened, edited, labeled, unlabeled, review_requested, review_request_removed, ready_for_review]
+
+jobs:
+  contract-version-governance:
+    name: contract-version-governance
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    env:
+      CONTRACT_SURFACE_GLOBS: |
+        lane-interface-docs:docs/parallel_readiness_checklist.md
+        lane-interface-docs:docs/parallel_execution_board.md
+        lane-interface-docs:engine/deep_research/contract_versioning.md
+        shared-schema-config:engine/deep_research/platform.py
+        shared-schema-config:engine/deep_research/logic.py
+        shared-schema-config:engine/state/schema.py
+        shared-schema-config:config/settings.json
+        fixture-contracts:tests/fixtures/**/*.json
+        fixture-contracts:tests/fixtures/**/*.yaml
+        fixture-contracts:tests/test_deep_research_contract_compat.py
+      DESIGNATED_BREAKING_REVIEWERS: |
+        tsiuri
+        qa-contract
+      BREAKING_APPROVAL_LABEL: contract-breaking-approved
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Ensure base branch is available
+        run: git fetch origin "${{ github.base_ref }}" --depth=1
+
+      - name: Enforce contract governance policy
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: |
+          python3 - <<'PY'
+          from __future__ import annotations
+
+          import fnmatch
+          import json
+          import os
+          import re
+          import subprocess
+          import sys
+          import urllib.request
+          from pathlib import Path
+
+          IMPACT_RE = re.compile(r"^Contract-Impact:\s*(none|additive|breaking)\s*$", re.IGNORECASE | re.MULTILINE)
+          EXCEPTION_RE = re.compile(r"^Contract-Version-Exception:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
+          MAJOR_RE = re.compile(r"^RESEARCH_CONTRACT_MAJOR_VERSION\s*=\s*(\d+)\s*$", re.MULTILINE)
+          MINOR_RE = re.compile(r"^RESEARCH_CONTRACT_MINOR_VERSION\s*=\s*(\d+)\s*$", re.MULTILINE)
+
+          def run(cmd: list[str]) -> str:
+              proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+              if proc.returncode != 0:
+                  raise RuntimeError(proc.stderr.strip() or f"command failed: {' '.join(cmd)}")
+              return proc.stdout
+
+          def read_version(text: str, context: str) -> tuple[int, int]:
+              major = MAJOR_RE.search(text)
+              minor = MINOR_RE.search(text)
+              if not major or not minor:
+                  raise RuntimeError(f"{context}: unable to parse RESEARCH_CONTRACT_*_VERSION constants")
+              return int(major.group(1)), int(minor.group(1))
+
+          base_ref = f"origin/{os.environ['GITHUB_BASE_REF']}"
+          changed = [line.strip() for line in run(["git", "diff", "--name-only", f"{base_ref}...HEAD"]).splitlines() if line.strip()]
+
+          surface_specs: list[tuple[str, str]] = []
+          for raw in os.environ["CONTRACT_SURFACE_GLOBS"].splitlines():
+              raw = raw.strip()
+              if not raw:
+                  continue
+              category, pattern = raw.split(":", 1)
+              surface_specs.append((category, pattern))
+
+          triggered: list[tuple[str, str, str]] = []
+          for path in changed:
+              for category, pattern in surface_specs:
+                  if fnmatch.fnmatch(path, pattern):
+                      triggered.append((path, category, pattern))
+
+          if not triggered:
+              print("No contract-governed paths were modified; governance checks are skipped.")
+              sys.exit(0)
+
+          print("Contract governance surfaces touched:")
+          for path, category, pattern in triggered:
+              print(f"  - file='{path}' matched rule='{category}' via glob='{pattern}'")
+
+          pr_body = os.environ.get("PR_BODY") or ""
+          labels = {label.strip() for label in (os.environ.get("PR_LABELS") or "").split(",") if label.strip()}
+
+          errors: list[str] = []
+
+          impact_match = IMPACT_RE.search(pr_body)
+          if not impact_match:
+              errors.append(
+                  "Missing `Contract-Impact:` declaration in PR body (expected one of: none|additive|breaking)."
+              )
+              impact = None
+          else:
+              impact = impact_match.group(1).lower()
+              print(f"Declared contract impact: {impact}")
+
+          exception_match = EXCEPTION_RE.search(pr_body)
+          exception_note = exception_match.group(1).strip() if exception_match else ""
+          has_exception = bool(exception_note)
+
+          platform_path = "engine/deep_research/platform.py"
+          version_changed = False
+          if Path(platform_path).exists():
+              head_text = Path(platform_path).read_text(encoding="utf-8")
+              base_text = run(["git", "show", f"{base_ref}:{platform_path}"])
+              base_major, base_minor = read_version(base_text, "base")
+              head_major, head_minor = read_version(head_text, "head")
+              version_changed = (head_major, head_minor) != (base_major, base_minor)
+              print(
+                  f"Contract version base={base_major}.{base_minor} head={head_major}.{head_minor} changed={version_changed}"
+              )
+              if (head_major, head_minor) < (base_major, base_minor):
+                  errors.append(
+                      "Contract version moved backwards; increment version or provide a forward-only correction."
+                  )
+          else:
+              errors.append(f"Required version declaration file not found: {platform_path}")
+
+          if not version_changed and not has_exception:
+              errors.append(
+                  "No contract version bump detected and no `Contract-Version-Exception:` note provided."
+              )
+
+          if has_exception:
+              print(f"Structured exception note: {exception_note}")
+
+          if impact == "breaking":
+              approval_label = os.environ["BREAKING_APPROVAL_LABEL"].strip()
+              if approval_label not in labels:
+                  errors.append(
+                      f"Breaking change requires approval label `{approval_label}`. Current labels: {sorted(labels)}"
+                  )
+
+              allowed_reviewers = [line.strip() for line in os.environ["DESIGNATED_BREAKING_REVIEWERS"].splitlines() if line.strip()]
+              owner_repo = os.environ["GITHUB_REPOSITORY"]
+              pr_number = os.environ["PR_NUMBER"]
+              token = os.environ.get("GITHUB_TOKEN")
+              if not token:
+                  errors.append("GITHUB_TOKEN is required to verify designated reviewer approvals.")
+              else:
+                  url = f"https://api.github.com/repos/{owner_repo}/pulls/{pr_number}/reviews"
+                  req = urllib.request.Request(
+                      url,
+                      headers={
+                          "Authorization": f"Bearer {token}",
+                          "Accept": "application/vnd.github+json",
+                          "X-GitHub-Api-Version": "2022-11-28",
+                          "User-Agent": "contract-version-governance",
+                      },
+                  )
+                  with urllib.request.urlopen(req, timeout=20) as resp:
+                      reviews = json.loads(resp.read().decode("utf-8"))
+
+                  approved_logins = {
+                      r.get("user", {}).get("login", "")
+                      for r in reviews
+                      if str(r.get("state", "")).upper() == "APPROVED"
+                  }
+                  designated_approved = sorted(set(allowed_reviewers) & approved_logins)
+                  print(f"Designated reviewers configured: {allowed_reviewers}")
+                  print(f"Approved reviewers on PR: {sorted(approved_logins)}")
+
+                  if not designated_approved:
+                      errors.append(
+                          "Breaking change requires approval from a designated reviewer "
+                          f"({allowed_reviewers}); none found in current approvals."
+                      )
+
+          if errors:
+              print("\nContract governance check failed with actionable items:")
+              for idx, err in enumerate(errors, start=1):
+                  print(f"  {idx}. {err}")
+              print("\nTriggered files/rules:")
+              for path, category, pattern in triggered:
+                  print(f"  - {path} -> {category} ({pattern})")
+              sys.exit(1)
+
+          print("Contract governance policy checks passed.")
+          PY
