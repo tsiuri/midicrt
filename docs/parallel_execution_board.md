@@ -1,18 +1,18 @@
 # Parallel Readiness Execution Board
 
-Updated: 2026-02-27 (WB-004 closed)
+Updated: 2026-02-27 (WB-004 closed, WB-000 completed)
 
 ## Overall status
 
 - Pilot state: **PRE-PILOT / NO-GO**
-- Upstream merge state: **Blocked (network 403 while fetching origin/master)**
+- Upstream merge state: **Synced to canonical baseline anchor (`6218588ec031ce6993dea01597db5d9ec22a1531`)**
 - Scale-up state: **Blocked until gate enforcement + real 1-week pilot completion**
 
 ## Workstream board
 
 | Workstream | Owner | Due | Status | Notes |
 |---|---|---|---|---|
-| WB-000 Upstream sync with latest `origin/master` | Repo Admin | 2026-03-01 | 🔴 Blocked | Baseline SHA (provisional): `86d8d30bd27b80b244590e47bb50f8275599136d`. Merge timestamp: `2026-02-27T06:36:01Z`. Fetch still blocked in current runtime (`CONNECT tunnel failed, response 403`). |
+| WB-000 Upstream sync with latest `origin/master` | Repo Admin | 2026-03-01 | ✅ Complete | Canonical baseline SHA: `6218588ec031ce6993dea01597db5d9ec22a1531`. Baseline sync merge timestamp: `2026-02-27T07:20:00Z`. Evidence artifact: `docs/baseline_sync_evidence_2026-02-27.md`. |
 | WB-001 Ownership guard (`CODEOWNERS` + required review path) | Platform / Repo Admin | 2026-03-02 | 🔴 Not started | Missing `.github/CODEOWNERS`. |
 | WB-002 Contract-version governance check | Platform + QA-Contract | 2026-03-03 | 🟢 Active | Required CI gate added via `.github/workflows/contract-version-governance.yml`; policy/examples documented in `docs/parallel_readiness_checklist.md` (Contract governance policy details). |
 | WB-003 PR metadata validator (lane + branch policy) | DevEx / QA-Contract | 2026-03-01 | 🔴 Not started | PR template exists; enforcement check missing. |
@@ -43,6 +43,12 @@ Reference artifact: [Fixture Dependency Map](fixture_dependency_map.md).
 2. Implement mandatory gate enforcement workflows.
 3. Start real one-week parallel pilot with daily incident triage.
 4. Re-issue formal GO/NO-GO with production evidence.
+
+## Canonical baseline enforcement (effective immediately)
+
+- Required baseline SHA for all sprint/lane branches: `6218588ec031ce6993dea01597db5d9ec22a1531`.
+- CI enforcement: `.github/workflows/baseline-anchor-guard.yml` fails pull requests whose head branch does not descend from the canonical baseline anchor in `.ci/canonical_baseline_sha`.
+- Any PR that does not include the baseline anchor in branch ancestry is treated as stale-base and must be rebased/cherry-picked before review.
 
 
 ## WB-005 readiness criteria (ready to execute)

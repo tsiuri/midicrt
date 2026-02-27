@@ -1,0 +1,42 @@
+name: Baseline Anchor Guard
+
+on:
+  pull_request:
+
+jobs:
+  baseline-anchor-guard:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate branch descends from canonical baseline
+        run: |
+          set -euo pipefail
+          canonical_sha="$(tr -d '[:space:]' < .ci/canonical_baseline_sha)"
+          if [ -z "$canonical_sha" ]; then
+            echo "ERROR: .ci/canonical_baseline_sha is empty"
+            exit 1
+          fi
+
+          if ! git cat-file -e "${canonical_sha}^{commit}" 2>/dev/null; then
+            echo "Fetching baseline commit from origin..."
+            git fetch --no-tags --prune --depth=1 origin "$canonical_sha" || true
+          fi
+
+          if ! git cat-file -e "${canonical_sha}^{commit}" 2>/dev/null; then
+            echo "ERROR: Canonical baseline commit $canonical_sha is not available in CI checkout"
+            exit 1
+          fi
+
+          if git merge-base --is-ancestor "$canonical_sha" "$GITHUB_SHA"; then
+            echo "PASS: branch includes canonical baseline $canonical_sha"
+          else
+            echo "ERROR: stale base detected. Branch does not descend from canonical baseline $canonical_sha"
+            echo "Rebase/cherry-pick onto baseline before requesting review."
+            exit 1
+          fi
