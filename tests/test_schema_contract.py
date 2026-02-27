@@ -3,11 +3,22 @@ import pathlib
 import unittest
 
 from engine.deep_research.platform import RESEARCH_CONTRACT_MAJOR_VERSION
-from engine.state.schema import SCHEMA_VERSION, build_snapshot
+from engine.state.schema import SCHEMA_VERSION, build_snapshot, normalize_deep_research_payload
 from ui.client import normalize_snapshot
 
 
 FIXTURE = pathlib.Path(__file__).parent / "fixtures" / "schema_normalization_cases.json"
+CONTRACT_FIXTURE = pathlib.Path(__file__).parent / "fixtures" / "deep_research_contract_cases.json"
+
+
+def _resolve_path(data, dotted):
+    cur = data
+    for part in dotted.split("."):
+        if isinstance(cur, dict):
+            cur = cur[part]
+        else:
+            raise KeyError(dotted)
+    return cur
 
 
 class SchemaContractTest(unittest.TestCase):
@@ -70,8 +81,40 @@ class SchemaContractTest(unittest.TestCase):
         self.assertIn("future", snapshot["deep_research"])
 
 
+    def test_required_transport_quality_and_status_sections_present(self):
+        fixture = json.loads(CONTRACT_FIXTURE.read_text())
+        case = next(c for c in fixture["schema_contract"] if c.get("name") == "transport_and_status_sections_present_on_build_snapshot")
+
+        snapshot = build_snapshot(**case["build_snapshot_input"]).as_dict()
+        self.assertEqual(snapshot["schema_version"], SCHEMA_VERSION)
+        for dotted, expected in case["expected_snapshot_fields"].items():
+            with self.subTest(path=dotted):
+                self.assertEqual(_resolve_path(snapshot, dotted), expected)
+
+    def test_build_snapshot_defaults_new_sections_when_not_provided(self):
+        snapshot = build_snapshot(timestamp=1.0, tick=1, bar=1, running=False, bpm=0.0).as_dict()
+
+        self.assertEqual(snapshot["transport"]["quality"]["clock_jitter_rms"], 0.0)
+        self.assertEqual(snapshot["transport"]["quality"]["clock_jitter_p95"], 0.0)
+        self.assertEqual(snapshot["transport"]["quality"]["clock_drift_ppm"], 0.0)
+        self.assertEqual(snapshot["transport"]["microtiming"]["bins"], {})
+        self.assertEqual(snapshot["retrospective_capture"]["events_buffered"], 0)
+        self.assertFalse(snapshot["retrospective_capture"]["armed"])
+        self.assertEqual(snapshot["module_health"]["status"], "unknown")
+
+    def test_deep_research_fixture_contract_cases(self):
+        fixture = json.loads(CONTRACT_FIXTURE.read_text())
+        for case in fixture["schema_contract"]:
+            expected = case.get("expected")
+            if not isinstance(expected, dict):
+                continue
+            with self.subTest(case=case["name"]):
+                normalized = normalize_deep_research_payload(case["input"])
+                for key, value in expected.items():
+                    self.assertEqual(normalized[key], value)
+
     def test_breaking_schema_change_must_fail_without_version_bump_case(self):
-        fixture = json.loads((pathlib.Path(__file__).parent / "fixtures" / "deep_research_contract_cases.json").read_text())
+        fixture = json.loads(CONTRACT_FIXTURE.read_text())
         rollout = fixture["rollout_guard"]["must_fail_without_version_bump"]
 
         self.assertIn("engine/state/schema.py", rollout["schema_change_paths"])

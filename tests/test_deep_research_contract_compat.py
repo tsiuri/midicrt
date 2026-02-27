@@ -3,10 +3,21 @@ import pathlib
 import unittest
 
 from engine.deep_research import ResearchContract, current_contract_version, freeze_payload, run_research
+from ui.client import normalize_snapshot
 from engine.deep_research.platform import RESEARCH_CONTRACT_MAJOR_VERSION, RESEARCH_CONTRACT_MINOR_VERSION
 
 
 FIXTURE = pathlib.Path(__file__).parent / "fixtures" / "deep_research_contract_cases.json"
+
+
+def _resolve_path(data, dotted):
+    cur = data
+    for part in dotted.split("."):
+        if isinstance(cur, dict):
+            cur = cur[part]
+        else:
+            raise KeyError(dotted)
+    return cur
 
 
 class DeepResearchContractCompatTest(unittest.TestCase):
@@ -64,6 +75,29 @@ class DeepResearchContractCompatTest(unittest.TestCase):
         fixture = json.loads(FIXTURE.read_text())
         expected = f"{RESEARCH_CONTRACT_MAJOR_VERSION}.{RESEARCH_CONTRACT_MINOR_VERSION}"
         self.assertEqual(fixture["rollout_guard"]["current_contract_version"], expected)
+
+    def test_ipc_fixture_backward_compat_normalization(self):
+        fixture = json.loads(FIXTURE.read_text())
+        for case in fixture["ipc_compat"]:
+            with self.subTest(case=case["name"]):
+                normalized = normalize_snapshot(case["input"])
+                has_deep = isinstance(normalized.get("deep_research"), dict)
+                self.assertEqual(has_deep, case["expect_has_deep_research"])
+                if has_deep and "expected_version" in case:
+                    self.assertEqual(normalized["deep_research"]["version"], case["expected_version"])
+                if "expected_module_health_status" in case:
+                    self.assertEqual(normalized["module_health"]["status"], case["expected_module_health_status"])
+                if "expected_capture_armed" in case:
+                    self.assertEqual(normalized["retrospective_capture"]["armed"], case["expected_capture_armed"])
+
+    def test_new_metadata_sections_round_trip_from_legacy_schema_wrapper(self):
+        fixture = json.loads(FIXTURE.read_text())
+        case = next(c for c in fixture["ipc_compat"] if c["name"] == "legacy_schema_wrapper_with_metadata_sections")
+        normalized = normalize_snapshot(case["input"])
+
+        self.assertEqual(normalized["schema_version"], 5)
+        self.assertEqual(_resolve_path(normalized, "module_health.status"), "degraded")
+        self.assertTrue(_resolve_path(normalized, "retrospective_capture.armed"))
 
     def test_breaking_schema_change_must_fail_without_version_bump_contract(self):
         fixture = json.loads(FIXTURE.read_text())

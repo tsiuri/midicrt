@@ -210,9 +210,12 @@ class DeepResearchReplayContractsTest(unittest.TestCase):
     def test_schema_contract_validation_for_deep_research_fields(self):
         fixture = json.loads(CONTRACT_FIXTURE.read_text())
         for case in fixture["schema_contract"]:
+            expected = case.get("expected")
+            if not isinstance(expected, dict):
+                continue
             with self.subTest(case=case["name"]):
                 normalized = normalize_deep_research_payload(case["input"])
-                for key, value in case["expected"].items():
+                for key, value in expected.items():
                     self.assertEqual(normalized[key], value)
 
 
