@@ -12,7 +12,7 @@ Updated: 2026-02-27 (WB-004 closed)
 
 | Workstream | Owner | Due | Status | Notes |
 |---|---|---|---|---|
-| WB-000 Upstream sync with latest `origin/master` | Repo Admin | 2026-03-01 | 🔴 Blocked | Fetch blocked in current runtime (`CONNECT tunnel failed, response 403`). |
+| WB-000 Upstream sync with latest `origin/master` | Repo Admin | 2026-03-01 | 🔴 Blocked | Baseline SHA (provisional): `86d8d30bd27b80b244590e47bb50f8275599136d`. Merge timestamp: `2026-02-27T06:36:01Z`. Fetch still blocked in current runtime (`CONNECT tunnel failed, response 403`). |
 | WB-001 Ownership guard (`CODEOWNERS` + required review path) | Platform / Repo Admin | 2026-03-02 | 🔴 Not started | Missing `.github/CODEOWNERS`. |
 | WB-002 Contract-version governance check | Platform + QA-Contract | 2026-03-03 | 🟢 Active | Required CI gate added via `.github/workflows/contract-version-governance.yml`; policy/examples documented in `docs/parallel_readiness_checklist.md` (Contract governance policy details). |
 | WB-003 PR metadata validator (lane + branch policy) | DevEx / QA-Contract | 2026-03-01 | 🔴 Not started | PR template exists; enforcement check missing. |
