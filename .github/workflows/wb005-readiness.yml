@@ -1,0 +1,25 @@
+name: WB-005 Readiness
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  wb005-readiness:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Initialize pilot artifacts
+        run: python3 tools/init_pilot_artifacts.py
+
+      - name: Run WB-005 readiness check
+        run: python3 tools/check_wb005_readiness.py
