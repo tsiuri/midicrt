@@ -1,0 +1,10 @@
+client 0: 'System' [type=kernel]
+    0 'Timer           '
+    1 'Announce        '
+client 20: 'Cirklon' [type=user,pid=1557]
+    0 'MIDI 1          '
+    1 'MIDI 2          '
+client 24: 'USB MIDI Interface' [type=kernel,card=2]
+    0 'USB MIDI Interface MIDI 1'
+client 128: 'RtMidiOut Client' [type=user,pid=2452]
+    0 'GreenCRT Panic Out'

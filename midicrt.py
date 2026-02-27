@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # midicrt.py — CRT-style MIDI monitor / visualizer for Cirklon
 
-import os, sys, time, glob, importlib.util, subprocess, threading, re, argparse
+import os, sys, time, glob, importlib.util, subprocess, threading, argparse
 from configutil import load_section, save_section
 from inspect import signature
 from blessed import Terminal
@@ -10,6 +10,7 @@ from engine.core import MidiEngine
 from engine.ipc import SnapshotPublisher
 from engine.modules import LegacyPluginModule, PianoRollViewModule
 from engine.modules.interfaces import ScreenSaverModule, UserActivityModule
+from engine.adapters.aconnect_parser import parse_aconnect_output
 from ui.model import Frame
 from ui.renderers.text import TextRenderer
 from ui.adapters import build_widget_from_legacy_draw
@@ -791,10 +792,6 @@ def _ui_loop_body():
 # ---------------------------------------------------------------------
 # Autoconnect + keyboard listener + main
 # ---------------------------------------------------------------------
-_client_re = re.compile(r"^client\s+(\d+):\s+'([^']+)'")
-_port_re = re.compile(r"^\s+(\d+)\s+'([^']+)'")
-
-
 def _log_autoconnect(msg: str):
     AUTOCONNECT_LOG.append(msg)
     if len(AUTOCONNECT_LOG) > 32:
@@ -835,25 +832,7 @@ def _parse_aconnect(flag: str):
         _log_autoconnect(f"[AutoConnect] Unable to run aconnect {flag}: {exc}")
         return []
 
-    entries = []
-    current = None
-    for line in result.stdout.splitlines():
-        m_client = _client_re.match(line)
-        if m_client:
-            current = (m_client.group(1), m_client.group(2))
-            continue
-        if current:
-            m_port = _port_re.match(line)
-            if m_port:
-                entries.append(
-                    (
-                        current[0],
-                        current[1],
-                        m_port.group(1),
-                        m_port.group(2),
-                    )
-                )
-    return entries
+    return parse_aconnect_output(result.stdout)
 
 
 def _find_matching_port(flag: str, hints):
