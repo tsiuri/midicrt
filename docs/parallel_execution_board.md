@@ -60,6 +60,22 @@ WB-005 may begin immediately once all items below are true:
   - `artifacts/pilot/ci_runs.json`
   - `artifacts/pilot/ci_timing_summary.json`
 
+
+## Pilot start authorization
+
+Run the readiness checker before authorizing Day 1 of WB-005:
+
+```bash
+python3 tools/check_wb005_readiness.py
+```
+
+Authorization policy:
+
+- **GO (authorized):** script exits `0` and prints `RESULT: READY` after PASS lines for each criterion.
+- **NO-GO (blocked):** script exits non-zero and prints `RESULT: NOT READY` with one or more FAIL reasons.
+
+Record the checker output and timestamp in `docs/parallel_pilot_evidence_index.md` for auditability.
+
 ## WB-005 required artifact list (for closeout)
 
 The WB-005 closeout review must include links to:
