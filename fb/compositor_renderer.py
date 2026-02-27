@@ -508,6 +508,27 @@ class CompositorRenderer(TextRenderer):
     # Widget rendering
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _line_to_plain(line, cols: int) -> str:
+        """Fast plain-text extraction for compositor path (no ANSI styling)."""
+        if cols <= 0:
+            return ""
+        out = []
+        rem = cols
+        for seg in getattr(line, "segments", ()):
+            txt = getattr(seg, "text", "")
+            if not txt:
+                continue
+            if len(txt) >= rem:
+                out.append(txt[:rem])
+                rem = 0
+                break
+            out.append(txt)
+            rem -= len(txt)
+        if rem > 0:
+            out.append(" " * rem)
+        return "".join(out)
+
     def _render_widget(self, widget: Widget, frame: Frame, y_row: int) -> int:
         """Recursively render a widget into the compositor buffer.
 
@@ -543,9 +564,7 @@ class CompositorRenderer(TextRenderer):
             for line in widget.lines:
                 if y_row >= frame.rows:
                     break
-                plain = self.term.strip_seqs(
-                    self._render_line(line, frame.cols)
-                ).rstrip()
+                plain = self._line_to_plain(line, frame.cols).rstrip()
                 if plain:
                     px_y = (PAGE_Y_OFFSET + y_row) * self.comp.char_h
                     self.comp.text(0, px_y, plain, fg=GREEN_BRIGHT)

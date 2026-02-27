@@ -114,6 +114,8 @@ class MidiEngine:
         self._deep_research_latest_snapshot_version = 0
         self._deep_research_outgoing: dict[str, Any] = {}
         self._deep_research_pending: dict[str, Any] | None = None
+        self._diag_interval_s = 0.5
+        self._diag_next_ts = 0.0
 
     def _freeze_snapshot_payload(self, payload: Any) -> Any:
         if isinstance(payload, dict):
@@ -235,16 +237,55 @@ class MidiEngine:
         return snap
 
     def make_plugin_state(self, cols: int, rows: int, y_offset: int = 3) -> dict[str, Any]:
-        snap = self.get_snapshot()
+        # Fast path for high-frequency legacy/background hooks.
+        # Avoid get_snapshot() here: it builds module views + scheduler diagnostics.
+        with self._lock:
+            tick = int(self.state.tick_counter)
+            bar = int(self.state.bar_counter)
+            is_running = bool(self.state.running)
+            tempo_bpm = float(self.state.bpm)
         return {
-            "tick": snap["tick_counter"],
-            "bar": snap["bar_counter"],
-            "running": snap["running"],
-            "bpm": snap["bpm"],
+            "tick": tick,
+            "bar": bar,
+            "running": is_running,
+            "bpm": tempo_bpm,
             "cols": cols,
             "rows": rows,
             "y_offset": y_offset,
         }
+
+    def get_transport_state(self) -> dict[str, Any]:
+        """Lightweight transport/diag snapshot for per-event callbacks."""
+        with self._lock:
+            return {
+                "tick_counter": int(self.state.tick_counter),
+                "bar_counter": int(self.state.bar_counter),
+                "running": bool(self.state.running),
+                "bpm": float(self.state.bpm),
+                "diagnostics": dict(self.state.diagnostics) if isinstance(self.state.diagnostics, dict) else {},
+            }
+
+    def get_clock_state(self) -> dict[str, Any]:
+        """Minimal transport snapshot for high-frequency on_clock hooks."""
+        with self._lock:
+            tick = int(self.state.tick_counter)
+            bar = int(self.state.bar_counter)
+            is_running = bool(self.state.running)
+            tempo_bpm = float(self.state.bpm)
+        return {
+            "tick_counter": tick,
+            "bar_counter": bar,
+            "running": is_running,
+            "bpm": tempo_bpm,
+            # Legacy aliases commonly expected by older hooks.
+            "tick": tick,
+            "bar": bar,
+        }
+
+    def get_active_notes(self) -> dict[int, set[int]]:
+        """Cheap copy of active notes by channel for UI overlays."""
+        with self._lock:
+            return {int(ch): set(notes) for ch, notes in self.state.active_notes.items()}
 
     def ingest(self, msg: mido.Message) -> dict[str, Any]:
         event = self._normalize_event(msg)
@@ -259,7 +300,8 @@ class MidiEngine:
                 pass
         if self.publisher:
             try:
-                self.publisher.publish(self.get_snapshot()["schema"])
+                if self.publisher.wants_publish():
+                    self.publisher.publish(self.get_snapshot()["schema"], force=True)
             except Exception:
                 pass
         return event
@@ -497,6 +539,7 @@ class MidiEngine:
     def _run_modules(self, event: dict[str, Any]) -> None:
         kind = event["kind"]
         names: list[str] = []
+        clock_snapshot: dict[str, Any] | None = None
         for mod in self.modules:
             name = getattr(mod, "name", mod.__class__.__name__)
             names.append(name)
@@ -513,17 +556,22 @@ class MidiEngine:
                 pass
             if kind == "clock":
                 try:
-                    mod.on_clock(self.get_snapshot())
+                    if clock_snapshot is None:
+                        clock_snapshot = self.get_clock_state()
+                    mod.on_clock(clock_snapshot)
                 except Exception:
                     pass
             self._scheduler.end(name, start_ts)
 
-        diag = self._scheduler.diagnostics(names)
-        overloaded = diag.get("scheduler", {}).get("overloaded_modules", [])
-        with self._lock:
-            self.state.diagnostics = diag
-            if overloaded:
-                self.state.status_text = f"overload:{','.join(overloaded[:3])}"
+        now = time.monotonic()
+        if now >= self._diag_next_ts:
+            self._diag_next_ts = now + self._diag_interval_s
+            diag = self._scheduler.diagnostics(names)
+            overloaded = diag.get("scheduler", {}).get("overloaded_modules", [])
+            with self._lock:
+                self.state.diagnostics = diag
+                if overloaded:
+                    self.state.status_text = f"overload:{','.join(overloaded[:3])}"
 
     def _enqueue_deep_research(self, mod: Any, event: dict[str, Any], include_clock: bool) -> None:
         if not self._scheduler.should_run_deep_research():

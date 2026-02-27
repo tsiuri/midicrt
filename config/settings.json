@@ -155,6 +155,11 @@
           "enabled": true,
           "policy": "event_driven",
           "interval_hz": 10.0
+        },
+        "legacy.event_shim": {
+          "enabled": true,
+          "policy": "event_driven",
+          "interval_hz": 10.0
         }
       }
     }

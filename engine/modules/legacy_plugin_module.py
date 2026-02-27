@@ -2,9 +2,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from engine.modules.interfaces import MidiMessageHandler
-
-
 class LegacyPluginModule:
     """Compatibility adapter from plugin-style modules to EngineModule."""
 
@@ -12,6 +9,7 @@ class LegacyPluginModule:
         self.plugin = plugin
         self.name = getattr(plugin, "__name__", plugin.__class__.__name__)
         self._last_outputs: dict[str, Any] = {}
+        self._midi_handler = getattr(plugin, "handle", None)
 
     def on_event(self, event: dict[str, Any]) -> None:
         msg = event.get("raw")
@@ -27,9 +25,9 @@ class LegacyPluginModule:
             "note_off",
             "control_change",
             "program_change",
-        ) and isinstance(self.plugin, MidiMessageHandler):
+        ) and callable(self._midi_handler):
             try:
-                self.plugin.handle(msg)
+                self._midi_handler(msg)
             except Exception:
                 pass
 

@@ -9,7 +9,7 @@ import mido
 from engine.core import MidiEngine
 from engine.ipc import SnapshotPublisher
 from engine.modules import LegacyPluginModule, PianoRollViewModule
-from engine.modules.interfaces import LegacyPageModule, ScreenSaverModule, UserActivityModule
+from engine.modules.interfaces import ScreenSaverModule, UserActivityModule
 from ui.model import Frame
 from ui.renderers.text import TextRenderer
 from ui.adapters import build_widget_from_legacy_draw
@@ -295,6 +295,17 @@ try:
 except Exception:
     pass
 
+# De-dupe plugin list by module name (some plugins self-register on import).
+_seen_plugin_names = set()
+_unique_plugins = []
+for _mod in PLUGINS:
+    _name = getattr(_mod, "__name__", "")
+    if _name in _seen_plugin_names:
+        continue
+    _seen_plugin_names.add(_name)
+    _unique_plugins.append(_mod)
+PLUGINS = _unique_plugins
+
 # ---------------------------------------------------------------------
 # Page loader
 # ---------------------------------------------------------------------
@@ -335,7 +346,13 @@ def _sync_transport_globals(snapshot):
 
 def handle_engine_event(event, msg: mido.Message):
     global _scheduler_health_status
-    snapshot = ENGINE.get_snapshot()
+    snapshot = ENGINE.get_transport_state() if ENGINE else {
+        "running": running,
+        "tick_counter": tick_counter,
+        "bar_counter": bar_counter,
+        "bpm": bpm,
+        "diagnostics": {},
+    }
     diag = snapshot.get("diagnostics", {}) if isinstance(snapshot.get("diagnostics"), dict) else {}
     sched = diag.get("scheduler", {}) if isinstance(diag.get("scheduler"), dict) else {}
     overloaded = sched.get("overloaded_modules", []) if isinstance(sched.get("overloaded_modules"), list) else []
@@ -384,14 +401,14 @@ def switch_page(page):
 
 def _screensaver_module() -> ScreenSaverModule | None:
     for mod in PLUGINS:
-        if isinstance(mod, ScreenSaverModule):
+        if hasattr(mod, "is_active") and hasattr(mod, "deactivate"):
             return mod
     return None
 
 
 def _pagecycle_module() -> UserActivityModule | None:
     for mod in PLUGINS:
-        if isinstance(mod, UserActivityModule):
+        if hasattr(mod, "notify_keypress"):
             return mod
     return None
 
@@ -443,7 +460,7 @@ ENGINE = MidiEngine(
         "wake_screensaver": wake_screensaver,
         "set_config": set_config_section,
     },
-    legacy_pages_provider=lambda: {pid: pg for pid, pg in PAGES.items() if isinstance(pg, LegacyPageModule)},
+    legacy_pages_provider=lambda: dict(PAGES),
     current_page_provider=lambda: int(current_page),
     plugin_state_provider=plugin_state_dict,
     midi_activity_handler=_on_midi_activity,
@@ -532,7 +549,7 @@ def _ui_loop_body():
             last_page = current_page
             last_header = ""  # force header redraw after clear
 
-        snapshot = ENGINE.get_snapshot() if ENGINE else {
+        snapshot = ENGINE.get_transport_state() if ENGINE else {
             "tick_counter": tick_counter,
             "bar_counter": bar_counter,
             "running": running,
@@ -597,14 +614,16 @@ def _ui_loop_body():
         else:
             draw_line(1, base)
 
-        # --- STATUS (row 2): keep blank; footer plugins render status text
+        # --- STATUS (row 2): show FPS directly (footer may also render it)
         if _compositor is not None:
             _frame_now = time.monotonic()
             _frame_dt  = _frame_now - getattr(ui_loop, "_frame_last_t", _frame_now)
             ui_loop._frame_last_t = _frame_now
             global fps_status
             fps_status = f"fps:{1.0/_frame_dt:.1f}" if _frame_dt > 0 else "fps:--"
-        draw_line(2, "")
+            draw_line(2, f"  {fps_status}")
+        else:
+            draw_line(2, "")
 
         # --- SCREENSAVER CHECK: skip all drawing if active
         # In compositor mode the screensaver writes zeros directly to fb0 via
@@ -664,20 +683,27 @@ def _ui_loop_body():
         # --- PLUGIN VISUALS (respect y_offset)
         if _do_plugin_draw and not _use_notes_page_cache:
             if _compositor is not None:
-                _pcap = _TerminalCapture(SCREEN_COLS, SCREEN_ROWS)
-                _saved = sys.stdout
-                sys.stdout = _pcap
-                for mod in PLUGINS:
-                    if hasattr(mod, "draw"):
-                        try:
-                            if _plugin_draw_takes_state.get(id(mod), False):
-                                mod.draw(state)
-                            else:
-                                mod.draw()
-                        except Exception:
-                            pass
-                sys.stdout = _saved
-                for row_idx, row_text in _pcap.rows_with_content():
+                now_plugins = time.monotonic()
+                if (
+                    now_plugins >= getattr(ui_loop, "_plugin_cache_next_t", 0.0)
+                    or not hasattr(ui_loop, "_plugin_rows_cache")
+                ):
+                    _pcap = _TerminalCapture(SCREEN_COLS, SCREEN_ROWS)
+                    _saved = sys.stdout
+                    sys.stdout = _pcap
+                    for mod in PLUGINS:
+                        if hasattr(mod, "draw"):
+                            try:
+                                if _plugin_draw_takes_state.get(id(mod), False):
+                                    mod.draw(state)
+                                else:
+                                    mod.draw()
+                            except Exception:
+                                pass
+                    sys.stdout = _saved
+                    ui_loop._plugin_rows_cache = list(_pcap.rows_with_content())
+                    ui_loop._plugin_cache_next_t = now_plugins + (1.0 / 30.0)
+                for row_idx, row_text in getattr(ui_loop, "_plugin_rows_cache", []):
                     _compositor.draw_text_line(row_idx, row_text)
             else:
                 for mod in PLUGINS:
@@ -722,16 +748,15 @@ def _ui_loop_body():
                         except Exception:
                             badge_levels = None
                     try:
-                        schema = snapshot.get("schema", {})
-                        views = schema.get("views", {}) if isinstance(schema, dict) else {}
-                        if isinstance(views, dict):
-                            cand = views.get("pianoroll") or views.get("8")
+                        pr_page = PAGES.get(8)
+                        if pr_page and hasattr(pr_page, "get_view_payload"):
+                            cand = pr_page.get_view_payload()
                             if isinstance(cand, dict):
                                 badge_roll = cand
                     except Exception:
                         badge_roll = None
                     try:
-                        active_by_ch = snapshot.get("active_notes", {})
+                        active_by_ch = ENGINE.get_active_notes() if ENGINE else {}
                         if isinstance(active_by_ch, dict):
                             for notes in active_by_ch.values():
                                 if isinstance(notes, (list, tuple, set)):

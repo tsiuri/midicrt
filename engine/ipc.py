@@ -115,13 +115,13 @@ class SnapshotPublisher:
                 pass
 
     def publish(self, snapshot: dict[str, Any], force: bool = False) -> bool:
-        if not self.enabled or not self._running:
+        if not self.wants_publish(force=force):
             return False
-        interval = 1.0 / self.publish_hz
-        now = time.monotonic()
-        if not force and now - self._last_publish < interval:
-            return False
-        self._last_publish = now
+        with self._lock:
+            if not self._clients:
+                self._last_publish = time.monotonic()
+                return False
+        self._last_publish = time.monotonic()
 
         envelope = make_envelope(ENVELOPE_SNAPSHOT, _normalize_deep_research_metadata(snapshot))
         payload = (json.dumps(envelope, separators=(",", ":")) + "\n").encode("utf-8")
@@ -140,6 +140,17 @@ class SnapshotPublisher:
                     except OSError:
                         pass
         return True
+
+    def wants_publish(self, force: bool = False) -> bool:
+        if not self.enabled or not self._running:
+            return False
+        with self._lock:
+            if not self._clients:
+                return False
+        if force:
+            return True
+        interval = 1.0 / self.publish_hz
+        return (time.monotonic() - self._last_publish) >= interval
 
     def _send(self, client: socket.socket, envelope: dict[str, Any]) -> None:
         client.sendall((json.dumps(envelope, separators=(",", ":")) + "\n").encode("utf-8"))
