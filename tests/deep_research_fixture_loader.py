@@ -76,6 +76,10 @@ def validate_deep_research_sequence_fixture(case: dict[str, Any], fixture_path: 
                 f"{fixture_path.name}: active_notes[{channel!r}] must be a list of ints"
             )
 
+    module_outputs = case.get("module_outputs", {})
+    if not isinstance(module_outputs, dict):
+        raise FixtureValidationError(f"{fixture_path.name}: module_outputs must be an object when provided")
+
     expected = case["expected"]
     if not isinstance(expected, dict):
         raise FixtureValidationError(f"{fixture_path.name}: expected must be an object")
@@ -191,6 +195,54 @@ def validate_deep_research_sequence_fixture(case: dict[str, Any], fixture_path: 
                 raise FixtureValidationError(
                     f"{fixture_path.name}: expected.key_estimate.alternatives[{index}].confidence must be numeric"
                 )
+
+    motif_interval_ngrams = expected.get("motif_interval_ngrams")
+    if not isinstance(motif_interval_ngrams, list):
+        raise FixtureValidationError(
+            f"{fixture_path.name}: expected.motif_interval_ngrams must be a list"
+        )
+    for index, ngram in enumerate(motif_interval_ngrams):
+        if not isinstance(ngram, dict):
+            raise FixtureValidationError(
+                f"{fixture_path.name}: expected.motif_interval_ngrams[{index}] must be an object"
+            )
+        intervals = ngram.get("intervals")
+        if not isinstance(intervals, list) or not all(isinstance(v, int) for v in intervals):
+            raise FixtureValidationError(
+                f"{fixture_path.name}: expected.motif_interval_ngrams[{index}].intervals must be a list of ints"
+            )
+        if not isinstance(ngram.get("count"), int):
+            raise FixtureValidationError(
+                f"{fixture_path.name}: expected.motif_interval_ngrams[{index}].count must be an int"
+            )
+
+    clip_fingerprints = expected.get("clip_fingerprints")
+    if not isinstance(clip_fingerprints, dict):
+        raise FixtureValidationError(f"{fixture_path.name}: expected.clip_fingerprints must be an object")
+    for field in ("interval", "rhythm", "pcp"):
+        if not isinstance(clip_fingerprints.get(field), str):
+            raise FixtureValidationError(
+                f"{fixture_path.name}: expected.clip_fingerprints.{field} must be a string"
+            )
+
+    nearest_clip_matches = expected.get("nearest_clip_matches")
+    if not isinstance(nearest_clip_matches, list):
+        raise FixtureValidationError(
+            f"{fixture_path.name}: expected.nearest_clip_matches must be a list"
+        )
+    for index, match in enumerate(nearest_clip_matches):
+        if not isinstance(match, dict):
+            raise FixtureValidationError(
+                f"{fixture_path.name}: expected.nearest_clip_matches[{index}] must be an object"
+            )
+        if not isinstance(match.get("clip_id"), str):
+            raise FixtureValidationError(
+                f"{fixture_path.name}: expected.nearest_clip_matches[{index}].clip_id must be a string"
+            )
+        if not isinstance(match.get("score"), (int, float)):
+            raise FixtureValidationError(
+                f"{fixture_path.name}: expected.nearest_clip_matches[{index}].score must be numeric"
+            )
 
 
 def load_all_deep_research_sequence_fixtures() -> list[dict[str, Any]]:

@@ -1,0 +1,156 @@
+{
+  "name": "repeated_transposed_motif_variant",
+  "schema_version": 4,
+  "event": {
+    "kind": "clock"
+  },
+  "transport": {
+    "tick": 57,
+    "bar": 5,
+    "running": true,
+    "bpm": 110.0
+  },
+  "active_notes": {
+    "0": [
+      65,
+      69,
+      72,
+      74
+    ]
+  },
+  "module_outputs": {
+    "deep_research_tracks": {
+      "recent_clips": [
+        {
+          "clip_id": "motif_c",
+          "notes": [
+            48,
+            52,
+            55,
+            57
+          ]
+        },
+        {
+          "clip_id": "motif_f",
+          "notes": [
+            53,
+            57,
+            60,
+            62
+          ]
+        },
+        {
+          "clip_id": "contrast",
+          "notes": [
+            60,
+            63,
+            67,
+            70
+          ]
+        }
+      ]
+    }
+  },
+  "expected": {
+    "motif_span": 9,
+    "note_density": "medium",
+    "active_note_total": 4,
+    "chord_candidates": [
+      {
+        "label": "D m",
+        "root": 2,
+        "name": "m",
+        "confidence": 0.9125,
+        "missing_tones": [],
+        "roman": "ii",
+        "function": "predominant"
+      },
+      {
+        "label": "F maj",
+        "root": 5,
+        "name": "maj",
+        "confidence": 0.9125,
+        "missing_tones": [],
+        "roman": "IV",
+        "function": "subdominant"
+      },
+      {
+        "label": "D 1-5",
+        "root": 2,
+        "name": "1-5",
+        "confidence": 0.825,
+        "missing_tones": [],
+        "roman": "II",
+        "function": "predominant"
+      }
+    ],
+    "key_estimate": {
+      "label": "C maj",
+      "confidence": 1.0,
+      "alternatives": [
+        {
+          "label": "D min",
+          "confidence": 1.0
+        },
+        {
+          "label": "F maj",
+          "confidence": 1.0
+        },
+        {
+          "label": "G min",
+          "confidence": 1.0
+        }
+      ]
+    },
+    "microtiming": {
+      "subdivision": 4,
+      "ticks_per_beat": 24.0,
+      "histogram": {
+        "early": 0,
+        "on_grid": 0,
+        "late": 0
+      },
+      "aggregate": {
+        "count": 0,
+        "mean_offset": 0.0,
+        "median_offset": 0.0
+      },
+      "per_channel": {}
+    },
+    "time_signature": {
+      "current_signature": "4/4",
+      "confidence": 0.0,
+      "stability_window": 0,
+      "pending_change": null
+    },
+    "motif_interval_ngrams": [
+      {
+        "intervals": [
+          4,
+          3,
+          2
+        ],
+        "count": 1
+      }
+    ],
+    "clip_fingerprints": {
+      "interval": "e09e87861114e21a",
+      "rhythm": "5b05437a0f836d20",
+      "pcp": "dbf812a0cf2b14c7"
+    },
+    "nearest_clip_matches": [
+      {
+        "clip_id": "motif_c",
+        "score": 1.0
+      },
+      {
+        "clip_id": "motif_f",
+        "score": 1.0
+      },
+      {
+        "clip_id": "contrast",
+        "score": 0.8222
+      }
+    ]
+  }
+}

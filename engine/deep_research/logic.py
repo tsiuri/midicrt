@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass
+from pathlib import Path
 from statistics import median
 from typing import Any
 
@@ -23,6 +26,9 @@ class ResearchResult:
     key_estimate: dict[str, Any] | None
     microtiming: dict[str, Any]
     time_signature: dict[str, Any]
+    motif_interval_ngrams: list[dict[str, Any]]
+    clip_fingerprints: dict[str, str]
+    nearest_clip_matches: list[dict[str, Any]]
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -33,6 +39,9 @@ class ResearchResult:
             "key_estimate": self.key_estimate,
             "microtiming": self.microtiming,
             "time_signature": self.time_signature,
+            "motif_interval_ngrams": self.motif_interval_ngrams,
+            "clip_fingerprints": self.clip_fingerprints,
+            "nearest_clip_matches": self.nearest_clip_matches,
         }
 
 
@@ -65,6 +74,35 @@ HARMONIC_FUNCTIONS = {
     9: "submediant",
     11: "leading",
 }
+DEFAULT_LOGIC_CONFIG = {
+    "motif_ngram_n": 3,
+    "motif_ngram_window": 8,
+    "clip_match_history_window": 16,
+    "clip_match_top_k": 3,
+}
+
+
+def _repo_settings_path() -> Path:
+    return Path(__file__).resolve().parents[2] / "config" / "settings.json"
+
+
+def _load_logic_config() -> dict[str, int]:
+    cfg = dict(DEFAULT_LOGIC_CONFIG)
+    settings_path = _repo_settings_path()
+    try:
+        parsed = json.loads(settings_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return cfg
+
+    deep_cfg = parsed.get("deepresearch", {}) if isinstance(parsed, dict) else {}
+    logic_cfg = deep_cfg.get("logic", {}) if isinstance(deep_cfg, dict) else {}
+    for key, default in DEFAULT_LOGIC_CONFIG.items():
+        value = logic_cfg.get(key)
+        if isinstance(value, (int, float)) and int(value) > 0:
+            cfg[key] = int(value)
+        else:
+            cfg[key] = default
+    return cfg
 
 
 def _round4(value: float) -> float:
@@ -403,6 +441,97 @@ def _compute_time_signature(transport: dict[str, Any], module_outputs: dict[str,
     }
 
 
+def _extract_recent_clip_history(module_outputs: dict[str, Any], window: int) -> list[dict[str, Any]]:
+    tracks = module_outputs.get("deep_research_tracks")
+    if not isinstance(tracks, dict):
+        return []
+    history = tracks.get("recent_clips")
+    if not isinstance(history, list):
+        return []
+    normalized: list[dict[str, Any]] = []
+    for clip in history[:window]:
+        if isinstance(clip, dict):
+            normalized.append(clip)
+    return normalized
+
+
+def _interval_vector(notes: list[int]) -> list[int]:
+    unique = sorted({note for note in notes})
+    if len(unique) < 2:
+        return []
+    return [unique[idx + 1] - unique[idx] for idx in range(len(unique) - 1)]
+
+
+def _pcp_vector(notes: list[int]) -> list[int]:
+    pcp = [0] * 12
+    for note in notes:
+        pcp[note % 12] += 1
+    return pcp
+
+
+def _rhythm_vector(transport: dict[str, Any], note_count: int) -> list[int]:
+    tick = int(transport.get("tick", 0))
+    bar = int(transport.get("bar", 0))
+    return [tick % 24, bar % 8, note_count]
+
+
+def _hash_vector(tag: str, values: list[int]) -> str:
+    payload = f"{tag}:{','.join(str(v) for v in values)}"
+    return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def _build_motif_interval_ngrams(flattened: list[int], n: int, window: int) -> list[dict[str, Any]]:
+    intervals = _interval_vector(flattened)
+    if n <= 0 or len(intervals) < n:
+        return []
+    seen: set[tuple[int, ...]] = set()
+    ngrams: list[dict[str, Any]] = []
+    max_items = max(1, window)
+    for start in range(len(intervals) - n + 1):
+        gram = tuple(intervals[start : start + n])
+        if gram in seen:
+            continue
+        seen.add(gram)
+        ngrams.append({"intervals": list(gram), "count": 1})
+        if len(ngrams) >= max_items:
+            break
+    return ngrams
+
+
+def _clip_match_score(current_intervals: list[int], prior_intervals: list[int]) -> float:
+    if not current_intervals and not prior_intervals:
+        return 1.0
+    if not current_intervals or not prior_intervals:
+        return 0.0
+    length = min(len(current_intervals), len(prior_intervals))
+    if length == 0:
+        return 0.0
+    deltas = [current_intervals[idx] - prior_intervals[idx] for idx in range(length)]
+    mean_delta = sum(deltas) / length
+    residual = sum(abs(delta - mean_delta) for delta in deltas) / length
+    span_penalty = abs(len(current_intervals) - len(prior_intervals)) * 0.1
+    return max(0.0, _round4(1.0 - (residual * 0.2) - span_penalty))
+
+
+def _match_prior_clips(
+    current_notes: list[int],
+    history: list[dict[str, Any]],
+    top_k: int,
+) -> list[dict[str, Any]]:
+    current_intervals = _interval_vector(current_notes)
+    matches: list[dict[str, Any]] = []
+    for index, clip in enumerate(history):
+        notes = clip.get("notes")
+        if not isinstance(notes, list) or not all(isinstance(note, int) for note in notes):
+            continue
+        clip_id = str(clip.get("clip_id", f"clip_{index}"))
+        score = _clip_match_score(current_intervals, _interval_vector(notes))
+        matches.append({"clip_id": clip_id, "score": score, "history_index": index})
+
+    matches.sort(key=lambda item: (-item["score"], item["history_index"], item["clip_id"]))
+    return [{"clip_id": item["clip_id"], "score": item["score"]} for item in matches[: max(1, top_k)]]
+
+
 def run_research(contract: ResearchContract) -> dict[str, Any]:
     """Track B logic: consumes only frozen contract input."""
     expected_version = current_contract_version()
@@ -429,6 +558,19 @@ def run_research(contract: ResearchContract) -> dict[str, Any]:
     _annotate_harmonic_function(chord_candidates, key_estimate)
     microtiming = _compute_microtiming(transport)
     time_signature = _compute_time_signature(transport, module_outputs if isinstance(module_outputs, dict) else {})
+    logic_cfg = _load_logic_config()
+    motif_interval_ngrams = _build_motif_interval_ngrams(
+        flattened,
+        n=logic_cfg["motif_ngram_n"],
+        window=logic_cfg["motif_ngram_window"],
+    )
+    clip_fingerprints = {
+        "interval": _hash_vector("iv", _interval_vector(flattened)),
+        "rhythm": _hash_vector("rh", _rhythm_vector(transport, len(flattened))),
+        "pcp": _hash_vector("pcp", _pcp_vector(flattened)),
+    }
+    recent_history = _extract_recent_clip_history(module_outputs if isinstance(module_outputs, dict) else {}, logic_cfg["clip_match_history_window"])
+    nearest_clip_matches = _match_prior_clips(flattened, recent_history, logic_cfg["clip_match_top_k"])
 
     return ResearchResult(
         motif_span=motif_span,
@@ -446,4 +588,7 @@ def run_research(contract: ResearchContract) -> dict[str, Any]:
         ),
         microtiming=microtiming,
         time_signature=time_signature,
+        motif_interval_ngrams=motif_interval_ngrams,
+        clip_fingerprints=clip_fingerprints,
+        nearest_clip_matches=nearest_clip_matches,
     ).as_dict()

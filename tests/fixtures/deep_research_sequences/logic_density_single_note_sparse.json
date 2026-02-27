@@ -58,6 +58,13 @@
       "confidence": 0.0,
       "stability_window": 0,
       "pending_change": null
-    }
+    },
+    "motif_interval_ngrams": [],
+    "clip_fingerprints": {
+      "interval": "dd90e489604b56bc",
+      "rhythm": "682885380d4e371b",
+      "pcp": "aa2f6d10bfadd0eb"
+    },
+    "nearest_clip_matches": []
   }
 }

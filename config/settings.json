@@ -292,6 +292,12 @@
       "enable_ui_surface_module_outputs": true,
       "enable_ui_surface_views": true,
       "enable_ui_surface_deep_research": true
+    },
+    "logic": {
+      "motif_ngram_n": 3,
+      "motif_ngram_window": 8,
+      "clip_match_history_window": 16,
+      "clip_match_top_k": 3
     }
   }
 }

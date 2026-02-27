@@ -65,7 +65,7 @@ class DeepResearchTrackSplitTest(unittest.TestCase):
                         "timestamp": 123.0,
                         "transport": case["transport"],
                         "active_notes": case["active_notes"],
-                        "module_outputs": {},
+                        "module_outputs": case.get("module_outputs", {}),
                     }
                 }
                 contract = build_contract(snapshot, case["event"])
@@ -89,7 +89,7 @@ class DeepResearchTrackSplitTest(unittest.TestCase):
                         "timestamp": 123.0,
                         "transport": case["transport"],
                         "active_notes": case["active_notes"],
-                        "module_outputs": {},
+                        "module_outputs": case.get("module_outputs", {}),
                     }
                 }
                 contract = build_contract(snapshot, case["event"])
@@ -228,6 +228,57 @@ class DeepResearchTrackSplitTest(unittest.TestCase):
         self.assertEqual(result["error"]["code"], "deep_research_contract_incompatible")
         self.assertEqual(result["error"]["expected_contract_version"], current_contract_version())
         self.assertEqual(result["error"]["actual_contract_version"], "2.0")
+
+    def test_track_b_clip_matching_is_transposition_invariant(self):
+        contract = build_contract(
+            {
+                "schema": {
+                    "schema_version": 7,
+                    "timestamp": 300.0,
+                    "transport": {"tick": 11, "bar": 1, "running": True, "bpm": 120.0},
+                    "active_notes": {"0": [65, 69, 72, 74]},
+                    "module_outputs": {
+                        "deep_research_tracks": {
+                            "recent_clips": [
+                                {"clip_id": "a_minor_like", "notes": [57, 60, 64, 65]},
+                                {"clip_id": "motif_transposed", "notes": [60, 64, 67, 69]},
+                                {"clip_id": "shape_shifted", "notes": [60, 63, 67, 70]},
+                            ]
+                        }
+                    },
+                }
+            },
+            {"kind": "clock"},
+        )
+
+        result = run_research(contract)
+        self.assertEqual(result["nearest_clip_matches"][0]["clip_id"], "motif_transposed")
+        self.assertEqual(result["nearest_clip_matches"][0]["score"], 1.0)
+
+    def test_track_b_clip_matching_top_k_ordering_is_stable(self):
+        contract = build_contract(
+            {
+                "schema": {
+                    "schema_version": 7,
+                    "timestamp": 300.0,
+                    "transport": {"tick": 11, "bar": 1, "running": True, "bpm": 120.0},
+                    "active_notes": {"0": [60, 64, 67, 69]},
+                    "module_outputs": {
+                        "deep_research_tracks": {
+                            "recent_clips": [
+                                {"clip_id": "zeta", "notes": [65, 69, 72, 74]},
+                                {"clip_id": "alpha", "notes": [67, 71, 74, 76]},
+                                {"clip_id": "beta", "notes": [48, 52, 55, 57]},
+                            ]
+                        }
+                    },
+                }
+            },
+            {"kind": "clock"},
+        )
+
+        result = run_research(contract)
+        self.assertEqual(result["nearest_clip_matches"], [{"clip_id": "zeta", "score": 1.0}, {"clip_id": "alpha", "score": 1.0}, {"clip_id": "beta", "score": 1.0}])
 
 
 if __name__ == "__main__":

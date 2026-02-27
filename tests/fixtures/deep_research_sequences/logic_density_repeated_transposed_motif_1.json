@@ -1,58 +1,87 @@
 {
-  "name": "stacked_dense",
+  "name": "repeated_transposed_motif_primary",
   "schema_version": 4,
   "event": {
-    "kind": "note_off"
+    "kind": "clock"
   },
   "transport": {
-    "tick": 31,
+    "tick": 33,
     "bar": 3,
     "running": true,
-    "bpm": 132.0
+    "bpm": 110.0
   },
   "active_notes": {
     "0": [
-      48,
-      52,
-      55
-    ],
-    "1": [
       60,
       64,
-      67
+      67,
+      69
     ]
   },
+  "module_outputs": {
+    "deep_research_tracks": {
+      "recent_clips": [
+        {
+          "clip_id": "motif_c",
+          "notes": [
+            48,
+            52,
+            55,
+            57
+          ]
+        },
+        {
+          "clip_id": "motif_f",
+          "notes": [
+            53,
+            57,
+            60,
+            62
+          ]
+        },
+        {
+          "clip_id": "contrast",
+          "notes": [
+            60,
+            63,
+            67,
+            70
+          ]
+        }
+      ]
+    }
+  },
   "expected": {
-    "motif_span": 20,
-    "note_density": "dense",
-    "active_note_total": 6,
+    "motif_span": 9,
+    "note_density": "medium",
+    "active_note_total": 4,
     "chord_candidates": [
       {
         "label": "C maj",
         "root": 0,
         "name": "maj",
-        "confidence": 1.0,
+        "confidence": 0.9125,
         "missing_tones": [],
         "roman": "I",
         "function": "tonic"
+      },
+      {
+        "label": "A m",
+        "root": 9,
+        "name": "m",
+        "confidence": 0.9125,
+        "missing_tones": [],
+        "roman": "vi",
+        "function": "submediant"
       },
       {
         "label": "C 1-5",
         "root": 0,
         "name": "1-5",
-        "confidence": 0.8833,
+        "confidence": 0.825,
         "missing_tones": [],
         "roman": "I",
         "function": "tonic"
-      },
-      {
-        "label": "E 1-b3-x",
-        "root": 4,
-        "name": "1-b3-x",
-        "confidence": 0.8833,
-        "missing_tones": [],
-        "roman": "iii",
-        "function": "mediant"
       }
     ],
     "key_estimate": {
@@ -99,32 +128,29 @@
         "intervals": [
           4,
           3,
-          5
-        ],
-        "count": 1
-      },
-      {
-        "intervals": [
-          3,
-          5,
-          4
-        ],
-        "count": 1
-      },
-      {
-        "intervals": [
-          5,
-          4,
-          3
+          2
         ],
         "count": 1
       }
     ],
     "clip_fingerprints": {
-      "interval": "139fee8360ce79b3",
-      "rhythm": "7a632cc4a163bc91",
-      "pcp": "8f664e448ed23318"
+      "interval": "e09e87861114e21a",
+      "rhythm": "ea1356d379e7ffaa",
+      "pcp": "71b39281170e8a05"
     },
-    "nearest_clip_matches": []
+    "nearest_clip_matches": [
+      {
+        "clip_id": "motif_c",
+        "score": 1.0
+      },
+      {
+        "clip_id": "motif_f",
+        "score": 1.0
+      },
+      {
+        "clip_id": "contrast",
+        "score": 0.8222
+      }
+    ]
   }
 }
