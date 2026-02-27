@@ -1,0 +1,29 @@
+name: PR Metadata Guard
+
+on:
+  pull_request:
+
+jobs:
+  pr-metadata-guard:
+    name: pr-metadata-guard
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Ensure origin/master is available
+        run: git fetch origin master --depth=1
+
+      - name: Validate branch name + PR metadata + cross-lane marker
+        run: |
+          cat > .ci_pr_body.md <<'PRBODY'
+          ${{ github.event.pull_request.body }}
+          PRBODY
+          python3 tools/check_track_boundaries.py \
+            --validate-pr-metadata \
+            --branch-name "${{ github.head_ref }}" \
+            --pr-body-file .ci_pr_body.md
