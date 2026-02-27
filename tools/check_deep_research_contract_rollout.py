@@ -128,7 +128,8 @@ def main() -> int:
             file=sys.stderr,
         )
         print(
-            f"Update {PLATFORM_PATH} RESEARCH_CONTRACT_MAJOR_VERSION/RESEARCH_CONTRACT_MINOR_VERSION.",
+            "Action: bump RESEARCH_CONTRACT_MAJOR_VERSION or RESEARCH_CONTRACT_MINOR_VERSION "
+            f"in {PLATFORM_PATH}.",
             file=sys.stderr,
         )
         return 1
@@ -161,7 +162,10 @@ def main() -> int:
             "DeepResearch contract/schema change detected, but compatibility fixture was not updated.",
             file=sys.stderr,
         )
-        print(f"Update {COMPAT_FIXTURE_PATH} in the same PR.", file=sys.stderr)
+        print(
+            f"Action: update {COMPAT_FIXTURE_PATH} in the same PR (or revert the contract/schema change).",
+            file=sys.stderr,
+        )
         return 1
 
     print(
