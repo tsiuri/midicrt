@@ -14,6 +14,7 @@ from engine.adapters.aconnect_parser import parse_aconnect_output
 from ui.model import Frame
 from ui.renderers.text import TextRenderer
 from ui.adapters import build_widget_from_legacy_draw
+from ui.overlays import capture_plugin_overlay_widget, compose_overlay_rows
 
 # Ensure the running script is importable as `midicrt` so plugin/page imports do
 # not re-execute this module under a different name.
@@ -543,10 +544,6 @@ def _ui_loop_body():
     global _auto_scroll_offset, _auto_scroll_last_time, _auto_last_msg, _auto_last_window
     _frame_budget = 1.0 / FPS
     _do_plugin_draw = not os.environ.get("MIDICRT_DISABLE_PLUGIN_DRAW")
-    if _compositor is not None:
-        from fb.terminal_capture import TerminalCapture as _TerminalCapture
-    else:
-        _TerminalCapture = None
     # Cache plugin draw signatures once (avoid per-frame inspect overhead)
     _plugin_draw_takes_state = {}
     for _mod in PLUGINS:
@@ -718,39 +715,31 @@ def _ui_loop_body():
 
         # --- PLUGIN VISUALS (respect y_offset)
         if _do_plugin_draw and not _use_notes_page_cache:
+            now_plugins = time.monotonic()
+            if (
+                now_plugins >= getattr(ui_loop, "_plugin_cache_next_t", 0.0)
+                or not hasattr(ui_loop, "_plugin_overlay_cache")
+            ):
+                ui_loop._plugin_overlay_cache = capture_plugin_overlay_widget(
+                    PLUGINS,
+                    state,
+                    SCREEN_COLS,
+                    SCREEN_ROWS,
+                    _plugin_draw_takes_state,
+                )
+                ui_loop._plugin_cache_next_t = now_plugins + (1.0 / 30.0)
+            overlay_rows = compose_overlay_rows(
+                getattr(ui_loop, "_plugin_overlay_cache"),
+                cols=SCREEN_COLS,
+                rows=SCREEN_ROWS,
+                start_row=state.get("y_offset", 0),
+            )
             if _compositor is not None:
-                now_plugins = time.monotonic()
-                if (
-                    now_plugins >= getattr(ui_loop, "_plugin_cache_next_t", 0.0)
-                    or not hasattr(ui_loop, "_plugin_rows_cache")
-                ):
-                    _pcap = _TerminalCapture(SCREEN_COLS, SCREEN_ROWS)
-                    _saved = sys.stdout
-                    sys.stdout = _pcap
-                    for mod in PLUGINS:
-                        if hasattr(mod, "draw"):
-                            try:
-                                if _plugin_draw_takes_state.get(id(mod), False):
-                                    mod.draw(state)
-                                else:
-                                    mod.draw()
-                            except Exception:
-                                pass
-                    sys.stdout = _saved
-                    ui_loop._plugin_rows_cache = list(_pcap.rows_with_content())
-                    ui_loop._plugin_cache_next_t = now_plugins + (1.0 / 30.0)
-                for row_idx, row_text in getattr(ui_loop, "_plugin_rows_cache", []):
+                for row_idx, row_text in overlay_rows:
                     _compositor.draw_text_line(row_idx, row_text)
             else:
-                for mod in PLUGINS:
-                    if hasattr(mod, "draw"):
-                        try:
-                            if _plugin_draw_takes_state.get(id(mod), False):
-                                mod.draw(state)
-                            else:
-                                mod.draw()
-                        except Exception:
-                            pass
+                for row_idx, row_text in overlay_rows:
+                    draw_line(row_idx, row_text)
 
         if _compositor is not None and current_page == 1 and not _use_notes_page_cache:
             try:

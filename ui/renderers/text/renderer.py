@@ -15,6 +15,7 @@ from ui.model import (
     MicrotimingHistogramWidget,
     ModuleHealthWidget,
     NotesWidget,
+    OverlayLayerWidget,
     PianoRollWidget,
     Segment,
     Spacer,
@@ -117,6 +118,12 @@ class TextRenderer:
                 out.append(Line.plain(f"  lat={card.latency_ms:5.1f}ms drop={card.drop_rate:0.2%}"))
                 if card.detail:
                     out.append(Line.plain(f"  {card.detail}"))
+            return out
+        if isinstance(widget, OverlayLayerWidget):
+            out = [Line.plain("Overlay")]
+            for e in sorted(widget.entries, key=lambda x: (x.z_index, x.row, x.col, x.plugin_id)):
+                msg = f"z={e.z_index:02d} row={e.row:02d} col={e.col:02d} {e.plugin_id}: {e.text}"
+                out.append(Line.plain(msg))
             return out
         if isinstance(widget, PianoRollWidget):
             lines: list[Line] = []
