@@ -225,6 +225,22 @@ Failure modes and operator response:
    - Response: treat as degraded analytics freshness; core transport data
      remains available while deep research catches up.
 
+### Retrospective capture: commit last N bars
+
+Operators can trigger retrospective capture using `capture_recent` (rolling window)
+or `commit_last_bars` (bar-aligned window). `commit_last_bars` snaps the export
+window to full bars ending at the most recently completed bar, so partial current
+bar events are excluded by design.
+
+Failure modes:
+- If there are no buffered events in the selected window, capture returns
+  `capture-failed` with a "no events" message.
+- If tempo is currently unknown (`bpm=0`), export falls back to configured
+  `default_bpm` for MIDI timing metadata.
+- Snapshot payloads include `retrospective_capture.capture_metadata` so operators
+  can verify `effective_tempo_map_segment`, `event_count`, `quantization_mode`,
+  and `export_path` after each trigger.
+
 ## Layout
 
 - midicrt.py: main program

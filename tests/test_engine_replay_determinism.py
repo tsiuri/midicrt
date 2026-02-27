@@ -3,7 +3,16 @@ import pathlib
 import sys
 import types
 import unittest
+import typing
 from unittest import mock
+
+if not hasattr(typing, "NotRequired"):
+    try:
+        from typing_extensions import NotRequired as _NotRequired
+
+        typing.NotRequired = _NotRequired
+    except Exception:  # pragma: no cover
+        typing.NotRequired = object
 
 try:
     import mido
@@ -84,6 +93,7 @@ def _run_once(payload):
             "count": {"note_on": module_out.get("note_on"), "note_off": module_out.get("note_off")}
         },
         "channels": schema["channels"],
+        "capture_metadata": schema.get("retrospective_capture", {}).get("capture_metadata", {}),
     }
 
 
@@ -94,6 +104,17 @@ class EngineReplayDeterminismTest(unittest.TestCase):
         second = _run_once(payload)
 
         self.assertEqual(first, second)
+
+    def test_capture_fixture_contract_fields_are_stable(self):
+        payload = json.loads(FIXTURE.read_text())
+        first = _run_once(payload)
+        meta = first["capture_metadata"]
+        self.assertIn("effective_tempo_map_segment", meta)
+        self.assertIn("quantization_mode", meta)
+        self.assertIn("event_count", meta)
+        self.assertIn("export_path", meta)
+        self.assertEqual(meta["quantization_mode"], "none")
+        self.assertEqual(meta["event_count"], 0)
 
 
 if __name__ == "__main__":

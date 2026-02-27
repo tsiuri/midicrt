@@ -65,9 +65,17 @@ class MidiEngine:
             "output_dir": "captures",
             "file_prefix": "capture",
             "default_bpm": 120.0,
+            "quantize": "none",
         }
         self._capture_events = deque()
         self._capture_seq = 0
+        self._last_capture_meta: dict[str, Any] = {
+            "trigger": "",
+            "export_path": "",
+            "event_count": 0,
+            "quantization_mode": "none",
+            "effective_tempo_map_segment": {},
+        }
         self._command_hooks = command_hooks if isinstance(command_hooks, dict) else {}
         self._deep_research_cfg = deep_research_settings if isinstance(deep_research_settings, dict) else {}
         self._deep_research_flags = resolve_feature_flags(self._deep_research_cfg)
@@ -231,6 +239,7 @@ class MidiEngine:
         if not self._deep_research_flags.get("enable_ui_surface_deep_research", True):
             deep_research_payload = {}
 
+        capture_meta = self._capture_metadata_snapshot()
         schema_snapshot = build_snapshot(
             timestamp=time.time(),
             tick=snap["tick_counter"],
@@ -246,6 +255,13 @@ class MidiEngine:
             views=views,
             status_text=snap.get("status_text", ""),
             diagnostics=scheduler_diag or snap.get("diagnostics", {}),
+            retrospective_capture={
+                "buffer_bars": int(self._capture_cfg.get("bars_to_keep", 0)),
+                "events_buffered": int(len(self._capture_events)),
+                "armed": False,
+                "last_commit_path": str(capture_meta.get("export_path", "")),
+                "capture_metadata": capture_meta,
+            },
             ui_context=dict(self._ui_context),
             deep_research=deep_research_payload,
         ).as_dict()
@@ -343,12 +359,16 @@ class MidiEngine:
         output_dir = str(cfg.get("output_dir", self._capture_cfg["output_dir"]))
         file_prefix = str(cfg.get("file_prefix", self._capture_cfg["file_prefix"]))
         default_bpm = float(cfg.get("default_bpm", self._capture_cfg["default_bpm"]))
+        quantize = str(cfg.get("quantize", self._capture_cfg.get("quantize", "none"))).strip().lower() or "none"
+        if quantize not in {"none", "bar"}:
+            quantize = "none"
         self._capture_cfg = {
             "bars_to_keep": max(1, bars_to_keep),
             "dump_bars": max(1, dump_bars),
             "output_dir": output_dir,
             "file_prefix": file_prefix,
             "default_bpm": max(20.0, default_bpm),
+            "quantize": quantize,
         }
 
     def set_status_text(self, text: str) -> None:
@@ -370,7 +390,33 @@ class MidiEngine:
             ok, message, out_path = self.capture_recent_to_file(bars=bars, trigger="ipc:capture_recent")
             if not ok:
                 return False, {"code": "capture-failed", "message": message}
-            return True, {"message": message, "path": out_path, "bars": bars}
+            return True, {
+                "message": message,
+                "path": out_path,
+                "bars": bars,
+                "capture_metadata": self._capture_metadata_snapshot(),
+            }
+
+        if cmd == "commit_last_bars":
+            bars = payload.get("bars")
+            if bars is not None:
+                try:
+                    bars = max(1, int(bars))
+                except Exception:
+                    return False, {"code": "invalid-args", "message": "bars must be an integer >= 1"}
+            ok, message, out_path = self.capture_recent_to_file(
+                bars=bars,
+                trigger="ipc:commit_last_bars",
+                bar_aligned=True,
+            )
+            if not ok:
+                return False, {"code": "capture-failed", "message": message}
+            return True, {
+                "message": message,
+                "path": out_path,
+                "bars": bars,
+                "capture_metadata": self._capture_metadata_snapshot(),
+            }
 
         if cmd == "set_page":
             hook = self._command_hooks.get("set_page")
@@ -405,16 +451,27 @@ class MidiEngine:
 
         return False, {"code": "unknown-command", "message": f"unknown command {cmd}"}
 
-    def capture_recent_to_file(self, bars: int | None = None, trigger: str = "manual") -> tuple[bool, str, str | None]:
+    def capture_recent_to_file(
+        self,
+        bars: int | None = None,
+        trigger: str = "manual",
+        bar_aligned: bool = False,
+    ) -> tuple[bool, str, str | None]:
         cfg = dict(self._capture_cfg)
         bars = int(bars or cfg["dump_bars"])
         bars = max(1, min(bars, cfg["bars_to_keep"]))
         with self._lock:
             tick_now = int(self.state.tick_counter)
             bpm_now = float(self.state.bpm or 0.0)
+            meter_estimate = str(self.state.meter_estimate or "4/4")
 
         ticks_per_bar = 24 * 4
-        start_tick = max(0, tick_now - bars * ticks_per_bar)
+        if bar_aligned:
+            end_tick = max(0, (tick_now // ticks_per_bar) * ticks_per_bar)
+            start_tick = max(0, end_tick - bars * ticks_per_bar)
+        else:
+            end_tick = tick_now
+            start_tick = max(0, tick_now - bars * ticks_per_bar)
         now = time.time()
         bpm_ref = bpm_now if bpm_now > 0 else float(cfg["default_bpm"])
         wall_secs = max(2.0, bars * (240.0 / max(1.0, bpm_ref)))
@@ -424,12 +481,26 @@ class MidiEngine:
         for ev in list(self._capture_events):
             beat_tick = ev.get("beat_tick")
             ts = ev.get("timestamp", 0.0)
-            in_beat_range = beat_tick is not None and int(beat_tick) >= start_tick
+            in_beat_range = beat_tick is not None and start_tick <= int(beat_tick) < max(start_tick + 1, end_tick)
             in_wall_range = ts >= start_wall
-            if in_beat_range or in_wall_range:
+            if in_beat_range or (not bar_aligned and in_wall_range):
                 events.append(ev)
 
         if not events:
+            self._record_capture_meta(
+                trigger=trigger,
+                export_path="",
+                event_count=0,
+                quantization_mode=cfg.get("quantize", "none"),
+                tempo_segment={
+                    "start_tick": start_tick,
+                    "end_tick": end_tick,
+                    "bpm": bpm_ref,
+                    "meter_estimate": meter_estimate,
+                    "ticks_per_bar": ticks_per_bar,
+                    "bar_aligned": bool(bar_aligned),
+                },
+            )
             return False, f"capture failed: no events in last {bars} bars", None
 
         midi = mido.MidiFile(ticks_per_beat=480)
@@ -465,7 +536,43 @@ class MidiEngine:
         fname = f"{cfg['file_prefix']}-{stamp}-{trigger}-{self._capture_seq:04d}.mid"
         out_path = os.path.join(output_dir, fname)
         midi.save(out_path)
+        self._record_capture_meta(
+            trigger=trigger,
+            export_path=out_path,
+            event_count=len([ev for ev in events if ev.get("msg") is not None]),
+            quantization_mode=cfg.get("quantize", "none"),
+            tempo_segment={
+                "start_tick": start_tick,
+                "end_tick": end_tick,
+                "bpm": bpm_ref,
+                "meter_estimate": meter_estimate,
+                "ticks_per_bar": ticks_per_bar,
+                "bar_aligned": bool(bar_aligned),
+            },
+        )
         return True, f"capture saved: {out_path}", out_path
+
+    def _record_capture_meta(
+        self,
+        *,
+        trigger: str,
+        export_path: str,
+        event_count: int,
+        quantization_mode: str,
+        tempo_segment: dict[str, Any],
+    ) -> None:
+        with self._lock:
+            self._last_capture_meta = {
+                "trigger": str(trigger),
+                "export_path": str(export_path),
+                "event_count": max(0, int(event_count)),
+                "quantization_mode": str(quantization_mode or "none"),
+                "effective_tempo_map_segment": dict(tempo_segment) if isinstance(tempo_segment, dict) else {},
+            }
+
+    def _capture_metadata_snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            return deepcopy(self._last_capture_meta)
 
     def run_input_loop(
         self,

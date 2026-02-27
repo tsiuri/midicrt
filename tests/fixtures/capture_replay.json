@@ -60,5 +60,21 @@
       "velocity": 0,
       "time": 240
     }
+  ],
+  "expected_messages_bar_aligned": [
+    {
+      "type": "note_off",
+      "channel": 0,
+      "note": 60,
+      "velocity": 0,
+      "time": 1200
+    },
+    {
+      "type": "note_on",
+      "channel": 0,
+      "note": 60,
+      "velocity": 100,
+      "time": 400
+    }
   ]
 }
