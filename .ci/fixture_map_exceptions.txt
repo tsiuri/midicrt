@@ -1,0 +1,10 @@
+# Fixture dependency map exceptions
+#
+# Add one line per temporary exception when fixture-related files change without
+# updating docs/fixture_dependency_map.md.
+#
+# Format:
+# YYYY-MM-DD | PR/Issue reference | owner | reason | follow-up date
+#
+# Example:
+# 2026-03-05 | #123 | @qa-contract | Emergency fixture hotfix; map update deferred | 2026-03-06
