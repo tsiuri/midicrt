@@ -162,6 +162,10 @@
           "interval_hz": 10.0
         }
       }
+    },
+    "autoconnect": {
+      "fallback_sources": [],
+      "fallback_destinations": []
     }
   },
   "panic": {
@@ -170,7 +174,10 @@
       "USB MIDI Interface",
       "USB MIDI",
       "MIDI 1"
-    ]
+    ],
+    "retry_enable": true,
+    "retry_interval": 1.0,
+    "retry_interval_cap": 30.0
   },
   "configui": {
     "accel_step_int": 2,

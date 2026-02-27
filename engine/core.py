@@ -448,11 +448,48 @@ class MidiEngine:
         midi.save(out_path)
         return True, f"capture saved: {out_path}", out_path
 
-    def run_input_loop(self, port: Any, stop_flag: Callable[[], bool], sleep_s: float = 0.001) -> None:
+    def run_input_loop(
+        self,
+        port: Any,
+        stop_flag: Callable[[], bool],
+        sleep_s: float = 0.001,
+        reopen_port: Callable[[Any, int, Exception], Any] | None = None,
+        on_port_status: Callable[[str], None] | None = None,
+    ) -> None:
+        recoverable_errors = (OSError, IOError, RuntimeError)
+        current_port = port
+        reconnect_attempt = 0
+
         while not stop_flag():
-            for msg in port.iter_pending():
-                self.ingest(msg)
-            time.sleep(sleep_s)
+            try:
+                for msg in current_port.iter_pending():
+                    self.ingest(msg)
+                time.sleep(sleep_s)
+            except recoverable_errors as exc:
+                reconnect_attempt += 1
+                if on_port_status:
+                    try:
+                        on_port_status(
+                            f"[MIDI] input failure attempt={reconnect_attempt} "
+                            f"port={getattr(current_port, 'name', '<unknown>')} error={exc}"
+                        )
+                    except Exception:
+                        pass
+
+                if reopen_port is None:
+                    raise
+
+                try:
+                    current_port = reopen_port(current_port, reconnect_attempt, exc)
+                except recoverable_errors:
+                    if stop_flag():
+                        break
+                    continue
+        if current_port is not None:
+            try:
+                current_port.close()
+            except Exception:
+                pass
 
     def _normalize_event(self, msg: mido.Message) -> dict[str, Any]:
         payload = {"kind": msg.type, "timestamp": time.time(), "raw": msg}

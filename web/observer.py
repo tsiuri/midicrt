@@ -5,6 +5,7 @@ import argparse
 import asyncio
 import json
 import logging
+import random
 import threading
 import time
 from pathlib import Path
@@ -20,16 +21,31 @@ _LOG = logging.getLogger("midicrt.web.observer")
 class SnapshotBridge:
     """Background bridge from engine IPC snapshots to websocket clients."""
 
-    def __init__(self, socket_path: str, reconnect_delay_s: float = 1.0) -> None:
+    def __init__(
+        self,
+        socket_path: str,
+        reconnect_backoff_min_s: float = 0.25,
+        reconnect_backoff_max_s: float = 8.0,
+        reconnect_backoff_base_s: float = 0.5,
+        reconnect_backoff_jitter_s: float = 0.2,
+    ) -> None:
         self.socket_path = socket_path
-        self.reconnect_delay_s = max(0.1, float(reconnect_delay_s))
+        self.reconnect_backoff_min_s = max(0.05, float(reconnect_backoff_min_s))
+        self.reconnect_backoff_max_s = max(self.reconnect_backoff_min_s, float(reconnect_backoff_max_s))
+        self.reconnect_backoff_base_s = max(0.05, float(reconnect_backoff_base_s))
+        self.reconnect_backoff_jitter_s = max(0.0, float(reconnect_backoff_jitter_s))
         self._lock = threading.Lock()
         self._latest: dict[str, Any] | None = None
         self._seq = 0
         self._last_update_monotonic = 0.0
         self._connected = False
-        self._reconnect_attempts = 0
+        self._consecutive_failures = 0
+        self._total_failures = 0
+        self._successful_reconnects = 0
+        self._last_successful_connect_ts: float | None = None
+        self._connect_cycles = 0
         self._last_error = ""
+        self._last_error_code = ""
         self._running = False
         self._thread: threading.Thread | None = None
 
@@ -50,9 +66,16 @@ class SnapshotBridge:
             age_ms = max(0.0, (time.monotonic() - self._last_update_monotonic) * 1000.0) if self._last_update_monotonic else None
             meta = {
                 "connected": self._connected,
-                "reconnect_attempts": self._reconnect_attempts,
-                "reconnect_delay_s": self.reconnect_delay_s,
+                "reconnect_backoff_min_s": self.reconnect_backoff_min_s,
+                "reconnect_backoff_max_s": self.reconnect_backoff_max_s,
+                "reconnect_backoff_base_s": self.reconnect_backoff_base_s,
+                "reconnect_backoff_jitter_s": self.reconnect_backoff_jitter_s,
+                "consecutive_failures": self._consecutive_failures,
+                "total_failures": self._total_failures,
+                "successful_reconnects": self._successful_reconnects,
+                "last_successful_connect_ts": self._last_successful_connect_ts,
                 "last_error": self._last_error,
+                "last_error_code": self._last_error_code,
                 "last_update_age_ms": age_ms,
             }
             return self._seq, self._latest, meta
@@ -66,6 +89,7 @@ class SnapshotBridge:
 
     def _run_loop(self) -> None:
         while self._running:
+            saw_snapshot = False
             client = SnapshotClient(socket_path=self.socket_path, enabled=True, timeout_s=1.0)
             try:
                 _LOG.info("connecting to snapshot socket: %s", self.socket_path)
@@ -73,26 +97,51 @@ class SnapshotBridge:
                 with self._lock:
                     self._connected = True
                     self._last_error = ""
+                    self._last_error_code = ""
                 while self._running:
                     snapshot = client.recv_snapshot()
                     if snapshot is None:
+                        with self._lock:
+                            self._last_error = "snapshot timeout/no data"
+                            self._last_error_code = "no-data"
+                        _LOG.info("snapshot bridge timeout/no data; reconnecting")
                         break
+                    if not saw_snapshot:
+                        with self._lock:
+                            self._last_successful_connect_ts = time.time()
+                            self._consecutive_failures = 0
+                            if self._connect_cycles > 0:
+                                self._successful_reconnects += 1
+                        saw_snapshot = True
                     self._publish(snapshot)
             except OSError as exc:
                 with self._lock:
                     self._last_error = str(exc)
-                _LOG.warning("snapshot bridge connection error: %s", exc)
+                    self._last_error_code = "socket-error"
+                _LOG.warning("snapshot bridge socket error: %s", exc)
             except Exception:
                 with self._lock:
                     self._last_error = "unexpected snapshot bridge error"
+                    self._last_error_code = "unexpected-error"
                 _LOG.exception("unexpected snapshot bridge error")
             finally:
                 with self._lock:
                     self._connected = False
-                    self._reconnect_attempts += 1
+                    self._connect_cycles += 1
+                    if self._running and not saw_snapshot:
+                        self._consecutive_failures += 1
+                        self._total_failures += 1
                 client.close()
             if self._running:
-                time.sleep(self.reconnect_delay_s)
+                delay_s = min(
+                    self.reconnect_backoff_max_s,
+                    max(
+                        self.reconnect_backoff_min_s,
+                        self.reconnect_backoff_base_s * (2 ** max(0, self._consecutive_failures - 1)),
+                    ),
+                )
+                jitter = random.uniform(-self.reconnect_backoff_jitter_s, self.reconnect_backoff_jitter_s)
+                time.sleep(max(self.reconnect_backoff_min_s, min(self.reconnect_backoff_max_s, delay_s + jitter)))
 
 
 class DashboardServer:
@@ -103,13 +152,23 @@ class DashboardServer:
         port: int,
         max_broadcast_hz: float = 20.0,
         client_queue_size: int = 8,
+        reconnect_backoff_min_s: float = 0.25,
+        reconnect_backoff_max_s: float = 8.0,
+        reconnect_backoff_base_s: float = 0.5,
+        reconnect_backoff_jitter_s: float = 0.2,
     ) -> None:
         self.socket_path = socket_path
         self.host = host
         self.port = int(port)
         self.max_broadcast_hz = max(1.0, float(max_broadcast_hz))
         self.client_queue_size = max(1, int(client_queue_size))
-        self.bridge = SnapshotBridge(socket_path=socket_path)
+        self.bridge = SnapshotBridge(
+            socket_path=socket_path,
+            reconnect_backoff_min_s=reconnect_backoff_min_s,
+            reconnect_backoff_max_s=reconnect_backoff_max_s,
+            reconnect_backoff_base_s=reconnect_backoff_base_s,
+            reconnect_backoff_jitter_s=reconnect_backoff_jitter_s,
+        )
         self.clients: set[web.WebSocketResponse] = set()
         self.client_queues: dict[web.WebSocketResponse, asyncio.Queue[tuple[int, str]]] = {}
         self.client_send_tasks: dict[web.WebSocketResponse, asyncio.Task[None]] = {}
@@ -286,6 +345,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--port", default=8765, type=int, help="HTTP/WebSocket bind port")
     parser.add_argument("--max-broadcast-hz", default=20.0, type=float, help="Maximum websocket broadcast rate (samples latest snapshot)")
     parser.add_argument("--client-queue-size", default=8, type=int, help="Per-client outbound queue size before coalescing")
+    parser.add_argument("--reconnect-backoff-min-s", default=0.25, type=float, help="Minimum reconnect backoff seconds")
+    parser.add_argument("--reconnect-backoff-max-s", default=8.0, type=float, help="Maximum reconnect backoff seconds")
+    parser.add_argument("--reconnect-backoff-base-s", default=0.5, type=float, help="Base reconnect backoff seconds before exponential scaling")
+    parser.add_argument("--reconnect-backoff-jitter-s", default=0.2, type=float, help="Reconnect backoff jitter (+/- seconds)")
     parser.add_argument("--log-level", default="INFO", help="Python logging level")
     return parser.parse_args(argv)
 
@@ -299,6 +362,10 @@ def main(argv: list[str] | None = None) -> int:
         port=args.port,
         max_broadcast_hz=args.max_broadcast_hz,
         client_queue_size=args.client_queue_size,
+        reconnect_backoff_min_s=args.reconnect_backoff_min_s,
+        reconnect_backoff_max_s=args.reconnect_backoff_max_s,
+        reconnect_backoff_base_s=args.reconnect_backoff_base_s,
+        reconnect_backoff_jitter_s=args.reconnect_backoff_jitter_s,
     ).run()
     return 0
 
