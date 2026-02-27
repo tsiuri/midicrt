@@ -12,6 +12,7 @@ from math import log10
 from collections import deque
 from blessed import Terminal
 from midicrt import draw_line
+from pages.legacy_contract_bridge import build_widget_from_legacy_contract
 from ui.model import PageLinesWidget
 
 term = Terminal()
@@ -729,4 +730,4 @@ def _build_widget_lines(state):
 
 
 def build_widget(state):
-    return PageLinesWidget(page_id=PAGE_ID, page_name=PAGE_NAME, lines=_build_widget_lines(state))
+    return build_widget_from_legacy_contract(draw, state, draw_line)

@@ -1,0 +1,16 @@
+name: Legacy Adapter Dependency Guard
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Fail on new legacy adapter dependencies
+        run: python tools/check_legacy_adapter_dependencies.py

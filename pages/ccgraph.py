@@ -7,6 +7,7 @@ from midicrt import draw_line
 from collections import OrderedDict
 import time
 from blessed import Terminal
+from pages.legacy_contract_bridge import build_widget_from_legacy_contract
 from ui.model import PageLinesWidget
 
 term = Terminal()

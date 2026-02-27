@@ -1,6 +1,6 @@
 import unittest
 
-from engine.adapters import LegacyPageEventAdapter
+from engine.legacy_page_router import LegacyPageRouter
 
 
 class _Page:
@@ -16,7 +16,7 @@ class _Page:
         self.ticks.append(dict(state))
 
 
-class LegacyPageEventAdapterTest(unittest.TestCase):
+class LegacyPageRouterTest(unittest.TestCase):
     def test_clock_routes_on_tick_to_background_pages_except_current(self):
         fg = _Page(background=False)
         bg1 = _Page(background=True)
@@ -27,7 +27,7 @@ class LegacyPageEventAdapterTest(unittest.TestCase):
             calls["plugin_state"] += 1
             return {"tick": 123}
 
-        adapter = LegacyPageEventAdapter(
+        adapter = LegacyPageRouter(
             pages_provider=lambda: {1: fg, 2: bg1, 3: bg2},
             current_page_provider=lambda: 2,
             plugin_state_provider=plugin_state_provider,
@@ -47,7 +47,7 @@ class LegacyPageEventAdapterTest(unittest.TestCase):
         msg = object()
         activity = []
 
-        adapter = LegacyPageEventAdapter(
+        adapter = LegacyPageRouter(
             pages_provider=lambda: {1: fg, 2: bg, 3: inactive},
             current_page_provider=lambda: 1,
             midi_activity_handler=lambda value: activity.append(value),
@@ -61,13 +61,13 @@ class LegacyPageEventAdapterTest(unittest.TestCase):
         self.assertEqual(activity, [msg])
 
     def test_fallback_behavior_handles_disabled_missing_or_bad_providers(self):
-        adapter = LegacyPageEventAdapter(enabled=False)
+        adapter = LegacyPageRouter(enabled=False)
         adapter.route({"kind": "note_on", "raw": object()})
 
-        adapter = LegacyPageEventAdapter(pages_provider=None)
+        adapter = LegacyPageRouter(pages_provider=None)
         adapter.route({"kind": "clock"})
 
-        adapter = LegacyPageEventAdapter(
+        adapter = LegacyPageRouter(
             pages_provider=lambda: {1: _Page(background=True)},
             current_page_provider=lambda: 1,
             plugin_state_provider=lambda: "bad-state",
@@ -75,7 +75,7 @@ class LegacyPageEventAdapterTest(unittest.TestCase):
         adapter.route({"kind": "clock"})
 
         page = _Page(background=False)
-        adapter = LegacyPageEventAdapter(
+        adapter = LegacyPageRouter(
             pages_provider=lambda: {1: page},
             current_page_provider=lambda: 1,
         )
