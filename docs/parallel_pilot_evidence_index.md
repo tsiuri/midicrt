@@ -24,6 +24,16 @@ Update links daily during WB-005 and mark each entry as `pending` or `complete`.
 | Final pilot report | `docs/parallel_pilot_report_YYYY-MM-DD.md` | pending | Narrative summary and remediation items. |
 | Formal GO/NO-GO decision record | `<link>` | pending | Final decision artifact with approver sign-off. |
 
+
+## Governance gates
+
+| Gate evidence | Path / Link | Status | Notes |
+|---|---|---|---|
+| Branch protection config (master) | [`.github/branch-protection/master.json`](../.github/branch-protection/master.json) | complete | Requires CODEOWNER review on protected default branch (`require_code_owner_reviews: true`). |
+| Dry-run PR: single-lane approval passes | [`artifacts/pilot/governance/dry_run_single_lane_pass.json`](../artifacts/pilot/governance/dry_run_single_lane_pass.json) | complete | Simulates lane-local PR touching only logic roots with logic approval. |
+| Dry-run PR: cross-lane blocked without all lane approvals | [`artifacts/pilot/governance/dry_run_cross_lane_blocked.json`](../artifacts/pilot/governance/dry_run_cross_lane_blocked.json) | complete | Simulates platform+logic PR with only platform approval (fails as expected). |
+| Dry-run PR: cross-lane unblocks after all touched lane approvals | [`artifacts/pilot/governance/dry_run_cross_lane_after_both_approve.json`](../artifacts/pilot/governance/dry_run_cross_lane_after_both_approve.json) | complete | Simulates same cross-lane PR after platform+logic approvals (passes). |
+
 ## Daily execution checklist (WB-005)
 
 - [ ] Day 1 (`YYYY-MM-DD`) — exports refreshed, orchestrator run, links verified.
