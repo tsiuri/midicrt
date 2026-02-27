@@ -31,10 +31,10 @@ For lane definitions, branch naming, PR size limits, and the dependent-work hand
 > Use this block before starting any lane work.
 
 1. Sync refs (maintainer environment): `git fetch origin master --prune`
-2. Branch from the shared baseline SHA: `86d8d30bd27b80b244590e47bb50f8275599136d`
-3. Create lane branch from baseline: `git checkout -b <lane>/<ticket> 86d8d30bd27b80b244590e47bb50f8275599136d`
+2. Branch from the shared baseline SHA: `6218588ec031ce6993dea01597db5d9ec22a1531`
+3. Create lane branch from baseline: `git checkout -b <lane>/<ticket> 6218588ec031ce6993dea01597db5d9ec22a1531`
 4. Verify baseline anchor: `git rev-parse --short HEAD`
 5. Record lane start in PR description: baseline SHA + UTC start timestamp.
 
-If network fetch is unavailable in your runtime, treat this SHA as provisional and re-anchor to `origin/master` as soon as maintainer access is available.
+This SHA is canonical for this sprint window. All sprint branches must start from this exact anchor; stale-base PRs are rejected by CI via `.github/workflows/baseline-anchor-guard.yml`.
 
