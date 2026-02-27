@@ -6,15 +6,19 @@ TTY-only renderer: no framebuffer or X dependencies.
 from blessed import Terminal
 
 from ui.model import (
+    CaptureStatusWidget,
     Column,
     EventLogWidget,
     FooterStatusWidget,
     Frame,
     Line,
+    MicrotimingHistogramWidget,
+    ModuleHealthWidget,
     NotesWidget,
     PianoRollWidget,
     Segment,
     Spacer,
+    TempoQualityWidget,
     TextBlock,
     TransportWidget,
     Widget,
@@ -79,6 +83,41 @@ class TextRenderer:
             if widget.right:
                 return [Line.plain(f"{widget.left} {widget.right}".strip())]
             return [Line.plain(widget.left)]
+
+        if isinstance(widget, TempoQualityWidget):
+            return [
+                Line.plain("Tempo Quality"),
+                Line.plain(f"BPM: {widget.bpm:6.2f}"),
+                Line.plain(f"Confidence: {widget.confidence:0.2f}"),
+                Line.plain(f"Stability: {widget.stability:0.2f}"),
+                Line.plain(f"Lock: {widget.lock_state} {widget.meter}".rstrip()),
+            ]
+        if isinstance(widget, MicrotimingHistogramWidget):
+            total = max(1, int(widget.total_samples or 0))
+            out = [Line.plain(widget.title), Line.plain(f"Samples: {widget.total_samples}")]
+            for label, count in widget.buckets:
+                width = min(16, int(round((max(0, int(count)) / total) * 16)))
+                bar = "█" * width + "·" * (16 - width)
+                out.append(Line.plain(f"{label:>8} {bar} {count:>4}"))
+            return out
+        if isinstance(widget, CaptureStatusWidget):
+            age = "--" if widget.last_commit_age_s is None else f"{widget.last_commit_age_s:0.1f}s"
+            return [
+                Line.plain("Capture"),
+                Line.plain(f"Armed: {widget.armed}"),
+                Line.plain(f"State: {widget.state}"),
+                Line.plain(f"Target: {widget.target_path}"),
+                Line.plain(f"Commit: {widget.last_commit}"),
+                Line.plain(f"Commit age: {age}"),
+            ]
+        if isinstance(widget, ModuleHealthWidget):
+            out = [Line.plain("Module Health")]
+            for card in widget.cards:
+                out.append(Line.plain(f"[{card.status.upper():>4}] {card.name}"))
+                out.append(Line.plain(f"  lat={card.latency_ms:5.1f}ms drop={card.drop_rate:0.2%}"))
+                if card.detail:
+                    out.append(Line.plain(f"  {card.detail}"))
+            return out
         if isinstance(widget, PianoRollWidget):
             lines: list[Line] = []
             timeline_label = f"{'Bars':>7} │"

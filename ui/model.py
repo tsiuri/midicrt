@@ -131,3 +131,52 @@ class FooterStatusWidget(Widget):
 
     left: str = ""
     right: str = ""
+
+
+@dataclass(frozen=True)
+class TempoQualityWidget(Widget):
+    """Tempo-estimation quality panel payload."""
+
+    bpm: float = 0.0
+    confidence: float = 0.0
+    stability: float = 0.0
+    lock_state: str = "unlocked"
+    meter: str = ""
+
+
+@dataclass(frozen=True)
+class MicrotimingHistogramWidget(Widget):
+    """Microtiming offsets grouped into signed bins."""
+
+    title: str = "Microtiming"
+    buckets: List[tuple[str, int]] = field(default_factory=list)
+    total_samples: int = 0
+
+
+@dataclass(frozen=True)
+class CaptureStatusWidget(Widget):
+    """Capture/export status plus last commit metadata."""
+
+    armed: bool = False
+    state: str = "idle"
+    target_path: str = ""
+    last_commit: str = ""
+    last_commit_age_s: float | None = None
+
+
+@dataclass(frozen=True)
+class ModuleHealthCard:
+    """One module health summary card."""
+
+    name: str
+    status: str = "ok"
+    latency_ms: float = 0.0
+    drop_rate: float = 0.0
+    detail: str = ""
+
+
+@dataclass(frozen=True)
+class ModuleHealthWidget(Widget):
+    """Collection of module health cards."""
+
+    cards: List[ModuleHealthCard] = field(default_factory=list)
