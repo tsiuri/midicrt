@@ -44,16 +44,91 @@ Track for a rolling 2-week window unless noted otherwise.
 - [ ] **Cross-lane conflict rate < 10% of PRs**
   - Metric: `% of merged PRs requiring conflict resolution across >1 lane`.
   - Threshold: `< 10%`.
+  - Capture method (required):
+    1. Export merged PRs for pilot window (base `master`) to `artifacts/pilot/merged_prs.json`.
+    2. Export conflict-resolution events to `artifacts/pilot/conflict_events.json`.
+       - Count a conflict-resolution event when a PR includes one of:
+         - GitHub `mergeable_state = dirty` transition before merge,
+         - explicit `git merge --continue`/`rebase --continue` note in PR timeline,
+         - labeled incident in `docs/pilot_incident_log_template.md` entries.
+    3. Compute with `scripts/calc_conflict_rate.py`:
+       `python scripts/calc_conflict_rate.py --merged-prs artifacts/pilot/merged_prs.json --conflict-events artifacts/pilot/conflict_events.json --window-start <ISO8601> --window-end <ISO8601> --output artifacts/pilot/conflict_rate_summary.json`.
+    4. Store machine-readable fields: `window_start`, `window_end`, `merged_pr_count`, `conflict_resolution_events`, `conflict_rate`.
+  - Evidence: summary JSON linked in `docs/parallel_pilot_evidence_index.md`.
 
 - [ ] **Median CI duration < 8 minutes**
   - Metric: median wall-clock time for required CI checks on merged PRs.
   - Threshold: `< 8:00`.
+  - Capture method: run `scripts/aggregate_ci_timings.py` against exported workflow-run JSON and archive output at `artifacts/pilot/ci_timing_summary.json`.
 
 - [ ] **Zero unreviewed contract-breaking merges**
   - Metric: count of breaking contract/version changes merged without required contract reviewer approval.
   - Threshold: `0` over the measured window.
 
 If any threshold fails, decision is **NO-GO** until corrective actions are completed and metrics recover.
+
+## Contract governance policy details (WB-002)
+
+The `contract-version-governance` required check (workflow: `.github/workflows/contract-version-governance.yml`) enforces explicit path-scoped contract governance on pull requests.
+
+### Governed contract surfaces (explicit glob map)
+
+- `lane-interface-docs`
+  - `docs/parallel_readiness_checklist.md`
+  - `docs/parallel_execution_board.md`
+  - `engine/deep_research/contract_versioning.md`
+- `shared-schema-config`
+  - `engine/deep_research/platform.py`
+  - `engine/deep_research/logic.py`
+  - `engine/state/schema.py`
+  - `config/settings.json`
+- `fixture-contracts`
+  - `tests/fixtures/**/*.json`
+  - `tests/fixtures/**/*.yaml`
+  - `tests/test_deep_research_contract_compat.py`
+
+### Required PR declarations when governed paths are touched
+
+1. `Contract-Impact: none|additive|breaking` must exist in the PR body.
+2. One of the following must exist:
+   - a contract version bump in `engine/deep_research/platform.py` (`RESEARCH_CONTRACT_MAJOR_VERSION` / `RESEARCH_CONTRACT_MINOR_VERSION`), or
+   - `Contract-Version-Exception: <structured reason + rollout/test plan>` in PR body.
+3. If `Contract-Impact: breaking`:
+   - label `contract-breaking-approved` is required, and
+   - at least one approval must come from a designated reviewer listed in the workflow.
+
+### Actionable failures in CI
+
+The check prints exactly:
+- each changed file that matched a contract surface glob,
+- the surface/rule category that was triggered,
+- each failed requirement as a numbered remediation item.
+
+### PR body examples
+
+**Additive change with version bump**
+
+```md
+Contract-Impact: additive
+Contract-Version-Exception: n/a
+```
+
+**Breaking change with exception note (while reader-first rollout is in flight)**
+
+```md
+Contract-Impact: breaking
+Contract-Version-Exception: ADR-0123 phase 1/4 (reader-first):
+- no writer flip in this PR
+- compat tests updated in tests/test_deep_research_contract_compat.py
+- rollout validation planned in staging before major increment
+```
+
+**Docs-only touch on a governed file without version bump**
+
+```md
+Contract-Impact: none
+Contract-Version-Exception: docs-only update to governance wording; no payload/schema change
+```
 
 ## 1-week pilot plan (2–3 agents)
 
@@ -69,6 +144,7 @@ Run a controlled pilot with **2–3 simultaneous agents** before full rollout.
   - cross-lane merge conflicts,
   - CI latency regressions,
   - contract-version warnings/failures.
+- Log every incident in `docs/pilot_incident_log_template.md` (date, lane, severity, root cause, resolution).
 
 ### Day 5: pilot review and decision
 - Generate 1-week report with:
@@ -77,6 +153,7 @@ Run a controlled pilot with **2–3 simultaneous agents** before full rollout.
   - contract-governance violations,
   - top failure causes and remediation actions.
 - Record a formal go/no-go decision.
+- Publish `docs/parallel_pilot_evidence_index.md` with links to all supporting artifacts.
 
 ## Scale-up trigger (pilot -> full multi-agent)
 
