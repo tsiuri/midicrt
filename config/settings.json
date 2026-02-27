@@ -315,6 +315,7 @@
   "pianoroll_exp": {
     "memory_max_sessions": 32,
     "memory_export_dir": "captures/pianoroll_exp",
-    "cc_lane_max_ratio": 0.25
+    "cc_lane_max_ratio": 0.25,
+    "memory_library_dir": ""
   }
 }

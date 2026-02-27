@@ -9,7 +9,7 @@ from typing import Any
 
 import mido
 
-from engine.memory import session_model
+from engine.memory import midi_io, storage
 from engine.memory.session_model import SessionModel, build_session_model
 
 
@@ -18,21 +18,33 @@ class MemoryCaptureManager:
 
     _EVENT_KINDS = {"note_on", "note_off", "control_change", "program_change", "pitchwheel", "aftertouch", "polytouch"}
 
-    def __init__(self, *, max_sessions: int = 32, export_dir: str = "captures/pianoroll_exp", project_root: str | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        max_sessions: int = 32,
+        export_dir: str = "captures/pianoroll_exp",
+        library_dir: str | None = None,
+        project_root: str | None = None,
+    ) -> None:
         self._max_sessions = max(1, int(max_sessions))
         self._export_dir = str(export_dir)
+        self._library_dir = str(library_dir) if library_dir else ""
         self._project_root = str(project_root or os.getcwd())
         self._armed = False
         self._current: SessionModel | None = None
         self._sessions: deque[SessionModel] = deque(maxlen=self._max_sessions)
         self._export_seq = 0
+        self._load_persisted_sessions()
+        self._import_library_sessions()
 
-    def configure(self, *, max_sessions: int | None = None, export_dir: str | None = None) -> None:
+    def configure(self, *, max_sessions: int | None = None, export_dir: str | None = None, library_dir: str | None = None) -> None:
         if max_sessions is not None:
             self._max_sessions = max(1, int(max_sessions))
             self._sessions = deque(list(self._sessions)[-self._max_sessions :], maxlen=self._max_sessions)
         if export_dir is not None:
             self._export_dir = str(export_dir)
+        if library_dir is not None:
+            self._library_dir = str(library_dir)
 
     def on_transport(self, *, tick: int, bpm: float, running: bool, prev_running: bool) -> None:
         tick = int(tick)
@@ -130,6 +142,7 @@ class MemoryCaptureManager:
         if len(kept) == len(self._sessions):
             return False
         self._sessions = deque(kept[-self._max_sessions :], maxlen=self._max_sessions)
+        self._rewrite_index()
         return True
 
     def status(self) -> dict[str, Any]:
@@ -163,19 +176,17 @@ class MemoryCaptureManager:
         session.stop_time = time.time()
         session.export_path = self._export_session_midi(session)
         self._sessions.append(session)
+        self._store_session(session, origin="capture")
         self._current = None
 
     def _session_meta(self, session: SessionModel) -> dict[str, Any]:
-        return {
-            "id": str(session.header.session_id),
-            "start_tick": int(session.header.start_tick),
-            "stop_tick": int(session.header.stop_tick),
-            "events": int(len(session.events)),
-            "notes": int(len(session.note_spans)),
-            "export_path": str(session.export_path or ""),
-            "start_time": float(session.start_time or 0.0),
-            "stop_time": float(session.stop_time or 0.0),
-        }
+        rec = storage.build_index_record(session, session_path="", midi_path=session.export_path, origin="capture")
+        rec["events"] = rec["event_count"]
+        rec["notes"] = rec["note_span_count"]
+        rec["export_path"] = rec["midi_path"]
+        rec["start_time"] = float(session.start_time or 0.0)
+        rec["stop_time"] = float(session.stop_time or 0.0)
+        return rec
 
     def _abs_export_dir(self) -> str:
         if os.path.isabs(self._export_dir):
@@ -183,38 +194,73 @@ class MemoryCaptureManager:
         return os.path.join(self._project_root, self._export_dir)
 
     def _export_session_midi(self, session: SessionModel) -> str | None:
-        events = list(session.events or [])
-        if not events:
+        if not list(session.events or []):
             return None
-        midi = mido.MidiFile(ticks_per_beat=480)
-        track = mido.MidiTrack()
-        midi.tracks.append(track)
-        bpm = float(session.header.bpm or 120.0)
-        track.append(mido.MetaMessage("set_tempo", tempo=int(mido.bpm2tempo(bpm)), time=0))
-        track.append(mido.MetaMessage("track_name", name="midicrt engine memory", time=0))
-
-        ticks_per_clock = midi.ticks_per_beat / 24.0
-        start_tick = int(session.header.start_tick)
-        indexed = sorted(events, key=lambda ev: (int(ev.tick), int(ev.seq)))
-        prev_tick = 0
-        for event in indexed:
-            rel = max(0, int((int(event.tick) - start_tick) * ticks_per_clock))
-            delta = max(0, rel - prev_tick)
-            prev_tick = rel
-            try:
-                msg = session_model.to_mido_message(event)
-            except Exception:
-                msg = None
-            if msg is not None:
-                track.append(msg.copy(time=delta))
-
         out_dir = self._abs_export_dir()
         os.makedirs(out_dir, exist_ok=True)
         self._export_seq += 1
         stamp = time.strftime("%Y%m%d-%H%M%S")
         out_path = os.path.join(out_dir, f"engine-memory-{stamp}-{self._export_seq:04d}.mid")
+        return midi_io.export_session_midi(session, out_path)
+
+    def _store_session(self, session: SessionModel, *, origin: str = "capture") -> None:
+        root = self._abs_export_dir()
         try:
-            midi.save(out_path)
-            return out_path
+            session_path = storage.save_session(root, session)
+            record = storage.build_index_record(session, session_path=session_path, midi_path=session.export_path, origin=origin)
+            rows = [row for row in storage.load_index(root) if str(row.get("id", "")) != str(session.header.session_id)]
+            rows.append(record)
+            rows.sort(key=lambda row: float(row.get("created_ts", 0.0)), reverse=True)
+            storage.save_index(root, rows)
         except Exception:
-            return None
+            pass
+
+    def _rewrite_index(self) -> None:
+        root = self._abs_export_dir()
+        rows: list[dict[str, Any]] = []
+        for session in list(self._sessions):
+            session_path = os.path.join(root, storage.SESSIONS_DIR, f"{session.header.session_id}.json")
+            rows.append(storage.build_index_record(session, session_path=session_path, midi_path=session.export_path, origin="capture"))
+        rows.sort(key=lambda row: float(row.get("created_ts", 0.0)), reverse=True)
+        try:
+            storage.save_index(root, rows)
+        except Exception:
+            pass
+
+    def _load_persisted_sessions(self) -> None:
+        root = self._abs_export_dir()
+        loaded: list[SessionModel] = []
+        for row in storage.load_index(root):
+            path = str(row.get("session_path", ""))
+            if not path:
+                continue
+            session = storage.load_session(path)
+            if session is not None:
+                loaded.append(session)
+        loaded.sort(key=lambda sess: float(sess.stop_time or sess.start_time or 0.0))
+        self._sessions = deque(loaded[-self._max_sessions :], maxlen=self._max_sessions)
+
+    def _import_library_sessions(self) -> None:
+        lib = self._library_dir.strip()
+        if not lib:
+            return
+        abs_lib = lib if os.path.isabs(lib) else os.path.join(self._project_root, lib)
+        if not os.path.isdir(abs_lib):
+            return
+        root = self._abs_export_dir()
+        known_ids = {sess.header.session_id for sess in self._sessions}
+        for name in sorted(os.listdir(abs_lib)):
+            if not name.lower().endswith(".mid"):
+                continue
+            src = os.path.join(abs_lib, name)
+            sid = f"lib-{os.path.splitext(name)[0]}"
+            if sid in known_ids:
+                continue
+            session = midi_io.import_midi_file(src, session_id=sid)
+            if session is None:
+                continue
+            session.export_path = src
+            self._sessions.append(session)
+            self._store_session(session, origin="library")
+            known_ids.add(sid)
+        self._sessions = deque(list(self._sessions)[-self._max_sessions :], maxlen=self._max_sessions)
