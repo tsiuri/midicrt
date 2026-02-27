@@ -311,6 +311,7 @@ class DashboardServerTest(unittest.IsolatedAsyncioTestCase):
                 "compat_mode": "native",
                 "transport": {"tick": 9},
                 "deep_research": {"produced_at": 1234.5, "source_tick": 4, "stale": True, "lag_ms": 987.0},
+                "diagnostics": {"modules": {"deep_research": {"metrics": {"modules": {"deepresearch": {"over_budget_count": 2, "skipped_due_degradation": 1, "last_runtime_ms": 11.2}}}}}},
                 "views": {
                     "tempo_quality": {"jitter_ms": 2.4, "drift_ppm": -0.5},
                     "microtiming": {"title": "Microtiming", "total_samples": 12, "buckets": ["early", "late"]},
@@ -342,6 +343,8 @@ class DashboardServerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(data["observer_views"]["capture_status"]["buffer_fill"], 14)
         self.assertEqual(data["read_only"]["bounded_stream_rate_hz"], 20.0)
         self.assertEqual(data["read_only"]["mode"], "strict-read-only")
+        self.assertEqual(data["metrics"]["module_health"]["warnings"][0]["module"], "deepresearch")
+        self.assertEqual(data["observer_views"]["module_health"]["warnings"][0]["over_budget_count"], 2)
 
     async def test_read_only_method_guard_rejects_mutation_methods(self):
         server = DashboardServer(socket_path="/tmp/test.sock", host="127.0.0.1", port=0)

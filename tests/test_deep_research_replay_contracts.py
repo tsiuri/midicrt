@@ -111,6 +111,26 @@ class _DeterministicDeepResearchProbe:
         }
 
 
+
+
+class _ThrottledDeterministicDeepResearchProbe:
+    name = "deepresearch"
+
+    def __init__(self, sleep_s=0.0):
+        self.counter = 0
+        self.sleep_s = sleep_s
+
+    def on_event(self, _event):
+        if self.sleep_s > 0:
+            time.sleep(self.sleep_s)
+        self.counter += 1
+
+    def on_clock(self, _snapshot):
+        return None
+
+    def get_outputs(self):
+        return {"signature": "stable", "counter": self.counter}
+
 class _BlockingDeepResearchProbe:
     name = "deepresearch"
 
@@ -204,6 +224,36 @@ class DeepResearchReplayContractsTest(unittest.TestCase):
                 self.assertTrue(deep["stale"])
                 self.assertEqual(deep["dropped"], case["expect_dropped"])
                 self.assertEqual(deep["applied"], case["expect_applied"])
+
+
+    def test_throttled_deep_research_keeps_stable_output_shape(self):
+        probe = _ThrottledDeterministicDeepResearchProbe(sleep_s=0.003)
+        engine = MidiEngine(
+            modules=[probe],
+            deep_research_settings={
+                "enabled": True,
+                "cadence_hz": 1000.0,
+                "modules": ["deepresearch"],
+                "budget": {
+                    "module_budget_ms": 0.5,
+                    "degradation_policy": "throttle_low_priority",
+                    "degradation_skip_cycles": 1,
+                    "degradation_priority_threshold": 90,
+                    "module_priorities": {"deepresearch": 10},
+                },
+            },
+        )
+
+        with mock.patch("engine.core.time.time", return_value=700.0):
+            for _ in range(6):
+                engine.ingest(mido.Message("note_on", note=60, velocity=100, channel=0))
+
+        engine._deep_research_q.join()
+        deep = engine.get_snapshot()["schema"].get("deep_research", {})
+        self.assertEqual(sorted((deep.get("result") or {}).keys()), ["counter", "signature"])
+        self.assertEqual((deep.get("result") or {}).get("signature"), "stable")
+        metrics = engine.get_snapshot()["schema"]["diagnostics"]["modules"]["deep_research"]["metrics"]["modules"]["deepresearch"]
+        self.assertTrue(metrics["skipped_due_degradation"] >= 1 or metrics.get("over_budget_count", 0) >= 1)
 
     def test_ipc_payload_compatibility_fixture_for_deep_research_absent_and_present(self):
         fixture = json.loads(CONTRACT_FIXTURE.read_text())

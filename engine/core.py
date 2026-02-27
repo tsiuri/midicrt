@@ -106,7 +106,7 @@ class MidiEngine:
         }
         if not self._deep_research_modules:
             self._deep_research_modules = {"deepresearch", "deep_research"}
-        self._deep_research_q: queue.Queue[tuple[Any, dict[str, Any], bool, dict[str, Any]]] = queue.Queue(
+        self._deep_research_q: queue.Queue[tuple[str, Any, dict[str, Any], bool, dict[str, Any]]] = queue.Queue(
             maxsize=max(1, int(self._deep_research_cfg.get("queue_size", 1)))
         )
         self._deep_research_stop = threading.Event()
@@ -250,6 +250,29 @@ class MidiEngine:
             deep_research_payload = {}
 
         capture_meta = self._capture_metadata_snapshot()
+        deep_metrics = scheduler_diag.get("modules", {}).get("deep_research", {}).get("metrics", {}) if isinstance(scheduler_diag, dict) else {}
+        deep_mods = deep_metrics.get("modules", {}) if isinstance(deep_metrics, dict) else {}
+        warn_cards = []
+        for mod_name in sorted(deep_mods):
+            info = deep_mods.get(mod_name, {}) if isinstance(deep_mods.get(mod_name), dict) else {}
+            if not info.get("over_budget") and int(info.get("over_budget_count", 0)) <= 0 and int(info.get("skipped_due_degradation", 0)) <= 0:
+                continue
+            warn_cards.append({
+                "name": str(mod_name),
+                "status": "warn",
+                "latency_ms": float(info.get("last_runtime_ms", 0.0)),
+                "drop_rate": float(info.get("skipped_due_degradation", 0)),
+                "detail": "deep_research_over_budget",
+                "over_budget_count": int(info.get("over_budget_count", 0)),
+            })
+        if warn_cards:
+            views.setdefault("module_health", {"cards": warn_cards})
+        module_health = {
+            "status": "degraded" if warn_cards else "ok",
+            "updated_at": time.time(),
+            "modules": deep_mods,
+            "degradation_policy": deep_metrics.get("degradation_policy", "none") if isinstance(deep_metrics, dict) else "none",
+        }
         schema_snapshot = build_snapshot(
             timestamp=time.time(),
             tick=snap["tick_counter"],
@@ -277,6 +300,7 @@ class MidiEngine:
                 "last_commit_path": str(capture_meta.get("export_path", "")),
                 "capture_metadata": capture_meta,
             },
+            module_health=module_health,
             ui_context=dict(self._ui_context),
             deep_research=deep_research_payload,
         ).as_dict()
@@ -665,6 +689,7 @@ class MidiEngine:
                     if payload is not None:
                         views[str(key)] = payload
         module_state.setdefault("deep_research", {})["metrics"] = self._scheduler.deep_research_diag()
+        module_state.setdefault("deep_research", {})["module_health"] = self._scheduler.deep_module_diag()
         return module_state, views
 
     def _update_transport(self, event: dict[str, Any]) -> None:
@@ -727,7 +752,7 @@ class MidiEngine:
             names.append(name)
             lname = str(name).strip().lower()
             if lname in self._deep_research_modules:
-                self._enqueue_deep_research(mod, event, kind == "clock")
+                self._enqueue_deep_research(name, mod, event, kind == "clock")
                 continue
             if not self._scheduler.should_run(name, kind):
                 continue
@@ -755,14 +780,14 @@ class MidiEngine:
                 if overloaded:
                     self.state.status_text = f"overload:{','.join(overloaded[:3])}"
 
-    def _enqueue_deep_research(self, mod: Any, event: dict[str, Any], include_clock: bool) -> None:
+    def _enqueue_deep_research(self, module_name: str, mod: Any, event: dict[str, Any], include_clock: bool) -> None:
         if not self._deep_research_flags.get("enable_module_execution", True):
             return
-        if not self._scheduler.should_run_deep_research():
+        if not self._scheduler.should_run_deep_research(module_name):
             return
         research_ctx = self._make_research_snapshot(event)
         frozen_ctx = self._freeze_snapshot_payload(research_ctx)
-        work_item = (mod, dict(event), bool(include_clock), frozen_ctx)
+        work_item = (str(module_name), mod, dict(event), bool(include_clock), frozen_ctx)
         try:
             self._deep_research_q.put_nowait(work_item)
         except queue.Full:
@@ -771,10 +796,11 @@ class MidiEngine:
     def _deep_research_loop(self) -> None:
         while not self._deep_research_stop.is_set():
             try:
-                mod, event, include_clock, frozen_ctx = self._deep_research_q.get(timeout=0.05)
+                module_name, mod, event, include_clock, frozen_ctx = self._deep_research_q.get(timeout=0.05)
             except queue.Empty:
                 continue
             start_ts = self._scheduler.begin_deep_research()
+            mod_start = time.monotonic()
             try:
                 research_ctx = self._thaw_snapshot_payload(frozen_ctx)
                 schema_snapshot = research_ctx.get("schema", {}) if isinstance(research_ctx, dict) else {}
@@ -792,6 +818,8 @@ class MidiEngine:
             except Exception:
                 pass
             finally:
+                mod_runtime_ms = max(0.0, (time.monotonic() - mod_start) * 1000.0)
+                self._scheduler.end_deep_research_module(module_name, mod_runtime_ms)
                 self._scheduler.end_deep_research(start_ts)
                 self._deep_research_q.task_done()
 
