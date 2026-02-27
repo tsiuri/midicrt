@@ -25,6 +25,7 @@ term = Terminal()
 _MEMORY_TOGGLE_KEY = "h"
 _MEMORY_MAX_SESSIONS = 32
 _MEMORY_EXPORT_DIR = "captures/pianoroll_exp"
+_MEMORY_LIBRARY_DIR = ""
 _CC_LANE_MAX_RATIO = 0.25
 
 _cfg = load_section("pianoroll_exp")
@@ -33,6 +34,7 @@ if _cfg is None:
 try:
     _MEMORY_MAX_SESSIONS = int(_cfg.get("memory_max_sessions", _MEMORY_MAX_SESSIONS))
     _MEMORY_EXPORT_DIR = str(_cfg.get("memory_export_dir", _MEMORY_EXPORT_DIR))
+    _MEMORY_LIBRARY_DIR = str(_cfg.get("memory_library_dir", _MEMORY_LIBRARY_DIR))
     _CC_LANE_MAX_RATIO = float(_cfg.get("cc_lane_max_ratio", _CC_LANE_MAX_RATIO))
 except Exception:
     pass
@@ -43,6 +45,7 @@ try:
         {
             "memory_max_sessions": int(max(1, _MEMORY_MAX_SESSIONS)),
             "memory_export_dir": str(_MEMORY_EXPORT_DIR),
+            "memory_library_dir": str(_MEMORY_LIBRARY_DIR),
             "cc_lane_max_ratio": float(max(0.0, min(0.5, _CC_LANE_MAX_RATIO))),
         },
     )

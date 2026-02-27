@@ -87,6 +87,7 @@ class MidiEngine:
         self._memory_capture = MemoryCaptureManager(
             max_sessions=max(1, int(mem_cfg.get("memory_max_sessions", 32))),
             export_dir=str(mem_cfg.get("memory_export_dir", "captures/pianoroll_exp")),
+            library_dir=str(mem_cfg.get("memory_library_dir", "")).strip() or None,
             project_root=os.path.dirname(os.path.dirname(__file__)),
         )
         self._capture_events = deque()
