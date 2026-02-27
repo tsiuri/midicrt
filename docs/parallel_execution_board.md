@@ -29,6 +29,12 @@ Updated: 2026-02-27 (WB-004 closed)
 | Unreviewed contract-breaking merges | 0 | Pending real pilot | ⚪ Pending |
 | Sev-1 coordination incidents | 0 | Pending real pilot | ⚪ Pending |
 
+
+## Open semantic conflicts
+
+- [MR-01 / TASK-2026-02-27-01: Contract-version gate is documented as missing, but workflow jobs exist](docs/tasks/TASK-2026-02-27-contract-gate-doc-correction.md)
+- [MR-02+MR-03 / TASK-2026-02-27-02: Lane workflow graph is inconsistent, so lane-sharded CI is not reliably active](docs/tasks/TASK-2026-02-27-fix-lane-workflow-dependencies.md)
+
 ## Immediate next actions
 
 Reference artifact: [Fixture Dependency Map](fixture_dependency_map.md).
