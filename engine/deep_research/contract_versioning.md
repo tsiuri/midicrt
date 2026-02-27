@@ -29,6 +29,22 @@ This document defines staged-change rules for `ResearchContract`.
 4. **Cleanup phase**
    - Remove old-shape compatibility code in a later follow-up after stability window.
 
+## Cross-track override precedence
+
+For cross-track edits, `tools/check_track_boundaries.py` accepts three override channels.
+When multiple are present, precedence is:
+
+1. `ALLOW_CROSS_TRACK=1` (explicit env override).
+2. PR label `allow-cross-track` (CI maps this to env).
+3. Repository marker file `.ci/allow_cross_track`.
+
+Concrete examples:
+
+- **Example 1 (env wins):** `ALLOW_CROSS_TRACK=1` is set and `.ci/allow_cross_track` exists. The effective source is `ALLOW_CROSS_TRACK`.
+- **Example 2 (label used):** CI sets `ALLOW_CROSS_TRACK_LABEL=1` from a PR label and env override is absent. Effective source is `label:allow-cross-track`.
+- **Example 3 (file fallback):** no env/label override but `.ci/allow_cross_track` exists. Effective source is `.ci/allow_cross_track`.
+- **Example 4 (no override):** none of the above are present; mixed Track A + Track B edits fail.
+
 ## Parallel-agent safety
 
 When multiple agents may run concurrently, always assume temporary version skew.

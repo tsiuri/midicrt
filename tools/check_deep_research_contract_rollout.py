@@ -18,7 +18,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 PLATFORM_PATH = "engine/deep_research/platform.py"
+SCHEMA_PATH = "engine/state/schema.py"
 COMPAT_TEST_PATH = "tests/test_deep_research_contract_compat.py"
+COMPAT_FIXTURE_PATH = "tests/fixtures/deep_research_contract_cases.json"
 
 _MAJOR_RE = re.compile(r"^RESEARCH_CONTRACT_MAJOR_VERSION\s*=\s*(\d+)\s*$", re.MULTILINE)
 _MINOR_RE = re.compile(r"^RESEARCH_CONTRACT_MINOR_VERSION\s*=\s*(\d+)\s*$", re.MULTILINE)
@@ -74,6 +76,23 @@ def _changed_files(base_ref: str) -> set[str]:
     return {line.strip() for line in proc.stdout.splitlines() if line.strip()}
 
 
+def _schema_breaking_change_detected(base_schema_src: str, head_schema_src: str) -> bool:
+    # Conservative detector: schema-version bump or field removals/renames are treated as breaking.
+    schema_version_re = re.compile(r"^SCHEMA_VERSION\s*=\s*(\d+)\s*$", re.MULTILINE)
+    base_match = schema_version_re.search(base_schema_src)
+    head_match = schema_version_re.search(head_schema_src)
+    if not base_match or not head_match:
+        raise ValueError("Unable to parse SCHEMA_VERSION in engine/state/schema.py")
+
+    base_schema_version = int(base_match.group(1))
+    head_schema_version = int(head_match.group(1))
+    if head_schema_version != base_schema_version:
+        return True
+
+    # If schema changed but version did not, require explicit contract version bump as safeguard.
+    return base_schema_src != head_schema_src
+
+
 def main() -> int:
     base_ref = _resolve_base_ref()
     head_src = _read_text(PLATFORM_PATH)
@@ -84,6 +103,11 @@ def main() -> int:
 
     changed = _changed_files(base_ref)
     compat_test_touched = COMPAT_TEST_PATH in changed
+    compat_fixture_touched = COMPAT_FIXTURE_PATH in changed
+
+    head_schema_src = _read_text(SCHEMA_PATH)
+    base_schema_src = _git_show(base_ref, SCHEMA_PATH)
+    schema_breaking = _schema_breaking_change_detected(base_schema_src, head_schema_src)
 
     if head_version.major < base_version.major or (
         head_version.major == base_version.major and head_version.minor < base_version.minor
@@ -98,6 +122,25 @@ def main() -> int:
     major_changed = head_version.major != base_version.major
     minor_changed = head_version.minor != base_version.minor
 
+    if schema_breaking and not (major_changed or minor_changed):
+        print(
+            "Schema-breaking DeepResearch contract change detected without contract version bump.",
+            file=sys.stderr,
+        )
+        print(
+            f"Update {PLATFORM_PATH} RESEARCH_CONTRACT_MAJOR_VERSION/RESEARCH_CONTRACT_MINOR_VERSION.",
+            file=sys.stderr,
+        )
+        return 1
+
+    if schema_breaking and not major_changed:
+        print(
+            "Schema-breaking DeepResearch contract change requires a MAJOR version bump.",
+            file=sys.stderr,
+        )
+        print(f"{base_ref}={base_version.major}.{base_version.minor} HEAD={head_version.major}.{head_version.minor}", file=sys.stderr)
+        return 1
+
     if major_changed and not compat_test_touched:
         print(
             "Breaking DeepResearch contract major change detected, but compatibility tests were not updated.",
@@ -111,6 +154,14 @@ def main() -> int:
             f"Additive DeepResearch minor change detected, but required compatibility test file is missing: {COMPAT_TEST_PATH}",
             file=sys.stderr,
         )
+        return 1
+
+    if (major_changed or minor_changed or schema_breaking) and not compat_fixture_touched:
+        print(
+            "DeepResearch contract/schema change detected, but compatibility fixture was not updated.",
+            file=sys.stderr,
+        )
+        print(f"Update {COMPAT_FIXTURE_PATH} in the same PR.", file=sys.stderr)
         return 1
 
     print(

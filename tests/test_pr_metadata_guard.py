@@ -1,4 +1,6 @@
 import importlib.util
+import json
+import os
 import unittest
 from pathlib import Path
 
@@ -94,6 +96,40 @@ class PrMetadataGuardTests(unittest.TestCase):
         )
         self.assertTrue(ok)
         self.assertEqual(errors, [])
+
+    def test_override_source_precedence_env_then_label_then_file(self):
+        old = dict(os.environ)
+        try:
+            os.environ["ALLOW_CROSS_TRACK"] = "1"
+            os.environ["ALLOW_CROSS_TRACK_SOURCE"] = "ALLOW_CROSS_TRACK"
+            self.assertEqual(ctb._override_source(), "ALLOW_CROSS_TRACK")
+
+            os.environ.pop("ALLOW_CROSS_TRACK", None)
+            os.environ.pop("ALLOW_CROSS_TRACK_SOURCE", None)
+            os.environ["ALLOW_CROSS_TRACK_LABEL"] = "1"
+            self.assertEqual(ctb._override_source(), f"label:{ctb.OVERRIDE_LABEL}")
+
+            os.environ.pop("ALLOW_CROSS_TRACK_LABEL", None)
+            marker = ctb.OVERRIDE_FILE
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.write_text("1", encoding="utf-8")
+            self.assertEqual(ctb._override_source(), str(ctb.OVERRIDE_FILE))
+            marker.unlink()
+        finally:
+            os.environ.clear()
+            os.environ.update(old)
+
+    def test_json_summary_shape(self):
+        summary = {
+            "track_a_files": ["engine/deep_research/platform.py"],
+            "track_b_files": ["engine/deep_research/logic.py"],
+            "override_source": None,
+        }
+        encoded = json.dumps(summary)
+        parsed = json.loads(encoded)
+        self.assertEqual(parsed["track_a_files"][0], "engine/deep_research/platform.py")
+        self.assertEqual(parsed["track_b_files"][0], "engine/deep_research/logic.py")
+        self.assertIsNone(parsed["override_source"])
 
 
 if __name__ == "__main__":

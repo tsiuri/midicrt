@@ -15,6 +15,7 @@ explicit override exists through one of:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import subprocess
@@ -143,8 +144,19 @@ def _changed_files_from_file(path: Path) -> set[str]:
     return {line.strip() for line in contents.splitlines() if line.strip() and not line.startswith("#")}
 
 
+def _override_source() -> str | None:
+    if os.environ.get("ALLOW_CROSS_TRACK") == "1":
+        # CI may map the allow-cross-track label into ALLOW_CROSS_TRACK.
+        return os.environ.get("ALLOW_CROSS_TRACK_SOURCE", "ALLOW_CROSS_TRACK")
+    if os.environ.get("ALLOW_CROSS_TRACK_LABEL") == "1":
+        return f"label:{OVERRIDE_LABEL}"
+    if OVERRIDE_FILE.exists():
+        return str(OVERRIDE_FILE)
+    return None
+
+
 def _override_enabled() -> bool:
-    return os.environ.get("ALLOW_CROSS_TRACK") == "1" or OVERRIDE_FILE.exists()
+    return _override_source() is not None
 
 
 def _print_track_changes(track_name: str, changed: list[str], to_stderr: bool = False) -> None:
@@ -246,6 +258,11 @@ def main() -> int:
     parser.add_argument("--validate-pr-metadata", action="store_true")
     parser.add_argument("--branch-name", help="Branch name to validate (or BRANCH_NAME env).")
     parser.add_argument("--pr-body-file", type=Path, help="Path to PR body markdown for validation.")
+    parser.add_argument(
+        "--json-summary",
+        action="store_true",
+        help="Emit machine-readable JSON summary for touched track files and override source.",
+    )
     args = parser.parse_args()
 
     try:
@@ -288,13 +305,26 @@ def main() -> int:
 
     changed_a = sorted(changed & track_a)
     changed_b = sorted(changed & track_b)
+    override_source = _override_source()
+
+    if args.json_summary:
+        print(
+            json.dumps(
+                {
+                    "track_a_files": changed_a,
+                    "track_b_files": changed_b,
+                    "override_source": override_source,
+                },
+                sort_keys=True,
+            )
+        )
 
     if not changed_a or not changed_b:
         print("Track boundary check passed.")
         return 0
 
-    if _override_enabled():
-        print("Track boundary check overridden via explicit override.")
+    if override_source:
+        print(f"Track boundary check overridden via explicit override ({override_source}).")
         _print_track_changes("Track A", changed_a)
         _print_track_changes("Track B", changed_b)
         return 0

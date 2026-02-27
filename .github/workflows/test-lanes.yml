@@ -10,6 +10,9 @@ jobs:
   detect_changes:
     runs-on: ubuntu-latest
     outputs:
+      track_a: ${{ steps.filter.outputs.track_a }}
+      track_b: ${{ steps.filter.outputs.track_b }}
+      contract_guard_paths: ${{ steps.filter.outputs.contract_guard_paths }}
       platform: ${{ steps.filter.outputs.platform }}
       logic: ${{ steps.filter.outputs.logic }}
       qa_contract: ${{ steps.filter.outputs.qa_contract }}
@@ -82,13 +85,18 @@ jobs:
               - 'tests/test_deep_research_replay_contracts.py'
               - 'tests/fixtures/deep_research_contract_cases.json'
               - '.github/workflows/test-lanes.yml'
+            contract_guard_paths:
+              - 'engine/deep_research/**'
+              - 'engine/state/schema.py'
+              - 'tests/fixtures/deep_research_contract_cases.json'
+              - '.github/workflows/test-lanes.yml'
 
 
   deep_research_contract_guard:
     name: deep_research_contract_guard
     runs-on: ubuntu-latest
     needs: detect_changes
-    if: github.event_name != 'pull_request' || needs.detect_changes.outputs.track_a == 'true' || needs.detect_changes.outputs.track_b == 'true'
+    if: github.event_name != 'pull_request' || needs.detect_changes.outputs.contract_guard_paths == 'true'
     steps:
       - uses: actions/checkout@v4
         with:
