@@ -22,6 +22,9 @@ except ModuleNotFoundError:  # pragma: no cover - local fallback for offline env
             self.on_cleanup = []
 
     aiohttp.WSMsgType = types.SimpleNamespace(TEXT="TEXT", ERROR="ERROR")
+    def _json_response(payload, status=200):
+        return types.SimpleNamespace(text=json.dumps(payload), status=status)
+
     aiohttp.web = types.SimpleNamespace(
         Application=_Application,
         WebSocketResponse=_WebSocketResponse,
@@ -29,8 +32,9 @@ except ModuleNotFoundError:  # pragma: no cover - local fallback for offline env
         StreamResponse=object,
         Response=object,
         FileResponse=lambda *_a, **_k: None,
-        json_response=lambda payload: payload,
+        json_response=_json_response,
         run_app=lambda *_a, **_k: None,
+        middleware=lambda fn: fn,
     )
     sys.modules["aiohttp"] = aiohttp
     from aiohttp import WSMsgType, web
@@ -71,6 +75,9 @@ class _FakeWS:
 
     async def send_str(self, payload):
         self.sent.append(payload)
+
+    async def send_json(self, payload):
+        self.sent.append(json.dumps(payload))
 
     def exception(self):
         return None
@@ -175,6 +182,8 @@ class DashboardServerTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("schema_health", data)
         self.assertEqual(data["read_only"]["mutation_endpoints"], [])
         self.assertEqual(data["read_only"]["command_execution_paths"], [])
+        self.assertEqual(data["read_only"]["mode"], "strict-read-only")
+        self.assertEqual(data["read_only"]["allowed_http_methods"], ["GET"])
         self.assertEqual(data["read_only"]["bounded_polling"]["max_broadcast_hz"], 12.0)
 
     async def test_ws_initial_payload_includes_metrics(self):
@@ -266,8 +275,22 @@ class DashboardServerTest(unittest.IsolatedAsyncioTestCase):
             9,
             {
                 "schema_version": 4,
+                "compat_mode": "native",
                 "transport": {"tick": 9},
                 "deep_research": {"produced_at": 1234.5, "source_tick": 4, "stale": True, "lag_ms": 987.0},
+                "views": {
+                    "tempo_quality": {"jitter_ms": 2.4, "drift_ppm": -0.5},
+                    "microtiming": {"title": "Microtiming", "total_samples": 12, "buckets": ["early", "late"]},
+                    "motif": {"found": True, "pattern": "+4 -2", "count": 3, "window": 2},
+                    "capture_status": {
+                        "armed": True,
+                        "state": "capturing",
+                        "buffer_fill": 14,
+                        "buffer_capacity": 64,
+                        "commit_state": "dirty",
+                        "last_commit": "2026-02-27T12:00:00Z",
+                    },
+                },
             },
             {"connected": True, "last_update_age_ms": 20.0},
             last_seq=7,
@@ -279,7 +302,56 @@ class DashboardServerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(data["metrics"]["fanout"]["queue_dropped"], 2)
         self.assertEqual(data["metrics"]["sequence_gap"], 1)
         self.assertEqual(data["schema_health"]["latest_snapshot_version"], 4)
+        self.assertEqual(data["snapshot"]["compat_mode"], "native")
+        self.assertEqual(data["observer_views"]["tempo_quality"]["jitter_ms"], 2.4)
+        self.assertEqual(data["observer_views"]["tempo_quality"]["drift_ppm"], -0.5)
+        self.assertEqual(data["observer_views"]["motif"]["pattern"], "+4 -2")
+        self.assertEqual(data["observer_views"]["capture_status"]["buffer_fill"], 14)
         self.assertEqual(data["read_only"]["bounded_stream_rate_hz"], 20.0)
+        self.assertEqual(data["read_only"]["mode"], "strict-read-only")
+
+    async def test_read_only_method_guard_rejects_mutation_methods(self):
+        server = DashboardServer(socket_path="/tmp/test.sock", host="127.0.0.1", port=0)
+        request = types.SimpleNamespace(method="POST")
+        response = await server._read_only_method_guard(request, mock.AsyncMock())
+        payload = json.loads(response.text)
+        self.assertEqual(response.status, 405)
+        self.assertEqual(payload["error"], "read-only observer: mutation methods are disabled")
+        self.assertEqual(payload["read_only"]["allowed_http_methods"], ["GET"])
+
+    async def test_ws_rejects_non_ping_inbound_actions(self):
+        server = DashboardServer(socket_path="/tmp/test.sock", host="127.0.0.1", port=0)
+        server.bridge.current = lambda: (1, {"schema_version": 4, "transport": {"tick": 1}}, {"connected": True, "last_update_age_ms": 1.0})
+        fake_ws = _FakeWS()
+        fake_ws._messages = [types.SimpleNamespace(type=WSMsgType.TEXT, data="run panic")]  # non-ping action
+        with mock.patch("web.observer.web.WebSocketResponse", return_value=fake_ws):
+            await server._ws(mock.Mock())
+        self.assertEqual(len(fake_ws.sent), 2)
+        self.assertEqual(json.loads(fake_ws.sent[1])["error"], "read-only websocket: inbound command actions are disabled")
+
+    def test_payload_schema_surface_stability(self):
+        server = DashboardServer(socket_path="/tmp/test.sock", host="127.0.0.1", port=0)
+        payload = server._payload_for(
+            4,
+            {"schema_version": 4, "compat_mode": "legacy-v3", "transport": {"tick": 8}},
+            {"connected": True, "last_update_age_ms": 8.0},
+            last_seq=3,
+        )
+        data = json.loads(payload)
+        expected_top_keys = {
+            "seq",
+            "snapshot",
+            "bridge",
+            "metrics",
+            "deep_research",
+            "schema_health",
+            "observer_views",
+            "read_only",
+        }
+        self.assertEqual(set(data.keys()), expected_top_keys)
+        self.assertIn("mode", data["read_only"])
+        self.assertIn("allowed_http_methods", data["read_only"])
+        self.assertIn("websocket_rejected_actions", data["read_only"])
 
     def test_payload_includes_schema_health_fallback_counter_for_legacy_envelopes(self):
         server = DashboardServer(socket_path="/tmp/test.sock", host="127.0.0.1", port=0, max_broadcast_hz=15)

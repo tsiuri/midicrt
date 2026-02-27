@@ -37,6 +37,14 @@
       <div id="transport" class="mono">Waiting for snapshot…</div>
     </section>
     <section class="card">
+      <h2>Timing analysis</h2>
+      <div id="timing" class="mono">Waiting for snapshot…</div>
+    </section>
+    <section class="card">
+      <h2>Capture status</h2>
+      <div id="captureStatus" class="mono">Waiting for snapshot…</div>
+    </section>
+    <section class="card">
       <h2>Active notes</h2>
       <ul id="notes"></ul>
     </section>
@@ -56,6 +64,8 @@ const notesEl = document.getElementById('notes');
 const modulesEl = document.getElementById('modules');
 const deepResearchEl = document.getElementById('deepResearch');
 const schemaHealthEl = document.getElementById('schemaHealth');
+const timingEl = document.getElementById('timing');
+const captureStatusEl = document.getElementById('captureStatus');
 const staleStateEl = document.getElementById('staleState');
 const reconnectStateEl = document.getElementById('reconnectState');
 const snapshotStateEl = document.getElementById('snapshotState');
@@ -72,8 +82,13 @@ function render(payload) {
   const metrics = payload.metrics || {};
   const bridge = payload.bridge || {};
   const schemaHealth = payload.schema_health || {};
+  const observerViews = payload.observer_views || {};
+  const tempoQuality = observerViews.tempo_quality || {};
+  const microtiming = observerViews.microtiming || {};
+  const motif = observerViews.motif || {};
+  const capture = observerViews.capture_status || {};
   const ageMs = Number(metrics.last_update_age_ms ?? bridge.last_update_age_ms ?? 0);
-  const reconnectAttempts = Number(bridge.reconnect_attempts ?? 0);
+  const reconnectAttempts = Number(bridge.total_failures ?? 0);
 
   transportEl.textContent = [
     `tick: ${t.tick ?? 0}`,
@@ -81,6 +96,8 @@ function render(payload) {
     `running: ${Boolean(t.running)}`,
     `bpm: ${(t.bpm ?? 0).toFixed ? t.bpm.toFixed(2) : t.bpm}`,
     `meter: ${t.meter_estimate ?? '--'} (${(t.confidence ?? 0).toFixed ? (t.confidence ?? 0).toFixed(2) : t.confidence})`,
+    `jitter_ms: ${Number(tempoQuality.jitter_ms ?? 0).toFixed(2)}`,
+    `drift_ppm: ${Number(tempoQuality.drift_ppm ?? 0).toFixed(2)}`,
     `status: ${snapshot.status_text || ''}`,
     `seq: ${payload.seq ?? 0} (gap: ${metrics.sequence_gap ?? 0})`,
   ].join('\n');
@@ -105,9 +122,30 @@ function render(payload) {
 
   schemaHealthEl.textContent = [
     `latest_snapshot_version: ${schemaHealth.latest_snapshot_version ?? snapshot.schema_version ?? '--'}`,
+    `compat_mode: ${snapshot.compat_mode ?? 'native'}`,
     `ipc_freshness_age_ms: ${Number(schemaHealth.ipc_freshness_age_ms ?? ageMs).toFixed ? Number(schemaHealth.ipc_freshness_age_ms ?? ageMs).toFixed(1) : (schemaHealth.ipc_freshness_age_ms ?? '--')}`,
     `normalization_fallbacks: ${schemaHealth.normalization_fallbacks ?? '--'}`,
     `bounded_stream_rate_hz: ${payload.read_only?.bounded_stream_rate_hz ?? '--'}`,
+    `read_only_mode: ${payload.read_only?.mode ?? '--'}`,
+  ].join('\n');
+
+  timingEl.textContent = [
+    `microtiming_title: ${microtiming.title ?? 'Microtiming'}`,
+    `microtiming_samples: ${microtiming.total_samples ?? 0}`,
+    `microtiming_buckets: ${Array.isArray(microtiming.buckets) ? microtiming.buckets.length : 0}`,
+    `motif_found: ${Boolean(motif.found)}`,
+    `motif_pattern: ${motif.pattern || '--'}`,
+    `motif_count: ${motif.count ?? 0}`,
+  ].join('\n');
+
+  captureStatusEl.textContent = [
+    `state: ${capture.state ?? 'idle'}`,
+    `armed: ${Boolean(capture.armed)}`,
+    `buffer: ${(capture.buffer_fill ?? 0)}/${(capture.buffer_capacity ?? 0)}`,
+    `commit_state: ${capture.commit_state ?? 'idle'}`,
+    `last_commit: ${capture.last_commit || '--'}`,
+    `last_commit_age_s: ${capture.last_commit_age_s ?? '--'}`,
+    `target_path: ${capture.target_path || '--'}`,
   ].join('\n');
 
   notesEl.innerHTML = '';

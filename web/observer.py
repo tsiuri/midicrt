@@ -176,6 +176,17 @@ class DashboardServer:
         self._queue_coalesced = 0
         self.static_dir = Path(__file__).with_name("static")
 
+    @staticmethod
+    def _read_only_contract() -> dict[str, Any]:
+        return {
+            "mode": "strict-read-only",
+            "mutation_endpoints": [],
+            "command_execution_paths": [],
+            "allowed_http_methods": ["GET"],
+            "websocket_inbound_actions": ["ping"],
+            "websocket_rejected_actions": ["*"],
+        }
+
     def _telemetry(self) -> dict[str, int]:
         return {
             "queue_dropped": self._queue_dropped,
@@ -206,8 +217,7 @@ class DashboardServer:
                 "client_queue_size": self.client_queue_size,
                 "telemetry": self._telemetry(),
                 "read_only": {
-                    "mutation_endpoints": [],
-                    "command_execution_paths": [],
+                    **self._read_only_contract(),
                     "bounded_polling": {
                         "max_broadcast_hz": self.max_broadcast_hz,
                         "client_queue_size": self.client_queue_size,
@@ -226,6 +236,7 @@ class DashboardServer:
 
         tempo_quality = views.get("tempo_quality") if isinstance(views.get("tempo_quality"), dict) else {}
         microtiming = views.get("microtiming") if isinstance(views.get("microtiming"), dict) else {}
+        motif = views.get("motif") if isinstance(views.get("motif"), dict) else {}
         capture_status = views.get("capture_status") if isinstance(views.get("capture_status"), dict) else {}
         module_health = views.get("module_health") if isinstance(views.get("module_health"), dict) else {}
 
@@ -245,11 +256,19 @@ class DashboardServer:
                 "stability": float(tempo_quality.get("stability", 0.0) or 0.0),
                 "lock_state": str(tempo_quality.get("lock_state", "unlocked")),
                 "meter": str(tempo_quality.get("meter", transport.get("meter_estimate", ""))),
+                "jitter_ms": float(tempo_quality.get("jitter_ms", 0.0) or 0.0),
+                "drift_ppm": float(tempo_quality.get("drift_ppm", 0.0) or 0.0),
             },
             "microtiming": {
                 "title": str(microtiming.get("title", "Microtiming")),
                 "buckets": microtiming.get("buckets", []),
                 "total_samples": int(microtiming.get("total_samples", 0) or 0),
+            },
+            "motif": {
+                "found": bool(motif.get("found", False)),
+                "pattern": str(motif.get("pattern", "")),
+                "count": int(motif.get("count", 0) or 0),
+                "window": int(motif.get("window", 0) or 0),
             },
             "capture_status": {
                 "armed": bool(capture_status.get("armed", False)),
@@ -257,6 +276,9 @@ class DashboardServer:
                 "target_path": str(capture_status.get("target_path", "")),
                 "last_commit": str(capture_status.get("last_commit", "")),
                 "last_commit_age_s": capture_status.get("last_commit_age_s"),
+                "buffer_fill": int(capture_status.get("buffer_fill", 0) or 0),
+                "buffer_capacity": int(capture_status.get("buffer_capacity", 0) or 0),
+                "commit_state": str(capture_status.get("commit_state", "idle")),
             },
             "module_health": {
                 "cards": cards,
@@ -293,8 +315,7 @@ class DashboardServer:
             "schema_health": self._schema_health(snapshot, bridge_meta),
             "observer_views": self._observer_views(snapshot),
             "read_only": {
-                "mutation_endpoints": [],
-                "command_execution_paths": [],
+                **self._read_only_contract(),
                 "bounded_stream_rate_hz": self.max_broadcast_hz,
             },
         }
@@ -318,6 +339,8 @@ class DashboardServer:
             async for msg in ws:
                 if msg.type == WSMsgType.TEXT and msg.data.strip().lower() == "ping":
                     await ws.send_str("pong")
+                elif msg.type == WSMsgType.TEXT:
+                    await ws.send_json({"error": "read-only websocket: inbound command actions are disabled"})
                 elif msg.type == WSMsgType.ERROR:
                     _LOG.warning("websocket error: %s", ws.exception())
         finally:
@@ -395,8 +418,20 @@ class DashboardServer:
                 await task
         self.bridge.stop()
 
+    @web.middleware
+    async def _read_only_method_guard(self, request: web.Request, handler: Any) -> web.StreamResponse:
+        if request.method != "GET":
+            return web.json_response(
+                {
+                    "error": "read-only observer: mutation methods are disabled",
+                    "read_only": self._read_only_contract(),
+                },
+                status=405,
+            )
+        return await handler(request)
+
     def build_app(self) -> web.Application:
-        app = web.Application()
+        app = web.Application(middlewares=[self._read_only_method_guard])
         app.router.add_get("/", self._index)
         app.router.add_get("/healthz", self._healthz)
         app.router.add_get("/ws", self._ws)
