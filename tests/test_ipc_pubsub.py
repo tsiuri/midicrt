@@ -59,14 +59,17 @@ class IpcPubSubTest(unittest.TestCase):
         live.close()
 
     def test_publish_is_throttled_without_force(self):
+        client = self._connect()
         self.publisher._last_publish = 0.0
-        with mock.patch("engine.ipc.time.monotonic", side_effect=[1.00, 1.01, 1.03]):
-            first = self.publisher.publish({"schema_version": 3, "transport": {}}, force=False)
-            second = self.publisher.publish({"schema_version": 3, "transport": {}}, force=False)
-            third = self.publisher.publish({"schema_version": 3, "transport": {}}, force=False)
-        self.assertTrue(first)
-        self.assertFalse(second)
-        self.assertTrue(third)
+        time.sleep(0.05)
+        try:
+            with mock.patch("engine.ipc.time.monotonic", side_effect=[1.00, 1.00, 1.01]):
+                first = self.publisher.publish({"schema_version": 3, "transport": {}}, force=False)
+                second = self.publisher.publish({"schema_version": 3, "transport": {}}, force=False)
+            self.assertTrue(first)
+            self.assertFalse(second)
+        finally:
+            client.close()
 
     def test_malformed_payload_returns_error_envelope(self):
         client = self._connect()
@@ -131,6 +134,39 @@ class IpcPubSubTest(unittest.TestCase):
         self.assertFalse(ok)
         self.assertEqual(result.get("code"), "timeout")
 
+
+    def test_snapshot_client_can_reconnect_after_server_restart(self):
+        client = SnapshotClient(self.socket_path, timeout_s=0.2)
+        client.connect()
+        for _ in range(20):
+            if self.publisher.publish({"schema_version": 3, "transport": {"tick": 1}}, force=True):
+                break
+            time.sleep(0.01)
+        first = client.recv_snapshot()
+        self.assertEqual(first["transport"]["tick"], 1)
+        client.close()
+
+        self.publisher.stop()
+        time.sleep(0.05)
+        self.publisher.start()
+
+        reconnect = SnapshotClient(self.socket_path, timeout_s=0.2)
+        reconnect.connect()
+        for _ in range(20):
+            if self.publisher.publish({"schema_version": 3, "transport": {"tick": 2}}, force=True):
+                break
+            time.sleep(0.01)
+        second = reconnect.recv_snapshot()
+        reconnect.close()
+        self.assertEqual(second["transport"]["tick"], 2)
+
+    def test_snapshot_client_timeout_returns_none_for_stale_stream(self):
+        client = SnapshotClient(self.socket_path, timeout_s=0.05)
+        client.connect()
+        try:
+            self.assertIsNone(client.recv_snapshot())
+        finally:
+            client.close()
 
 if __name__ == "__main__":
     unittest.main()

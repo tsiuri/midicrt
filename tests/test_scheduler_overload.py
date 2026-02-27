@@ -55,6 +55,21 @@ class _BlockingDeepResearchProbe(_DeepResearchProbe):
         self.release.wait(timeout=1.0)
         super().on_event(event)
 
+
+class _ThrottlePublisher:
+    def __init__(self, allow_every: int):
+        self.allow_every = max(1, int(allow_every))
+        self.wants_calls = 0
+        self.publish_calls = 0
+
+    def wants_publish(self):
+        self.wants_calls += 1
+        return self.wants_calls % self.allow_every == 0
+
+    def publish(self, _snapshot, force=False):
+        self.publish_calls += 1
+        return bool(force)
+
 class SchedulerOverloadTest(unittest.TestCase):
     def test_clock_event_skips_event_driven_module_and_tracks_skip_diag(self):
         mod = _ProbeModule()
@@ -157,6 +172,32 @@ class SchedulerOverloadTest(unittest.TestCase):
         self.assertEqual(deep["late_policy"], "apply_next")
 
 
+
+    def test_high_event_density_marks_overload_and_respects_publish_throttle(self):
+        mod = _ProbeModule()
+        publisher = _ThrottlePublisher(allow_every=5)
+        engine = MidiEngine(
+            modules=[mod],
+            publisher=publisher,
+            overload_cost_ms=1.0,
+            module_policies={"probe": {"policy": "event_driven"}},
+        )
+
+        mono = []
+        for i in range(200):
+            base = 1.0 + i * 0.01
+            mono.extend([base, base + 0.004])
+
+        with mock.patch("engine.scheduler.time.monotonic", side_effect=mono), mock.patch("engine.core.time.monotonic", side_effect=mono), mock.patch("engine.core.time.time", return_value=600.0):
+            for note in range(50):
+                engine.ingest(mido.Message("note_on", note=60 + (note % 12), velocity=100, channel=0))
+
+        snap = engine.get_snapshot()["schema"]
+        overloaded = snap["diagnostics"]["scheduler"]["overloaded_modules"]
+        self.assertIn("probe", overloaded)
+        self.assertEqual(mod.events, 50)
+        self.assertEqual(publisher.wants_calls, 50)
+        self.assertEqual(publisher.publish_calls, 10)
 
 if __name__ == "__main__":
     unittest.main()

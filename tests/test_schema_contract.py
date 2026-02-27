@@ -113,6 +113,18 @@ class SchemaContractTest(unittest.TestCase):
                 for key, value in expected.items():
                     self.assertEqual(normalized[key], value)
 
+    def test_deep_research_normalization_is_deterministic_under_version_skew(self):
+        fixture = json.loads(CONTRACT_FIXTURE.read_text())
+        cases = [case for case in fixture["schema_contract"] if isinstance(case.get("expected"), dict)]
+
+        for case in cases:
+            with self.subTest(case=case["name"]):
+                first = normalize_deep_research_payload(case["input"])
+                second = normalize_deep_research_payload(case["input"])
+                third = normalize_deep_research_payload(first)
+                self.assertEqual(first, second)
+                self.assertEqual(second, third)
+
     def test_breaking_schema_change_must_fail_without_version_bump_case(self):
         fixture = json.loads(CONTRACT_FIXTURE.read_text())
         rollout = fixture["rollout_guard"]["must_fail_without_version_bump"]
