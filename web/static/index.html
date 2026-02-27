@@ -56,6 +56,10 @@
       <h2>Deep research</h2>
       <div id="deepResearch" class="mono">Unavailable</div>
     </section>
+    <section class="card">
+      <h2>Module warnings</h2>
+      <div id="moduleWarnings" class="mono">None</div>
+    </section>
   </div>
 
 <script>
@@ -69,6 +73,7 @@ const captureStatusEl = document.getElementById('captureStatus');
 const staleStateEl = document.getElementById('staleState');
 const reconnectStateEl = document.getElementById('reconnectState');
 const snapshotStateEl = document.getElementById('snapshotState');
+const moduleWarningsEl = document.getElementById('moduleWarnings');
 
 function setPill(el, text, cls) {
   el.textContent = text;
@@ -87,6 +92,8 @@ function render(payload) {
   const microtiming = observerViews.microtiming || {};
   const motif = observerViews.motif || {};
   const capture = observerViews.capture_status || {};
+  const moduleHealth = observerViews.module_health || {};
+  const warnings = Array.isArray(moduleHealth.warnings) ? moduleHealth.warnings : [];
   const ageMs = Number(metrics.last_update_age_ms ?? bridge.last_update_age_ms ?? 0);
   const reconnectAttempts = Number(bridge.total_failures ?? 0);
 
@@ -137,6 +144,8 @@ function render(payload) {
     `motif_pattern: ${motif.pattern || '--'}`,
     `motif_count: ${motif.count ?? 0}`,
   ].join('\n');
+
+  moduleWarningsEl.textContent = warnings.length ? warnings.map((w) => `module=${w.module} over_budget=${w.over_budget_count} skipped=${w.skipped_due_degradation} last_ms=${Number(w.last_runtime_ms ?? 0).toFixed(2)}`).join('\n') : 'None';
 
   captureStatusEl.textContent = [
     `state: ${capture.state ?? 'idle'}`,
