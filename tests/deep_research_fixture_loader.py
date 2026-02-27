@@ -85,6 +85,72 @@ def validate_deep_research_sequence_fixture(case: dict[str, Any], fixture_path: 
     if not isinstance(expected.get("note_density"), str):
         raise FixtureValidationError(f"{fixture_path.name}: expected.note_density must be a string")
 
+    chord_candidates = expected.get("chord_candidates")
+    if not isinstance(chord_candidates, list):
+        raise FixtureValidationError(
+            f"{fixture_path.name}: expected.chord_candidates must be a list"
+        )
+    for index, candidate in enumerate(chord_candidates):
+        if not isinstance(candidate, dict):
+            raise FixtureValidationError(
+                f"{fixture_path.name}: expected.chord_candidates[{index}] must be an object"
+            )
+        for field in ("label", "name"):
+            if not isinstance(candidate.get(field), str):
+                raise FixtureValidationError(
+                    f"{fixture_path.name}: expected.chord_candidates[{index}].{field} must be a string"
+                )
+        if not isinstance(candidate.get("root"), int):
+            raise FixtureValidationError(
+                f"{fixture_path.name}: expected.chord_candidates[{index}].root must be an int"
+            )
+        if not isinstance(candidate.get("confidence"), (int, float)):
+            raise FixtureValidationError(
+                f"{fixture_path.name}: expected.chord_candidates[{index}].confidence must be numeric"
+            )
+        if not isinstance(candidate.get("missing_tones"), list):
+            raise FixtureValidationError(
+                f"{fixture_path.name}: expected.chord_candidates[{index}].missing_tones must be a list"
+            )
+        if not all(isinstance(tone, str) for tone in candidate["missing_tones"]):
+            raise FixtureValidationError(
+                f"{fixture_path.name}: expected.chord_candidates[{index}].missing_tones entries must be strings"
+            )
+        for optional in ("roman", "function"):
+            if optional in candidate and not isinstance(candidate.get(optional), str):
+                raise FixtureValidationError(
+                    f"{fixture_path.name}: expected.chord_candidates[{index}].{optional} must be a string"
+                )
+
+    key_estimate = expected.get("key_estimate")
+    if key_estimate is not None:
+        if not isinstance(key_estimate, dict):
+            raise FixtureValidationError(f"{fixture_path.name}: expected.key_estimate must be an object or null")
+        if not isinstance(key_estimate.get("label"), str):
+            raise FixtureValidationError(f"{fixture_path.name}: expected.key_estimate.label must be a string")
+        if not isinstance(key_estimate.get("confidence"), (int, float)):
+            raise FixtureValidationError(
+                f"{fixture_path.name}: expected.key_estimate.confidence must be numeric"
+            )
+        alternatives = key_estimate.get("alternatives")
+        if not isinstance(alternatives, list):
+            raise FixtureValidationError(
+                f"{fixture_path.name}: expected.key_estimate.alternatives must be a list"
+            )
+        for index, alternative in enumerate(alternatives):
+            if not isinstance(alternative, dict):
+                raise FixtureValidationError(
+                    f"{fixture_path.name}: expected.key_estimate.alternatives[{index}] must be an object"
+                )
+            if not isinstance(alternative.get("label"), str):
+                raise FixtureValidationError(
+                    f"{fixture_path.name}: expected.key_estimate.alternatives[{index}].label must be a string"
+                )
+            if not isinstance(alternative.get("confidence"), (int, float)):
+                raise FixtureValidationError(
+                    f"{fixture_path.name}: expected.key_estimate.alternatives[{index}].confidence must be numeric"
+                )
+
 
 def load_all_deep_research_sequence_fixtures() -> list[dict[str, Any]]:
     fixtures: list[dict[str, Any]] = []

@@ -1,0 +1,66 @@
+{
+  "name": "augmented_ambiguity_threshold",
+  "schema_version": 4,
+  "event": {
+    "kind": "clock"
+  },
+  "transport": {
+    "tick": 18,
+    "bar": 2,
+    "running": true,
+    "bpm": 110.0
+  },
+  "active_notes": {
+    "0": [
+      60,
+      64,
+      68
+    ]
+  },
+  "expected": {
+    "motif_span": 8,
+    "note_density": "medium",
+    "active_note_total": 3,
+    "chord_candidates": [
+      {
+        "label": "C +",
+        "root": 0,
+        "name": "+",
+        "confidence": 1.0,
+        "missing_tones": []
+      },
+      {
+        "label": "E +",
+        "root": 4,
+        "name": "+",
+        "confidence": 1.0,
+        "missing_tones": []
+      },
+      {
+        "label": "G# +",
+        "root": 8,
+        "name": "+",
+        "confidence": 1.0,
+        "missing_tones": []
+      }
+    ],
+    "key_estimate": {
+      "label": "C maj",
+      "confidence": 0.6667,
+      "alternatives": [
+        {
+          "label": "C min",
+          "confidence": 0.6667
+        },
+        {
+          "label": "C# maj",
+          "confidence": 0.6667
+        },
+        {
+          "label": "C# min",
+          "confidence": 0.6667
+        }
+      ]
+    }
+  }
+}
