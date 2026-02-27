@@ -6,11 +6,13 @@ PAGE_NAME = "Piano Roll Exp"
 import os
 import sys
 import time
+from uuid import uuid4
 
 from blessed import Terminal
 
 from configutil import load_section, save_section
 from engine.memory.session_model import SessionModel
+from engine.memory import midi_io, storage
 import midicrt as mc
 from midicrt import draw_line
 from ui.model import Column, Line, PianoRollCell, PianoRollWidget, Spacer, TextBlock
@@ -56,7 +58,12 @@ except Exception:
 # -----------------------------------------------------------------------------
 # Session memory state
 # -----------------------------------------------------------------------------
-_memory_mode = False
+_MODE_LIVE = "LIVE"
+_MODE_MEM_BROWSER = "MEM_BROWSER"
+_MODE_MEM_EDIT = "MEM_EDIT"
+_MODE_MEM_PLAYBACK = "MEM_PLAYBACK"
+
+_ui_mode = _MODE_LIVE
 _last_running = False
 _last_tick = 0
 
@@ -65,6 +72,9 @@ _view_page_idx = 0
 _last_roll_cols = 16
 _memory_status = ""
 _view_session_id = ""
+_status_level = "info"
+_editor_tool = "SELECT"
+_editor_selection = {"start": 0, "end": 0, "lane": "notes"}
 
 
 def _engine():
@@ -343,112 +353,93 @@ def _build_live_view(state: dict, build_grid: bool) -> dict:
     return view
 
 
-def _build_memory_view(state: dict, build_grid: bool) -> dict:
-    global _view_page_idx, _last_roll_cols
+def _session_metadata(session: SessionModel | None, sessions_meta: list[dict]) -> list[str]:
+    if session is None:
+        return [
+            "Session: --",
+            "Bars: --",
+            "Channels: --",
+            "Events: note -- / cc -- / pgm --",
+            "Source: --",
+            "Revision: --",
+        ]
+    start_tick = int(session.header.start_tick)
+    stop_tick = max(int(session.header.stop_tick), start_tick)
+    bar_ticks = 24 * 4
+    bars = max(1, (max(1, stop_tick - start_tick) + bar_ticks - 1) // bar_ticks)
+    event_counts: dict[str, int] = {}
+    for ev in session.events:
+        kind = str(getattr(ev, "kind", ""))
+        event_counts[kind] = event_counts.get(kind, 0) + 1
+    channels = sorted({int(getattr(ev, "channel", 0)) for ev in session.events if getattr(ev, "channel", None) is not None})
+    source = "captured"
+    rev = "r1"
+    sid = str(session.header.session_id)
+    for idx, row in enumerate(sessions_meta):
+        if str(row.get("id", "")) != sid:
+            continue
+        source = str(row.get("origin", source) or source)
+        rev = f"r{idx + 1}"
+        break
+    return [
+        f"Session: {sid}",
+        f"Bars: {bars}",
+        f"Channels: {','.join(str(c) for c in channels) if channels else '--'}",
+        f"Events: note {event_counts.get('note_on', 0)} / cc {event_counts.get('control_change', 0)} / pgm {event_counts.get('program_change', 0)}",
+        f"Source: {source}",
+        f"Revision: {rev}",
+    ]
 
-    cols, rows, y0, top, total_rows = _build_layout_window(state)
-    roll_cols = _roll_cols_from_screen_cols(cols)
-    _last_roll_cols = roll_cols
-    running = bool(state.get("running", False))
-    tick_now = int(state.get("tick", _last_tick))
 
-    sessions_meta = _memory_list()
-    session, live = _selected_session(running=running)
+def _editor_projection(session: SessionModel | None, editor_state: dict, total_rows: int, build_grid: bool) -> dict:
+    roll_cols = int(editor_state.get("roll_cols", 16))
+    if session is None:
+        return {
+            "columns": [[] for _ in range(max(1, roll_cols))],
+            "spans": [],
+            "cc_lanes": [],
+            "cc_lines": [],
+            "pitches": [],
+            "grid": [],
+            "note_rows": max(1, total_rows - 2),
+            "active_count": 0,
+        }
 
-    timeline = " " * roll_cols
-    columns = [[] for _ in range(roll_cols)]
-    spans = []
-    active_count = 0
-    cc_lines: list[str] = []
-    cc_lanes: list[dict] = []
-    header_right = "MEM empty"
-    footer_right = ""
-    page_idx = 0
-    page_count = 1
-    page_start = int(tick_now)
-    page_end_excl = page_start + max(1, roll_cols * int(base.TICKS_PER_COL))
-    cc_tracks: list[dict] = []
-    cc_rows = 0
-    marker_rows = 1
-
-    if session is not None:
-        page_ticks = _ticks_per_page(roll_cols)
-        page_origin = _session_page_origin(int(session.header.start_tick))
-        page_count = _session_page_count(session, roll_cols)
-
-        if live:
-            page_idx = max(0, (tick_now - page_origin) // page_ticks)
-            _view_page_idx = page_idx
-        else:
-            page_idx = max(0, min(_view_page_idx, page_count - 1))
-            _view_page_idx = page_idx
-
-        page_start = int(page_origin + page_idx * page_ticks)
-        page_end_excl = page_start + page_ticks
-        cc_tracks = _session_cc_tracks(session)
-
-        marks = []
-        for i in range(roll_cols):
-            col_tick = page_start + (i * int(base.TICKS_PER_COL))
-            if col_tick % (24 * 4) == 0:
-                marks.append("|")
-            elif col_tick % 24 == 0:
-                marks.append(":")
-            else:
-                marks.append(" ")
-        timeline = "".join(marks)
-
-        sess_pos = f"S{(_view_session_idx + 1) if (_view_session_idx >= 0) else len(sessions_meta)}"
-        if live:
-            header_right = f"REC {sess_pos}  P{page_idx + 1}/{page_count}"
-        else:
-            header_right = f"MEM {sess_pos}/{len(sessions_meta)}  P{page_idx + 1}/{page_count}"
-
+    cc_tracks = _session_cc_tracks(session)
     cc_rows_cap = int(max(0.0, min(0.5, float(_CC_LANE_MAX_RATIO))) * float(total_rows))
-    cc_rows_cap = max(0, cc_rows_cap)
-    if cc_tracks and cc_rows_cap > 0:
-        cc_rows = min(len(cc_tracks), cc_rows_cap)
-    else:
-        cc_rows = 0
-
-    note_rows = max(1, total_rows - marker_rows - cc_rows)
+    cc_rows = min(len(cc_tracks), max(0, cc_rows_cap)) if cc_tracks else 0
+    note_rows = max(1, total_rows - 1 - cc_rows)
     base.pitch_high = base.pitch_low + note_rows - 1
+
+    columns, spans, active_count = _project_session_page(
+        session,
+        roll_cols=roll_cols,
+        pitch_low=int(base.pitch_low),
+        pitch_high=int(base.pitch_high),
+        page_start=int(editor_state.get("page_start", 0)),
+        page_end_excl=int(editor_state.get("page_end_excl", 0)),
+        include_live_active=bool(editor_state.get("include_live_active", False)),
+    )
+
+    cc_lanes = _build_cc_lanes(
+        cc_tracks,
+        cc_rows=cc_rows,
+        roll_cols=roll_cols,
+        page_start=int(editor_state.get("page_start", 0)),
+        page_end_excl=int(editor_state.get("page_end_excl", 0)),
+        tpc=int(base.TICKS_PER_COL),
+    )
+    cc_lines = _build_cc_lane_lines(
+        cc_tracks,
+        cc_rows=cc_rows,
+        roll_cols=roll_cols,
+        cols=int(editor_state.get("cols", 80)),
+        page_start=int(editor_state.get("page_start", 0)),
+        page_end_excl=int(editor_state.get("page_end_excl", 0)),
+        tpc=int(base.TICKS_PER_COL),
+    )
+
     pitches = list(range(base.pitch_high, base.pitch_low - 1, -1))
-
-    if session is not None:
-        columns, spans, active_count = _project_session_page(
-            session,
-            roll_cols=roll_cols,
-            pitch_low=int(base.pitch_low),
-            pitch_high=int(base.pitch_high),
-            page_start=page_start,
-            page_end_excl=page_end_excl,
-            include_live_active=live,
-        )
-        _above_txt, below_txt = _recent_overflow(session, int(base.pitch_low), int(base.pitch_high))
-        footer_right = below_txt or ""
-        if not live and session.export_path:
-            footer_right = os.path.basename(str(session.export_path))
-
-    if session is not None and cc_rows > 0:
-        cc_lanes = _build_cc_lanes(
-            cc_tracks,
-            cc_rows=cc_rows,
-            roll_cols=roll_cols,
-            page_start=page_start,
-            page_end_excl=page_end_excl,
-            tpc=int(base.TICKS_PER_COL),
-        )
-        cc_lines = _build_cc_lane_lines(
-            cc_tracks,
-            cc_rows=cc_rows,
-            roll_cols=roll_cols,
-            cols=cols,
-            page_start=page_start,
-            page_end_excl=page_end_excl,
-            tpc=int(base.TICKS_PER_COL),
-        )
-
     grid = []
     if build_grid:
         for pitch in pitches:
@@ -465,44 +456,134 @@ def _build_memory_view(state: dict, build_grid: bool) -> dict:
                     row_cells.append(PianoRollCell(velocity=int(best[1]), channel=int(best[0])))
             grid.append(row_cells)
 
-    header_left = f"--- {PAGE_NAME} (memory) ---"
-    if base.vis_input_mode:
-        legend = f"[Channels: {base.vis_input_text or '?'}] Enter=apply Esc=cancel"
-    else:
-        legend = f"{base._channel_legend()} [h=live, left/right=page, ,/.=session]"
+    return {
+        "columns": columns,
+        "spans": spans,
+        "cc_lanes": cc_lanes,
+        "cc_lines": cc_lines,
+        "pitches": pitches,
+        "grid": grid,
+        "note_rows": note_rows,
+        "active_count": int(active_count),
+    }
 
+
+def _build_memory_view(state: dict, build_grid: bool) -> dict:
+    global _view_page_idx, _last_roll_cols
+
+    cols, rows, y0, top, total_rows = _build_layout_window(state)
+    roll_cols = _roll_cols_from_screen_cols(cols)
+    _last_roll_cols = roll_cols
+    running = bool(state.get("running", False))
+    tick_now = int(state.get("tick", _last_tick))
+
+    sessions_meta = _memory_list()
+    session, live = _selected_session(running=running)
+
+    page_idx = 0
+    page_count = 1
+    page_start = int(tick_now)
+    page_end_excl = page_start + max(1, roll_cols * int(base.TICKS_PER_COL))
+    timeline = " " * roll_cols
+
+    if session is not None:
+        page_ticks = _ticks_per_page(roll_cols)
+        page_origin = _session_page_origin(int(session.header.start_tick))
+        page_count = _session_page_count(session, roll_cols)
+        if live:
+            page_idx = max(0, (tick_now - page_origin) // page_ticks)
+            _view_page_idx = page_idx
+        else:
+            page_idx = max(0, min(_view_page_idx, page_count - 1))
+            _view_page_idx = page_idx
+        page_start = int(page_origin + page_idx * page_ticks)
+        page_end_excl = page_start + page_ticks
+
+        marks = []
+        for i in range(roll_cols):
+            col_tick = page_start + (i * int(base.TICKS_PER_COL))
+            if col_tick % (24 * 4) == 0:
+                marks.append("|")
+            elif col_tick % 24 == 0:
+                marks.append(":")
+            else:
+                marks.append(" ")
+        timeline = "".join(marks)
+
+    projection = _editor_projection(
+        session,
+        {
+            "roll_cols": roll_cols,
+            "page_start": page_start,
+            "page_end_excl": page_end_excl,
+            "include_live_active": live,
+            "cols": cols,
+        },
+        total_rows,
+        build_grid,
+    )
+
+    mode_label = {
+        _MODE_MEM_BROWSER: "browser",
+        _MODE_MEM_EDIT: "edit",
+        _MODE_MEM_PLAYBACK: "playback",
+    }.get(_ui_mode, "memory")
+    sess_pos = (_view_session_idx + 1) if (_view_session_idx >= 0) else len(sessions_meta)
+    header_right = f"{mode_label.upper()} S{sess_pos}/{max(1, len(sessions_meta))} P{page_idx + 1}/{page_count}"
+    header_left = f"--- {PAGE_NAME} ({mode_label}) ---"
+
+    metadata_lines = _session_metadata(session, sessions_meta)
+
+    if _ui_mode == _MODE_MEM_EDIT:
+        sel_a = int(_editor_selection.get("start", 0))
+        sel_b = int(_editor_selection.get("end", 0))
+        status_line = f"Tool:{_editor_tool}  Select:{min(sel_a, sel_b)}..{max(sel_a, sel_b)}  Lane:{_editor_selection.get('lane', 'notes')}"
+    elif _ui_mode == _MODE_MEM_PLAYBACK:
+        status_line = "Audition: Enter play/stop, left/right page, ,/. session"
+    else:
+        status_line = "Browser: ,/. or left/right session, PgUp/PgDn page, e=export i=import s=save"
+
+    legend = f"{base._channel_legend()} [h=live m=browser e=edit p=audition]"
     footer_left = (
         f"Range: {base._notename(base.pitch_low)}-{base._notename(base.pitch_high)}  "
-        f"T/col:{base.TICKS_PER_COL}  Active:{active_count}  Cols:{roll_cols}  Mem:{len(sessions_meta)}"
+        f"T/col:{base.TICKS_PER_COL}  Active:{projection['active_count']}  Cols:{roll_cols}"
     )
     if _memory_status:
         footer_left = f"{footer_left}  {_memory_status}"
 
+    footer_right = ""
+    if session is not None and session.export_path:
+        footer_right = os.path.basename(str(session.export_path))
+
+    tick_right = int(page_start + (roll_cols - 1) * int(base.TICKS_PER_COL))
     return {
         "cols": cols,
         "rows": rows,
         "y0": y0,
         "top": top,
-        "note_rows": note_rows,
+        "note_rows": int(projection["note_rows"]),
         "roll_cols": roll_cols,
         "header_left": header_left,
         "header_right": header_right,
         "legend": legend,
+        "status_line": status_line,
+        "metadata_lines": metadata_lines,
         "input_mode": bool(base.vis_input_mode),
         "input_text": str(base.vis_input_text),
         "timeline": timeline,
-        "pitches": pitches,
-        "grid": grid,
-        "columns": columns,
-        "spans": spans,
-        "cc_lanes": cc_lanes,
-        "cc_lines": cc_lines,
-        "tick_right": int(session.header.start_tick + ((page_idx + 1) * roll_cols - 1) * int(base.TICKS_PER_COL)) if session else int(tick_now),
-        "tick_now": int(session.header.start_tick + ((page_idx + 1) * roll_cols - 1) * int(base.TICKS_PER_COL)) if session else int(tick_now),
+        "pitches": list(projection["pitches"]),
+        "grid": list(projection["grid"]),
+        "columns": list(projection["columns"]),
+        "spans": list(projection["spans"]),
+        "cc_lanes": list(projection["cc_lanes"]),
+        "cc_lines": list(projection["cc_lines"]),
+        "tick_right": tick_right,
+        "tick_now": tick_right,
         "footer_left": footer_left,
         "footer_right": footer_right,
         "overflow": {"above": "", "below": ""},
     }
+
 
 
 def _view_to_widget(view: dict) -> Column:
@@ -513,9 +594,11 @@ def _view_to_widget(view: dict) -> Column:
         if view.get("input_mode")
         else str(view["legend"])
     )
+    status_line = str(view.get("status_line", ""))
+    metadata_lines = [Line.plain(str(x)) for x in list(view.get("metadata_lines", []))]
     footer = base._merge_left_right(str(view["footer_left"]), str(view["footer_right"]), cols)
     children = [
-        TextBlock(lines=[Line.plain(header), Line.plain(info)]),
+        TextBlock(lines=[Line.plain(header), Line.plain(info), Line.plain(status_line)] + metadata_lines),
         PianoRollWidget(
             pitches=list(view["pitches"]),
             cells=list(view["grid"]),
@@ -544,10 +627,122 @@ def handle(msg):
     return base.handle(msg)
 
 
-def on_tick(state):
-    global _last_running, _last_tick, _memory_status
+def _set_status(msg: str, level: str = "info") -> None:
+    global _memory_status, _status_level
+    _memory_status = str(msg)
+    _status_level = str(level)
 
-    # keep baseline page-8 behavior/state hot in both modes
+
+def _set_mode(mode: str) -> None:
+    global _ui_mode
+    _ui_mode = mode
+
+
+def _selected_session_meta() -> tuple[SessionModel | None, list[dict]]:
+    sessions = _memory_list()
+    sess, _live = _selected_session(running=False)
+    return sess, sessions
+
+
+def _navigate_session(step: int) -> None:
+    global _view_session_idx, _view_session_id
+    sessions = _memory_list()
+    if not sessions:
+        _set_status("No sessions available", "error")
+        return
+    ids = [str(item.get("id", "")) for item in sessions if str(item.get("id", ""))]
+    if not ids:
+        _set_status("No sessions available", "error")
+        return
+    if _view_session_id in ids:
+        cur = ids.index(_view_session_id)
+    elif _view_session_idx >= 0:
+        cur = min(_view_session_idx, len(ids) - 1)
+    else:
+        cur = len(ids) - 1
+    nxt = max(0, min(len(ids) - 1, cur + int(step)))
+    _view_session_idx = nxt
+    _view_session_id = ids[nxt]
+    _set_status(f"Session {_view_session_idx + 1}/{len(ids)}")
+
+
+def _navigate_page(step: int) -> None:
+    global _view_page_idx
+    if not _view_session_id:
+        _set_status("No session selected", "error")
+        return
+    sess = _memory_get(_view_session_id)
+    if sess is None:
+        _set_status("Session unavailable", "error")
+        return
+    page_count = max(1, _session_page_count(sess, _last_roll_cols))
+    _view_page_idx = max(0, min(page_count - 1, int(_view_page_idx) + int(step)))
+    _set_status(f"Page {_view_page_idx + 1}/{page_count}")
+
+
+def _save_session_snapshot() -> None:
+    session, _sessions = _selected_session_meta()
+    if session is None:
+        _set_status("Save failed: no session selected", "error")
+        return
+    try:
+        export_root = _MEMORY_EXPORT_DIR if os.path.isabs(_MEMORY_EXPORT_DIR) else os.path.join(os.getcwd(), _MEMORY_EXPORT_DIR)
+        sid = f"edit-{uuid4().hex[:8]}"
+        session.header.session_id = sid
+        path = storage.save_session(export_root, session)
+        _set_status(f"Saved session snapshot: {os.path.basename(path)}")
+    except Exception as exc:
+        _set_status(f"Save failed: {exc}", "error")
+
+
+def _export_session_midi() -> None:
+    session, _sessions = _selected_session_meta()
+    if session is None:
+        _set_status("Export failed: no session selected", "error")
+        return
+    try:
+        export_root = _MEMORY_EXPORT_DIR if os.path.isabs(_MEMORY_EXPORT_DIR) else os.path.join(os.getcwd(), _MEMORY_EXPORT_DIR)
+        os.makedirs(export_root, exist_ok=True)
+        out_path = os.path.join(export_root, f"manual-export-{session.header.session_id}.mid")
+        mid = midi_io.export_session_midi(session, out_path)
+        if not mid:
+            raise RuntimeError("no MIDI events to export")
+        _set_status(f"Exported MIDI: {os.path.basename(mid)}")
+    except Exception as exc:
+        _set_status(f"Export failed: {exc}", "error")
+
+
+def _import_library_session() -> None:
+    lib_dir = _MEMORY_LIBRARY_DIR.strip()
+    if not lib_dir:
+        _set_status("Import failed: memory_library_dir is empty", "error")
+        return
+    abs_lib = lib_dir if os.path.isabs(lib_dir) else os.path.join(os.getcwd(), lib_dir)
+    try:
+        mids = sorted([name for name in os.listdir(abs_lib) if name.lower().endswith('.mid')])
+    except Exception as exc:
+        _set_status(f"Import failed: {exc}", "error")
+        return
+    if not mids:
+        _set_status("Import failed: no .mid files in library", "error")
+        return
+    chosen = os.path.join(abs_lib, mids[-1])
+    try:
+        sid = f"import-{os.path.splitext(os.path.basename(chosen))[0]}-{uuid4().hex[:6]}"
+        session = midi_io.import_midi_file(chosen, session_id=sid)
+        if session is None:
+            raise RuntimeError("unsupported midi file")
+        export_root = _MEMORY_EXPORT_DIR if os.path.isabs(_MEMORY_EXPORT_DIR) else os.path.join(os.getcwd(), _MEMORY_EXPORT_DIR)
+        session.export_path = chosen
+        storage.save_session(export_root, session)
+        _set_status(f"Imported: {os.path.basename(chosen)}")
+    except Exception as exc:
+        _set_status(f"Import failed: {exc}", "error")
+
+
+def on_tick(state):
+    global _last_running, _last_tick
+
     base.on_tick(state)
 
     running = bool(state.get("running", False))
@@ -562,93 +757,105 @@ def on_tick(state):
         except Exception:
             status = {}
     if status.get("armed") and status.get("current_id"):
-        _memory_status = "REC"
-    elif _memory_mode:
-        _memory_status = "MEM mode"
+        _set_status("REC")
+    elif _ui_mode != _MODE_LIVE and not _memory_status:
+        _set_status("MEM")
 
     _last_running = running
 
 
 def keypress(ch):
-    global _memory_mode, _view_page_idx, _view_session_idx, _view_session_id, _memory_status
+    global _ui_mode
 
     s = str(ch)
     if s.lower() == _MEMORY_TOGGLE_KEY:
-        eng = _engine()
-        if eng is not None:
-            try:
-                _memory_mode = bool(eng.memory_toggle())
-            except Exception:
-                _memory_mode = not _memory_mode
+        if _ui_mode == _MODE_LIVE:
+            _set_mode(_MODE_MEM_BROWSER)
+            _set_status("Mode: MEM_BROWSER")
         else:
-            _memory_mode = not _memory_mode
-        _memory_status = "MEM mode" if _memory_mode else "LIVE mode"
+            _set_mode(_MODE_LIVE)
+            _set_status("Mode: LIVE")
         return True
 
-    # Let channel-visibility edit mode work unchanged.
+    if s.lower() == "m":
+        _set_mode(_MODE_MEM_BROWSER)
+        _set_status("Mode: MEM_BROWSER")
+        return True
+    if s.lower() == "e":
+        _set_mode(_MODE_MEM_EDIT)
+        _set_status("Mode: MEM_EDIT")
+        return True
+    if s.lower() == "p":
+        _set_mode(_MODE_MEM_PLAYBACK)
+        _set_status("Mode: MEM_PLAYBACK")
+        return True
+
     if base.vis_input_mode:
         return bool(base.keypress(ch))
 
-    if _memory_mode and (not _last_running):
-        sessions = _memory_list()
-        if sessions:
-            ids = [str(item.get("id", "")) for item in sessions if str(item.get("id", ""))]
-            if _view_session_id in ids:
-                _view_session_idx = ids.index(_view_session_id)
-            elif _view_session_idx < 0 or _view_session_idx >= len(ids):
-                _view_session_idx = len(ids) - 1
-                _view_session_id = ids[_view_session_idx]
-        if s == ",":
-            if not sessions:
-                return True
-            cur = _view_session_idx
-            if cur > 0:
-                cur -= 1
-                _view_session_idx = cur
-                _view_session_id = str(sessions[cur].get("id", ""))
-                prev_session = _memory_get(_view_session_id)
-                if prev_session is not None:
-                    prev_pages = max(1, _session_page_count(prev_session, _last_roll_cols))
-                    _view_page_idx = min(max(0, int(_view_page_idx)), prev_pages - 1)
-            return True
-        if s == ".":
-            if not sessions:
-                return True
-            cur = _view_session_idx
-            if cur < (len(sessions) - 1):
-                _view_session_idx = cur + 1
-                _view_session_id = str(sessions[_view_session_idx].get("id", ""))
-                next_session = _memory_get(_view_session_id)
-                if next_session is not None:
-                    next_pages = max(1, _session_page_count(next_session, _last_roll_cols))
-                    _view_page_idx = min(max(0, int(_view_page_idx)), next_pages - 1)
-            return True
+    if _ui_mode == _MODE_LIVE:
+        return bool(base.keypress(ch))
+
+    if s == "," or (ch.is_sequence and ch.name == "KEY_LEFT" and _ui_mode == _MODE_MEM_BROWSER):
+        _navigate_session(-1)
+        return True
+    if s == "." or (ch.is_sequence and ch.name == "KEY_RIGHT" and _ui_mode == _MODE_MEM_BROWSER):
+        _navigate_session(1)
+        return True
+
+    if ch.is_sequence and ch.name == "KEY_PPAGE":
+        _navigate_page(-1)
+        return True
+    if ch.is_sequence and ch.name == "KEY_NPAGE":
+        _navigate_page(1)
+        return True
+
+    if _ui_mode in {_MODE_MEM_EDIT, _MODE_MEM_PLAYBACK}:
         if ch.is_sequence and ch.name == "KEY_LEFT":
-            _view_page_idx = max(0, int(_view_page_idx) - 1)
+            _navigate_page(-1)
             return True
         if ch.is_sequence and ch.name == "KEY_RIGHT":
-            if sessions and _view_session_id:
-                current_session = _memory_get(_view_session_id)
-                if current_session is not None:
-                    page_count = max(1, _session_page_count(current_session, _last_roll_cols))
-                    _view_page_idx = min(page_count - 1, int(_view_page_idx) + 1)
+            _navigate_page(1)
             return True
 
-    # Fall back to normal piano-roll controls (range pan, style toggle, visibility, etc.)
+    if _ui_mode == _MODE_MEM_EDIT:
+        if ch.is_sequence and ch.name == "KEY_UP":
+            _editor_selection["start"] = max(0, int(_editor_selection.get("start", 0)) - 1)
+            _set_status("Selection start moved")
+            return True
+        if ch.is_sequence and ch.name == "KEY_DOWN":
+            _editor_selection["end"] = int(_editor_selection.get("end", 0)) + 1
+            _set_status("Selection end moved")
+            return True
+
+    if _ui_mode == _MODE_MEM_PLAYBACK and (s == "\n" or (ch.is_sequence and ch.name == "KEY_ENTER")):
+        _set_status("Playback audition toggled")
+        return True
+
+    if s.lower() == "s":
+        _save_session_snapshot()
+        return True
+    if s.lower() == "i":
+        _import_library_session()
+        return True
+    if s.lower() == "x":
+        _export_session_midi()
+        return True
+
     return bool(base.keypress(ch))
 
 
 def build_widget(state):
     use_sparse = state.get("render_backend") == "compositor"
-    if _memory_mode:
-        view = _build_memory_view(state, build_grid=not use_sparse)
-    else:
+    if _ui_mode == _MODE_LIVE:
         view = _build_live_view(state, build_grid=not use_sparse)
+    else:
+        view = _build_memory_view(state, build_grid=not use_sparse)
     return _view_to_widget(view)
 
 
 def draw(state):
-    if not _memory_mode:
+    if _ui_mode == _MODE_LIVE:
         return base.draw(state)
 
     view = _build_memory_view(state, build_grid=True)
@@ -658,10 +865,10 @@ def draw(state):
 
     draw_line(y0, base._merge_left_right(view["header_left"], view["header_right"], cols))
     base._draw_right_reverse(y0, view["header_right"], cols)
-    if view["input_mode"]:
-        draw_line(y0 + 1, f"[Channels: {view['input_text'] or '?'}] Enter=apply Esc=cancel".ljust(cols))
-    else:
-        draw_line(y0 + 1, str(view["legend"])[:cols])
+    draw_line(y0 + 1, str(view["legend"])[:cols])
+    draw_line(y0 + 2, str(view.get("status_line", ""))[:cols])
+    for i, mline in enumerate(list(view.get("metadata_lines", []))[:6]):
+        draw_line(y0 + 3 + i, str(mline)[:cols])
 
     top = int(view["top"])
     draw_line(top, (f"{'Bars':>7} |" + str(view["timeline"]))[:cols])
