@@ -1,3 +1,4 @@
+from .capture import MemoryCaptureManager
 from .session_model import (
     SCHEMA_NAME,
     SCHEMA_VERSION,
@@ -13,6 +14,7 @@ from .session_model import (
 )
 
 __all__ = [
+    "MemoryCaptureManager",
     "SCHEMA_NAME",
     "SCHEMA_VERSION",
     "EventKind",

@@ -12,11 +12,13 @@ from typing import Any, Callable
 
 import mido
 
+from configutil import load_section
 from engine.legacy_page_router import LegacyPageRouter
 from engine.modules.interfaces import EngineModule
 from engine.scheduler import ModuleScheduler
 from engine.state.schema import build_snapshot, normalize_deep_research_payload
 from engine.deep_research.platform import resolve_feature_flags
+from engine.memory.capture import MemoryCaptureManager
 from engine.state.tempo_map import TempoMap
 
 
@@ -77,6 +79,16 @@ class MidiEngine:
             "default_bpm": 120.0,
             "quantize": "none",
         }
+        mem_cfg_raw = load_section("memory")
+        mem_cfg = mem_cfg_raw if isinstance(mem_cfg_raw, dict) else {}
+        if not mem_cfg:
+            alt = load_section("pianoroll_exp")
+            mem_cfg = alt if isinstance(alt, dict) else {}
+        self._memory_capture = MemoryCaptureManager(
+            max_sessions=max(1, int(mem_cfg.get("memory_max_sessions", 32))),
+            export_dir=str(mem_cfg.get("memory_export_dir", "captures/pianoroll_exp")),
+            project_root=os.path.dirname(os.path.dirname(__file__)),
+        )
         self._capture_events = deque()
         self._capture_seq = 0
         self._last_capture_meta: dict[str, Any] = {
@@ -367,6 +379,7 @@ class MidiEngine:
     def ingest(self, msg: mido.Message) -> dict[str, Any]:
         event = self._normalize_event(msg)
         self._update_transport(event)
+        self._capture_memory_event(event, msg)
         self._capture_event(event, msg)
         self._run_modules(event)
         self._route_legacy_event(event)
@@ -382,6 +395,42 @@ class MidiEngine:
             except Exception:
                 pass
         return event
+
+    def memory_start(self) -> bool:
+        with self._lock:
+            return self._memory_capture.memory_start(
+                tick=int(self.state.tick_counter),
+                bpm=float(self.state.bpm),
+                running=bool(self.state.running),
+            )
+
+    def memory_stop(self) -> bool:
+        with self._lock:
+            return self._memory_capture.memory_stop(tick=int(self.state.tick_counter))
+
+    def memory_toggle(self) -> bool:
+        with self._lock:
+            return self._memory_capture.memory_toggle(
+                tick=int(self.state.tick_counter),
+                bpm=float(self.state.bpm),
+                running=bool(self.state.running),
+            )
+
+    def memory_list(self) -> list[dict[str, Any]]:
+        with self._lock:
+            return list(self._memory_capture.memory_list())
+
+    def memory_get(self, session_id: str) -> Any:
+        with self._lock:
+            return self._memory_capture.memory_get(str(session_id))
+
+    def memory_delete(self, session_id: str) -> bool:
+        with self._lock:
+            return self._memory_capture.memory_delete(str(session_id))
+
+    def memory_status(self) -> dict[str, Any]:
+        with self._lock:
+            return dict(self._memory_capture.status())
 
 
     def set_ui_context(self, *, cols: int | None = None, rows: int | None = None, y_offset: int | None = None, current_page: int | None = None) -> None:
@@ -698,6 +747,7 @@ class MidiEngine:
     def _update_transport(self, event: dict[str, Any]) -> None:
         with self._lock:
             kind = event["kind"]
+            cur_running = bool(self.state.running)
             # Refresh meter candidates once per bar instead of every message.
             # The timesig plugins accumulate data continuously — polling them
             # less often loses nothing since they look back at their full window.
@@ -720,6 +770,12 @@ class MidiEngine:
             self.state.jitter_p99 = tempo_snapshot.jitter_p99
             self.state.drift_ppm = tempo_snapshot.drift_ppm
             self.state.interval_stats = dict(tempo_snapshot.interval_stats)
+            self._memory_capture.on_transport(
+                tick=int(self.state.tick_counter),
+                bpm=float(self.state.bpm),
+                running=bool(self.state.running),
+                prev_running=bool(cur_running),
+            )
 
             if kind == "start":
                 self.state.status_text = "running"
@@ -835,6 +891,11 @@ class MidiEngine:
 
     def _route_legacy_event(self, event: dict[str, Any]) -> None:
         self._legacy_event_adapter.route(event)
+
+    def _capture_memory_event(self, event: dict[str, Any], msg: mido.Message) -> None:
+        with self._lock:
+            tick_now = int(self.state.tick_counter)
+            self._memory_capture.on_event(event=event, msg=msg, tick=tick_now)
 
     def _capture_event(self, event: dict[str, Any], msg: mido.Message) -> None:
         if event["kind"] in ("clock", "start", "stop", "continue", "active_sensing"):
