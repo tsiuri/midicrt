@@ -15,7 +15,7 @@ Updated: 2026-02-26 (revised after feedback)
 | WB-000 Upstream sync with latest `origin/master` | Repo Admin | 2026-03-01 | 🔴 Blocked | Fetch blocked in current runtime (`CONNECT tunnel failed, response 403`). |
 | WB-001 Ownership guard (`CODEOWNERS` + required review path) | Platform / Repo Admin | 2026-03-02 | 🔴 Not started | Missing `.github/CODEOWNERS`. |
 | WB-002 Contract-version governance check | Platform + QA-Contract | 2026-03-03 | 🔴 Not started | Required contract-version CI gate not present. |
-| WB-003 PR metadata validator (lane + branch policy) | DevEx / QA-Contract | 2026-03-01 | 🔴 Not started | PR template exists; enforcement check missing. |
+| WB-003 PR metadata validator (lane + branch policy) | DevEx / QA-Contract | 2026-03-01 | 🟢 Done | `pr-metadata-validate.yml` enforces lane/branch/ticket/contract-impact metadata on `pull_request`. |
 | WB-004 Fixture dependency map + validation | QA-Contract | 2026-03-04 | 🟡 In progress | Need committed dependency map artifact. |
 | WB-005 Real 1-week pilot execution (2–3 contributors) | Lane Leads | 2026-03-08 | 🔴 Not started | Must be run after WB-000..WB-004. |
 
