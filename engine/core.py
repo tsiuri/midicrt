@@ -12,6 +12,7 @@ from typing import Any, Callable
 
 import mido
 
+from engine.adapters import LegacyPageEventAdapter
 from engine.modules.interfaces import EngineModule
 from engine.scheduler import ModuleScheduler
 from engine.state.schema import build_snapshot, normalize_deep_research_payload
@@ -99,6 +100,13 @@ class MidiEngine:
         self._plugin_state_provider = plugin_state_provider
         self._midi_activity_handler = midi_activity_handler
         self._legacy_event_shim_enabled = bool(legacy_event_shim_enabled)
+        self._legacy_event_adapter = LegacyPageEventAdapter(
+            pages_provider=self._legacy_pages_provider,
+            current_page_provider=self._current_page_provider,
+            plugin_state_provider=self._plugin_state_provider,
+            midi_activity_handler=self._midi_activity_handler,
+            enabled=self._legacy_event_shim_enabled,
+        )
         self._ui_context: dict[str, Any] = {"cols": 0, "rows": 0, "y_offset": 3, "current_page": 0}
         self._deep_research_late_policy = str(self._deep_research_cfg.get("late_policy", "drop")).strip().lower() or "drop"
         if self._deep_research_late_policy not in {"drop", "apply_next"}:
@@ -557,56 +565,7 @@ class MidiEngine:
 
 
     def _route_legacy_event(self, event: dict[str, Any]) -> None:
-        if not self._legacy_event_shim_enabled:
-            return
-        if not callable(self._legacy_pages_provider):
-            return
-
-        pages = self._legacy_pages_provider()
-        if not isinstance(pages, dict) or not pages:
-            return
-
-        current_page = int(self._current_page_provider() if callable(self._current_page_provider) else -1)
-        kind = str(event.get("kind", ""))
-        msg = event.get("raw")
-        bg_msg_kinds = {"note_on", "note_off", "control_change", "program_change"}
-
-        if kind == "clock":
-            plugin_state = None
-            for pid, page in pages.items():
-                if pid == current_page:
-                    continue
-                if not bool(getattr(page, "BACKGROUND", False)) or not hasattr(page, "on_tick"):
-                    continue
-                try:
-                    if plugin_state is None:
-                        plugin_state = self._plugin_state_provider() if callable(self._plugin_state_provider) else {}
-                    page.on_tick(plugin_state if isinstance(plugin_state, dict) else {})
-                except Exception:
-                    pass
-
-        if msg is not None and kind in bg_msg_kinds:
-            page = pages.get(current_page)
-            if page is not None and hasattr(page, "handle"):
-                try:
-                    page.handle(msg)
-                except Exception:
-                    pass
-
-            for pid, page in pages.items():
-                if pid == current_page:
-                    continue
-                if bool(getattr(page, "BACKGROUND", False)) and hasattr(page, "handle"):
-                    try:
-                        page.handle(msg)
-                    except Exception:
-                        pass
-
-            if callable(self._midi_activity_handler):
-                try:
-                    self._midi_activity_handler(msg)
-                except Exception:
-                    pass
+        self._legacy_event_adapter.route(event)
 
     def _capture_event(self, event: dict[str, Any], msg: mido.Message) -> None:
         if event["kind"] in ("clock", "start", "stop", "continue", "active_sensing"):
