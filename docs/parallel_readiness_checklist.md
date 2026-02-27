@@ -10,6 +10,7 @@ Mark each gate as complete only when objective evidence exists (CI logs, audit r
   - Enforced CODEOWNERS/ownership path validation must run in required CI.
   - PRs touching owned paths must be blocked unless the matching owner review requirement is satisfied.
   - Evidence: branch protection + required status check + at least one blocked test PR proving guard behavior.
+  - Implementation target: required check `enforce-track-boundaries` from `.github/workflows/track-boundaries.yml`; archived in `docs/parallel_execution_board.md` (Gate G1).
 
 - [ ] **Contract-version protocol active**
   - Contract changes must follow versioning policy (additive = minor, breaking = major).
