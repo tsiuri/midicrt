@@ -50,3 +50,84 @@ Concrete examples:
 When multiple agents may run concurrently, always assume temporary version skew.
 Use major-version compatibility checks to fail fast with deterministic error payloads,
 rather than partially parsing unknown contract shapes.
+
+## Snapshot envelope migration example (`schema_version: 4` → `5`)
+
+### Before (legacy/older mixed envelope)
+
+```json
+{
+  "type": "snapshot",
+  "payload": {
+    "schema": {
+      "schema_version": 4,
+      "timestamp": 1700000000.0,
+      "transport": {
+        "tick": 120,
+        "bar": 8,
+        "running": true,
+        "bpm": 124.0,
+        "clock_interval_ms": 20.16,
+        "jitter_rms": 0.73
+      },
+      "module_outputs": {}
+    },
+    "deep_research": {
+      "version": 3,
+      "result": {"signature": "ok"}
+    }
+  }
+}
+```
+
+### After (current canonical schema payload)
+
+```json
+{
+  "type": "snapshot",
+  "payload": {
+    "schema_version": 5,
+    "timestamp": 1700000000.0,
+    "transport": {
+      "tick": 120,
+      "bar": 8,
+      "running": true,
+      "bpm": 124.0,
+      "clock_interval_ms": 20.16,
+      "jitter_rms": 0.73,
+      "quality": {
+        "clock_jitter_rms": 0.73,
+        "clock_jitter_p95": 1.81,
+        "clock_drift_ppm": -12.4
+      },
+      "microtiming": {
+        "bins": {"early": 3, "ontime": 9, "late": 2},
+        "window_events": 14,
+        "window_bars": 2.0
+      }
+    },
+    "retrospective_capture": {
+      "buffer_bars": 4,
+      "events_buffered": 87,
+      "armed": false,
+      "last_commit_path": "captures/take_001.mid"
+    },
+    "module_health": {
+      "status": "ok",
+      "updated_at": 1700000000.0,
+      "modules": {"research": {"status": "ok", "latency_ms": 4.5}}
+    },
+    "deep_research": {
+      "version": 3,
+      "result": {"signature": "ok"}
+    }
+  }
+}
+```
+
+### Migration notes
+
+- Readers must support both top-level schema payloads and legacy wrapped payloads under `payload.schema`.
+- Older envelopes may place `deep_research`, `module_health`, and `retrospective_capture` alongside `payload.schema`; compatibility readers should merge these sections when absent from the schema body.
+- New transport quality and microtiming sections are additive and must default to safe empty/zero values when omitted.
+- Writer-side switch to `schema_version: 5` is allowed only after dual-read compatibility tests pass for old and new envelopes.

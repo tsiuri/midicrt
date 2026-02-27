@@ -34,6 +34,41 @@
       },
       "expect_has_deep_research": true,
       "expected_version": 3
+    },
+    {
+      "name": "legacy_schema_wrapper_with_metadata_sections",
+      "input": {
+        "type": "snapshot",
+        "payload": {
+          "schema": {
+            "schema_version": 5,
+            "transport": {
+              "tick": 77,
+              "bar": 3,
+              "running": true,
+              "bpm": 126.0
+            }
+          },
+          "module_health": {
+            "status": "degraded",
+            "updated_at": 101.5,
+            "modules": {
+              "clock": {
+                "status": "warn"
+              }
+            }
+          },
+          "retrospective_capture": {
+            "buffer_bars": 8,
+            "events_buffered": 155,
+            "armed": true,
+            "last_commit_path": "captures/last.mid"
+          }
+        }
+      },
+      "expect_has_deep_research": false,
+      "expected_module_health_status": "degraded",
+      "expected_capture_armed": true
     }
   ],
   "schema_contract": [
@@ -91,6 +126,56 @@
         "future_field": {
           "kept": true
         }
+      }
+    },
+    {
+      "name": "transport_and_status_sections_present_on_build_snapshot",
+      "build_snapshot_input": {
+        "timestamp": 456.0,
+        "tick": 64,
+        "bar": 4,
+        "running": true,
+        "bpm": 124.0,
+        "clock_jitter_rms": 0.73,
+        "clock_jitter_p95": 1.81,
+        "clock_drift_ppm": -12.4,
+        "microtiming_bins": {
+          "early": 3,
+          "ontime": 9,
+          "late": 2
+        },
+        "microtiming_window_events": 14,
+        "microtiming_window_bars": 2.0,
+        "retrospective_capture": {
+          "buffer_bars": 4,
+          "events_buffered": 87,
+          "armed": false,
+          "last_commit_path": "captures/take_001.mid"
+        },
+        "module_health": {
+          "status": "ok",
+          "updated_at": 456.0,
+          "modules": {
+            "research": {
+              "status": "ok",
+              "latency_ms": 4.5
+            }
+          }
+        }
+      },
+      "expected_snapshot_fields": {
+        "transport.quality.clock_jitter_rms": 0.73,
+        "transport.quality.clock_jitter_p95": 1.81,
+        "transport.quality.clock_drift_ppm": -12.4,
+        "transport.microtiming.bins.early": 3,
+        "transport.microtiming.window_events": 14,
+        "transport.microtiming.window_bars": 2.0,
+        "retrospective_capture.buffer_bars": 4,
+        "retrospective_capture.events_buffered": 87,
+        "retrospective_capture.armed": false,
+        "retrospective_capture.last_commit_path": "captures/take_001.mid",
+        "module_health.status": "ok",
+        "module_health.modules.research.status": "ok"
       }
     }
   ],

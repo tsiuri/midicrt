@@ -129,51 +129,66 @@ class SnapshotClient:
         return False, {"code": "no-reply", "message": "no command reply received"}
 
 
-def _maybe_attach_schema2_deep_research(snapshot: dict[str, Any], source: dict[str, Any] | None) -> dict[str, Any]:
-    """Attach deep_research payload from schema-v2 envelopes when root field is absent."""
+def _merge_optional_metadata(snapshot: dict[str, Any], source: dict[str, Any] | None) -> dict[str, Any]:
+    """Merge optional metadata for older envelopes that stored fields outside schema payload."""
     if not isinstance(snapshot, dict):
         return {}
     if not isinstance(source, dict):
         return snapshot
-    if isinstance(snapshot.get("deep_research"), dict):
-        return snapshot
-    deep = source.get("deep_research")
-    if isinstance(deep, dict):
-        merged = dict(snapshot)
-        merged["deep_research"] = deep
-        return merged
-    return snapshot
+
+    merged = dict(snapshot)
+    if not isinstance(merged.get("deep_research"), dict) and isinstance(source.get("deep_research"), dict):
+        merged["deep_research"] = source["deep_research"]
+
+    compatibility_fields = ("module_health", "retrospective_capture")
+    for field in compatibility_fields:
+        if not isinstance(merged.get(field), dict) and isinstance(source.get(field), dict):
+            merged[field] = source[field]
+    return merged
 
 
-def normalize_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
-    """Return a schema snapshot across modern, legacy, schema-v2 envelope payload shapes."""
+def _extract_snapshot_schema(snapshot: dict[str, Any]) -> tuple[dict[str, Any], bool, dict[str, Any] | None]:
+    """Extract schema payload from mixed-version envelopes.
+
+    Returns: (schema_payload, used_fallback_path, metadata_source)
+    """
     if not isinstance(snapshot, dict):
-        return {}
-
-    envelope_payload = None
-    if snapshot.get("type") == ENVELOPE_SNAPSHOT and isinstance(snapshot.get("payload"), dict):
-        envelope_payload = snapshot.get("payload")
-        snapshot = envelope_payload
+        return {}, False, None
 
     if "transport" in snapshot and "schema_version" in snapshot:
-        return _maybe_attach_schema2_deep_research(snapshot, envelope_payload)
+        return snapshot, False, None
+
+    envelope_payload = snapshot.get("payload") if isinstance(snapshot.get("payload"), dict) else None
+    if snapshot.get("type") == ENVELOPE_SNAPSHOT and envelope_payload:
+        if "transport" in envelope_payload and "schema_version" in envelope_payload:
+            return envelope_payload, False, envelope_payload
+        nested = envelope_payload.get("schema")
+        if isinstance(nested, dict):
+            return nested, True, envelope_payload
 
     nested = snapshot.get("schema")
     if isinstance(nested, dict):
-        _record_normalization_fallback()
-        return _maybe_attach_schema2_deep_research(nested, snapshot)
+        return nested, True, snapshot
 
-    payload = snapshot.get("payload")
-    if isinstance(payload, dict):
-        nested = payload.get("schema")
+    if envelope_payload:
+        nested = envelope_payload.get("schema")
         if isinstance(nested, dict):
-            _record_normalization_fallback()
-            return _maybe_attach_schema2_deep_research(nested, payload)
-        if "transport" in payload and "schema_version" in payload:
-            _record_normalization_fallback()
-            return _maybe_attach_schema2_deep_research(payload, snapshot)
+            return nested, True, envelope_payload
+        if "transport" in envelope_payload and "schema_version" in envelope_payload:
+            return envelope_payload, True, snapshot
 
-    return snapshot
+    return snapshot, False, None
+
+
+def normalize_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Return a schema snapshot across modern and legacy envelope payload shapes."""
+    if not isinstance(snapshot, dict):
+        return {}
+
+    normalized, used_fallback, metadata_source = _extract_snapshot_schema(snapshot)
+    if used_fallback:
+        _record_normalization_fallback()
+    return _merge_optional_metadata(normalized, metadata_source)
 
 
 def render_snapshot(snapshot: dict[str, Any], cols: int = 80) -> list[str]:

@@ -4,7 +4,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 @dataclass
@@ -15,6 +15,8 @@ class TransportSnapshot:
     bpm: float
     clock_interval_ms: float = 0.0
     jitter_rms: float = 0.0
+    quality: dict[str, float] = field(default_factory=dict)
+    microtiming: dict[str, Any] = field(default_factory=dict)
     meter_estimate: str = "4/4"
     confidence: float = 0.0
 
@@ -36,6 +38,8 @@ class StateSnapshot:
     views: dict[str, Any] | None = None
     status_text: str = ""
     diagnostics: dict[str, Any] = field(default_factory=dict)
+    retrospective_capture: dict[str, Any] = field(default_factory=dict)
+    module_health: dict[str, Any] = field(default_factory=dict)
     ui_context: dict[str, Any] = field(default_factory=dict)
     deep_research: dict[str, Any] | None = None
 
@@ -50,6 +54,8 @@ class StateSnapshot:
                 "bpm": self.transport.bpm,
                 "clock_interval_ms": self.transport.clock_interval_ms,
                 "jitter_rms": self.transport.jitter_rms,
+                "quality": deepcopy(self.transport.quality),
+                "microtiming": deepcopy(self.transport.microtiming),
                 "meter_estimate": self.transport.meter_estimate,
                 "confidence": self.transport.confidence,
             },
@@ -60,6 +66,8 @@ class StateSnapshot:
             "module_outputs": self.module_outputs,
             "status_text": self.status_text,
             "diagnostics": self.diagnostics,
+            "retrospective_capture": self.retrospective_capture,
+            "module_health": self.module_health,
             "ui_context": self.ui_context,
         }
         if self.views:
@@ -103,6 +111,12 @@ def build_snapshot(
     bpm: float,
     clock_interval_ms: float = 0.0,
     jitter_rms: float = 0.0,
+    clock_jitter_rms: float = 0.0,
+    clock_jitter_p95: float = 0.0,
+    clock_drift_ppm: float = 0.0,
+    microtiming_bins: dict[str, Any] | None = None,
+    microtiming_window_events: int = 0,
+    microtiming_window_bars: float = 0.0,
     meter_estimate: str = "4/4",
     confidence: float = 0.0,
     active_notes: dict[int, set[int]] | None = None,
@@ -110,6 +124,8 @@ def build_snapshot(
     views: dict[str, Any] | None = None,
     status_text: str = "",
     diagnostics: dict[str, Any] | None = None,
+    retrospective_capture: dict[str, Any] | None = None,
+    module_health: dict[str, Any] | None = None,
     ui_context: dict[str, Any] | None = None,
     deep_research: dict[str, Any] | None = None,
 ) -> StateSnapshot:
@@ -119,6 +135,33 @@ def build_snapshot(
         ChannelSnapshot(channel=ch, active_notes=notes)
         for ch, notes in sorted(normalized.items(), key=lambda item: item[0])
     ]
+    transport_quality = {
+        "clock_jitter_rms": float(clock_jitter_rms),
+        "clock_jitter_p95": float(clock_jitter_p95),
+        "clock_drift_ppm": float(clock_drift_ppm),
+    }
+    transport_microtiming = {
+        "bins": deepcopy(microtiming_bins) if isinstance(microtiming_bins, dict) else {},
+        "window_events": int(microtiming_window_events),
+        "window_bars": float(microtiming_window_bars),
+    }
+    normalized_retrospective_capture = {
+        "buffer_bars": 0,
+        "events_buffered": 0,
+        "armed": False,
+        "last_commit_path": "",
+    }
+    if isinstance(retrospective_capture, dict):
+        normalized_retrospective_capture.update(retrospective_capture)
+
+    normalized_module_health = {
+        "status": "unknown",
+        "updated_at": 0.0,
+        "modules": {},
+    }
+    if isinstance(module_health, dict):
+        normalized_module_health.update(module_health)
+
     return StateSnapshot(
         schema_version=SCHEMA_VERSION,
         timestamp=timestamp,
@@ -129,6 +172,8 @@ def build_snapshot(
             bpm=bpm,
             clock_interval_ms=clock_interval_ms,
             jitter_rms=jitter_rms,
+            quality=transport_quality,
+            microtiming=transport_microtiming,
             meter_estimate=meter_estimate,
             confidence=confidence,
         ),
@@ -138,6 +183,8 @@ def build_snapshot(
         views=views or None,
         status_text=status_text,
         diagnostics=diagnostics or {},
+        retrospective_capture=normalized_retrospective_capture,
+        module_health=normalized_module_health,
         ui_context=ui_context or {},
         deep_research=normalize_deep_research_payload(deep_research),
     )
