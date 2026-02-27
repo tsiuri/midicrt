@@ -46,7 +46,7 @@ class _FakeSnapshotClient:
     plans = []
 
     def __init__(self, *args, **kwargs):
-        self._plan = _FakeSnapshotClient.plans.pop(0)
+        self._plan = _FakeSnapshotClient.plans.pop(0) if _FakeSnapshotClient.plans else {"snapshots": [None]}
 
     def connect(self):
         action = self._plan.get("connect")
@@ -159,6 +159,39 @@ class SnapshotBridgeTest(unittest.TestCase):
         self.assertGreaterEqual(meta["total_failures"], 2)
         self.assertEqual(meta["consecutive_failures"], 0)
         self.assertIsNotNone(meta["last_successful_connect_ts"])
+
+    def test_reconnect_backoff_grows_with_failures_and_is_capped(self):
+        _FakeSnapshotClient.plans = [
+            {"connect": OSError("down-1"), "snapshots": []},
+            {"connect": OSError("down-2"), "snapshots": []},
+            {"connect": OSError("down-3"), "snapshots": []},
+            {"snapshots": [{"schema_version": 4, "transport": {"tick": 21}}, None]},
+        ]
+
+        bridge = SnapshotBridge(
+            "/tmp/test.sock",
+            reconnect_backoff_min_s=0.01,
+            reconnect_backoff_max_s=0.03,
+            reconnect_backoff_base_s=0.01,
+            reconnect_backoff_jitter_s=0.0,
+        )
+        sleeps = []
+
+        def _fake_sleep(duration):
+            sleeps.append(duration)
+
+        with mock.patch("web.observer.SnapshotClient", _FakeSnapshotClient), mock.patch("web.observer.time.sleep", side_effect=_fake_sleep), mock.patch("web.observer.random.uniform", return_value=0.0):
+            bridge.start()
+            for _ in range(80):
+                seq, _snap, _meta = bridge.current()
+                if seq >= 1:
+                    break
+                asyncio.run(asyncio.sleep(0.005))
+            bridge.stop()
+
+        self.assertGreaterEqual(seq, 1)
+        self.assertGreaterEqual(len(sleeps), 3)
+        self.assertEqual(sleeps[:3], [0.05, 0.05, 0.05])
 
 class DashboardServerTest(unittest.IsolatedAsyncioTestCase):
     async def test_healthz_reports_bridge_meta_and_throttle(self):

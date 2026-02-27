@@ -89,6 +89,22 @@ class DeepResearchContractCompatTest(unittest.TestCase):
                     self.assertEqual(normalized["module_health"]["status"], case["expected_module_health_status"])
                 if "expected_capture_armed" in case:
                     self.assertEqual(normalized["retrospective_capture"]["armed"], case["expected_capture_armed"])
+                if "expected_tick" in case:
+                    self.assertEqual(normalized["transport"]["tick"], case["expected_tick"])
+                if "expected_views_type" in case:
+                    self.assertEqual(type(normalized.get("views")).__name__, case["expected_views_type"])
+                for optional in case.get("expect_missing_optional_sections", []):
+                    self.assertNotIn(optional, normalized)
+
+    def test_ipc_fixture_normalization_is_deterministic_under_version_skew(self):
+        fixture = json.loads(FIXTURE.read_text())
+        for case in fixture["ipc_compat"]:
+            with self.subTest(case=case["name"]):
+                first = normalize_snapshot(case["input"])
+                second = normalize_snapshot(case["input"])
+                third = normalize_snapshot(first)
+                self.assertEqual(first, second)
+                self.assertEqual(second, third)
 
     def test_new_metadata_sections_round_trip_from_legacy_schema_wrapper(self):
         fixture = json.loads(FIXTURE.read_text())
