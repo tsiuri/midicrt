@@ -32,6 +32,10 @@ class EngineState:
     jitter_rms: float = 0.0
     meter_estimate: str = "4/4"
     confidence: float = 0.0
+    jitter_p95: float = 0.0
+    jitter_p99: float = 0.0
+    drift_ppm: float = 0.0
+    interval_stats: dict[str, float] = field(default_factory=dict)
     diagnostics: dict[str, Any] = field(default_factory=dict)
 
 
@@ -52,13 +56,19 @@ class MidiEngine:
         plugin_state_provider: Callable[[], dict[str, Any]] | None = None,
         midi_activity_handler: Callable[[mido.Message], None] | None = None,
         legacy_event_shim_enabled: bool = True,
+        tempo_metrics: dict[str, Any] | None = None,
     ) -> None:
         self.state = EngineState()
         self.modules = modules if modules is not None else []
         self.on_event = on_event
         self.publisher = publisher
         self._lock = threading.Lock()
-        self._tempo_map = TempoMap()
+        _tm_cfg = tempo_metrics if isinstance(tempo_metrics, dict) else {}
+        self._tempo_map = TempoMap(
+            interval_window=max(2, int(_tm_cfg.get("interval_window", 24))),
+            baseline_window=max(2, int(_tm_cfg.get("baseline_window", 96))),
+            stats_window=max(2, int(_tm_cfg.get("stats_window", _tm_cfg.get("interval_window", 24)))),
+        )
         self._capture_cfg = {
             "bars_to_keep": 16,
             "dump_bars": 4,
@@ -239,6 +249,11 @@ class MidiEngine:
             bpm=snap["bpm"],
             clock_interval_ms=snap.get("clock_interval_ms", 0.0),
             jitter_rms=snap.get("jitter_rms", 0.0),
+            clock_jitter_rms=snap.get("jitter_rms", 0.0),
+            clock_jitter_p95=snap.get("jitter_p95", 0.0),
+            clock_drift_ppm=snap.get("drift_ppm", 0.0),
+            microtiming_bins=snap.get("interval_stats", {}),
+            microtiming_window_events=int((snap.get("interval_stats", {}) or {}).get("count", 0)),
             meter_estimate=snap.get("meter_estimate", "4/4"),
             confidence=snap.get("confidence", 0.0),
             active_notes=active_notes,
@@ -560,6 +575,10 @@ class MidiEngine:
             self.state.jitter_rms = tempo_snapshot.jitter_rms
             self.state.meter_estimate = tempo_snapshot.meter_estimate
             self.state.confidence = tempo_snapshot.confidence
+            self.state.jitter_p95 = tempo_snapshot.jitter_p95
+            self.state.jitter_p99 = tempo_snapshot.jitter_p99
+            self.state.drift_ppm = tempo_snapshot.drift_ppm
+            self.state.interval_stats = dict(tempo_snapshot.interval_stats)
 
             if kind == "start":
                 self.state.status_text = "running"

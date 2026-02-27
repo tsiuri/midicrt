@@ -145,6 +145,7 @@ MODULE_OVERLOAD_COST_MS = 6.0
 MODULE_POLICIES = {}
 AUTOCONNECT_FALLBACK_SOURCES = []
 AUTOCONNECT_FALLBACK_DESTINATIONS = []
+TEMPO_METRICS_CFG = {"interval_window": 24, "baseline_window": 96, "stats_window": 24}
 try:
     FPS = float(_core_cfg.get("fps", FPS))
     HEADER_SCROLL_SPEED = float(_core_cfg.get("header_scroll_speed", HEADER_SCROLL_SPEED))
@@ -162,6 +163,12 @@ try:
         AUTOCONNECT_FALLBACK_SOURCES = [str(v).strip() for v in _fallback_sources if str(v).strip()]
     if isinstance(_fallback_dests, list):
         AUTOCONNECT_FALLBACK_DESTINATIONS = [str(v).strip() for v in _fallback_dests if str(v).strip()]
+    _tempo_metrics_cfg = _core_cfg.get("tempo_metrics", {}) if isinstance(_core_cfg.get("tempo_metrics", {}), dict) else {}
+    TEMPO_METRICS_CFG = {
+        "interval_window": max(2, int(_tempo_metrics_cfg.get("interval_window", TEMPO_METRICS_CFG["interval_window"]))),
+        "baseline_window": max(2, int(_tempo_metrics_cfg.get("baseline_window", TEMPO_METRICS_CFG["baseline_window"]))),
+        "stats_window": max(2, int(_tempo_metrics_cfg.get("stats_window", TEMPO_METRICS_CFG["stats_window"]))),
+    }
 except Exception:
     pass
 if not isinstance(MODULE_POLICIES.get("legacy.event_shim"), dict):
@@ -183,6 +190,7 @@ try:
             "fallback_sources": list(AUTOCONNECT_FALLBACK_SOURCES),
             "fallback_destinations": list(AUTOCONNECT_FALLBACK_DESTINATIONS),
         },
+        "tempo_metrics": dict(TEMPO_METRICS_CFG),
     })
 except Exception:
     pass
@@ -492,6 +500,7 @@ ENGINE = MidiEngine(
     plugin_state_provider=plugin_state_dict,
     midi_activity_handler=_on_midi_activity,
     legacy_event_shim_enabled=LEGACY_EVENT_SHIM_ENABLED,
+    tempo_metrics=TEMPO_METRICS_CFG,
 )
 ENGINE.configure_capture({
     "bars_to_keep": CAPTURE_BARS_TO_KEEP,
