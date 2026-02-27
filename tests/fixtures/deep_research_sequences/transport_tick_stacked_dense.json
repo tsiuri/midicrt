@@ -25,6 +25,53 @@
   "expected": {
     "motif_span": 20,
     "note_density": "dense",
-    "active_note_total": 6
+    "active_note_total": 6,
+    "chord_candidates": [
+      {
+        "label": "C maj",
+        "root": 0,
+        "name": "maj",
+        "confidence": 1.0,
+        "missing_tones": [],
+        "roman": "I",
+        "function": "tonic"
+      },
+      {
+        "label": "C 1-5",
+        "root": 0,
+        "name": "1-5",
+        "confidence": 0.8833,
+        "missing_tones": [],
+        "roman": "I",
+        "function": "tonic"
+      },
+      {
+        "label": "E 1-b3-x",
+        "root": 4,
+        "name": "1-b3-x",
+        "confidence": 0.8833,
+        "missing_tones": [],
+        "roman": "iii",
+        "function": "mediant"
+      }
+    ],
+    "key_estimate": {
+      "label": "C maj",
+      "confidence": 1.0,
+      "alternatives": [
+        {
+          "label": "D min",
+          "confidence": 1.0
+        },
+        {
+          "label": "E min",
+          "confidence": 1.0
+        },
+        {
+          "label": "F maj",
+          "confidence": 1.0
+        }
+      ]
+    }
   }
 }

@@ -126,7 +126,67 @@ class DeepResearchTrackSplitTest(unittest.TestCase):
 
         result = run_research(contract)
         self.assertEqual(result["active_note_total"], 3)
+        self.assertIn("chord_candidates", result)
+        self.assertIn("key_estimate", result)
         self.assertNotIn("status", result)
+
+    def test_track_b_chord_candidate_tie_behavior_and_stable_ordering(self):
+        contract = build_contract(
+            {
+                "schema": {
+                    "schema_version": 7,
+                    "timestamp": 300.0,
+                    "transport": {"tick": 9, "bar": 1, "running": True, "bpm": 120.0},
+                    "active_notes": {"0": [60, 64, 68]},
+                    "module_outputs": {},
+                }
+            },
+            {"kind": "clock"},
+        )
+
+        result = run_research(contract)
+        labels = [candidate["label"] for candidate in result["chord_candidates"]]
+        self.assertEqual(labels, ["C +", "E +", "G# +"])
+        self.assertTrue(all("roman" not in candidate for candidate in result["chord_candidates"]))
+
+    def test_track_b_key_ambiguity_threshold_hides_roman_function(self):
+        contract = build_contract(
+            {
+                "schema": {
+                    "schema_version": 7,
+                    "timestamp": 300.0,
+                    "transport": {"tick": 12, "bar": 1, "running": True, "bpm": 120.0},
+                    "active_notes": {"0": [60, 64, 68]},
+                    "module_outputs": {},
+                }
+            },
+            {"kind": "clock"},
+        )
+
+        result = run_research(contract)
+        self.assertLess(result["key_estimate"]["confidence"], 0.72)
+        for candidate in result["chord_candidates"]:
+            self.assertNotIn("roman", candidate)
+            self.assertNotIn("function", candidate)
+
+    def test_track_b_key_confidence_enables_roman_function_labels(self):
+        contract = build_contract(
+            {
+                "schema": {
+                    "schema_version": 7,
+                    "timestamp": 300.0,
+                    "transport": {"tick": 12, "bar": 1, "running": True, "bpm": 120.0},
+                    "active_notes": {"0": [60, 64, 67]},
+                    "module_outputs": {},
+                }
+            },
+            {"kind": "clock"},
+        )
+
+        result = run_research(contract)
+        self.assertGreaterEqual(result["key_estimate"]["confidence"], 0.72)
+        self.assertEqual(result["chord_candidates"][0]["roman"], "I")
+        self.assertEqual(result["chord_candidates"][0]["function"], "tonic")
 
     def test_research_contract_breaking_version_mismatch_fails_deterministically(self):
         contract = ResearchContract(

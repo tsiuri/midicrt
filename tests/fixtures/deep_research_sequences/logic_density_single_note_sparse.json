@@ -18,6 +18,25 @@
   "expected": {
     "motif_span": 0,
     "note_density": "sparse",
-    "active_note_total": 1
+    "active_note_total": 1,
+    "chord_candidates": [],
+    "key_estimate": {
+      "label": "C maj",
+      "confidence": 1.0,
+      "alternatives": [
+        {
+          "label": "C min",
+          "confidence": 1.0
+        },
+        {
+          "label": "C# maj",
+          "confidence": 1.0
+        },
+        {
+          "label": "D min",
+          "confidence": 1.0
+        }
+      ]
+    }
   }
 }
