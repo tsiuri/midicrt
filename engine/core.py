@@ -289,6 +289,17 @@ class MidiEngine:
             "modules": deep_mods,
             "degradation_policy": deep_metrics.get("degradation_policy", "none") if isinstance(deep_metrics, dict) else "none",
         }
+        memory_capture_status = self._memory_capture.status()
+        replay_status: dict[str, Any] = {}
+        replay_status_hook = self._command_hooks.get("memory_replay_status") or self._command_hooks.get("replay_status")
+        if callable(replay_status_hook):
+            try:
+                candidate = replay_status_hook()
+                if isinstance(candidate, dict):
+                    replay_status = dict(candidate)
+            except Exception:
+                replay_status = {}
+
         schema_snapshot = build_snapshot(
             timestamp=time.time(),
             tick=snap["tick_counter"],
@@ -319,6 +330,15 @@ class MidiEngine:
             module_health=module_health,
             ui_context=dict(self._ui_context),
             deep_research=deep_research_payload,
+            memory={
+                "armed": bool(memory_capture_status.get("armed", False)),
+                "current_id": str(memory_capture_status.get("current_id", "")),
+                "session_count": int(memory_capture_status.get("sessions", 0)),
+                "max_sessions": int(memory_capture_status.get("max_sessions", 0)),
+                "replay_playing": bool(replay_status.get("playing", replay_status.get("replay_playing", False))),
+                "replay_session_id": str(replay_status.get("session_id", replay_status.get("replay_session_id", ""))),
+                "replay_tick": int(replay_status.get("tick", replay_status.get("replay_tick", 0))),
+            },
         ).as_dict()
 
         # Backward-compat fields while old callsites migrate.
