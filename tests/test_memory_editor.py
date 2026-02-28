@@ -93,6 +93,44 @@ class MemoryEditorTest(unittest.TestCase):
         span_channels = {span.channel for span in current.note_spans}
         self.assertIn(3, span_channels)
 
+    def test_apply_creates_save_as_revision_chain(self):
+        editor = SessionEditor(self._session())
+        base_history = editor.revision_history
+        self.assertEqual(len(base_history), 1)
+        self.assertEqual(base_history[0].revision_id, "r0")
+        self.assertIsNone(base_history[0].parent_revision_id)
+
+        r1_session = editor.apply({"type": "quantize", "grid": 4})
+        r2_session = editor.apply({"type": "nudge", "delta_ticks": 2})
+
+        history = editor.revision_history
+        self.assertEqual([rev.revision_id for rev in history], ["r0", "r1", "r2"])
+        self.assertEqual(history[1].parent_revision_id, "r0")
+        self.assertEqual(history[2].parent_revision_id, "r1")
+        self.assertIn("@rev-r1-", history[1].session.header.session_id)
+        self.assertIn("@rev-r2-", history[2].session.header.session_id)
+        self.assertIn("@rev-r1-", r1_session.header.session_id)
+        self.assertIn("@rev-r2-", r2_session.header.session_id)
+
+    def test_undo_redo_chain_and_branching_behavior(self):
+        editor = SessionEditor(self._session())
+        editor.apply({"type": "quantize", "grid": 4})
+        editor.apply({"type": "transpose", "semitones": 1})
+        editor.apply({"type": "velocity", "scale": 0.5, "offset": 0})
+        self.assertEqual(len(editor.revision_history), 4)
+
+        self.assertIsNotNone(editor.undo())
+        self.assertIsNotNone(editor.undo())
+        self.assertEqual(editor.revision_history[-1].revision_id, "r1")
+
+        redone = editor.redo()
+        self.assertIsNotNone(redone)
+        self.assertEqual(editor.revision_history[-1].revision_id, "r2")
+
+        branched = editor.apply({"type": "nudge", "delta_ticks": 1})
+        self.assertIn("@rev-r3-", branched.header.session_id)
+        self.assertIsNone(editor.redo(), "redo stack should clear after branching apply")
+
 
 if __name__ == "__main__":
     unittest.main()

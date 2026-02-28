@@ -1,0 +1,47 @@
+{
+  "session": {
+    "session_id": "fixture-memory",
+    "start_tick": 0,
+    "stop_tick": 16,
+    "ppqn": 24,
+    "bpm": 120.0,
+    "tempo_segments": [
+      {"start_tick": 0, "bpm": 120.0},
+      {"start_tick": 8, "bpm": 96.0}
+    ],
+    "time_signature_segments": [
+      {"start_tick": 0, "numerator": 4, "denominator": 4},
+      {"start_tick": 12, "numerator": 3, "denominator": 4}
+    ]
+  },
+  "events": [
+    {"kind": "control_change", "tick": 0, "channel": 1, "control": 1, "value": 10},
+    {"kind": "note_on", "tick": 0, "channel": 1, "note": 60, "velocity": 100},
+    {"kind": "program_change", "tick": 0, "channel": 1, "program": 8},
+    {"kind": "note_off", "tick": 4, "channel": 1, "note": 60, "velocity": 0},
+    {"kind": "note_on", "tick": 8, "channel": 1, "note": 64, "velocity": 90},
+    {"kind": "control_change", "tick": 8, "channel": 1, "control": 123, "value": 0},
+    {"kind": "note_on", "tick": 12, "channel": 2, "note": 67, "velocity": 70},
+    {"kind": "note_off", "tick": 16, "channel": 2, "note": 67, "velocity": 0}
+  ],
+  "loops": [
+    {
+      "start_tick": 0,
+      "stop_tick": 8,
+      "events": [
+        {"type": "note_on", "channel": 0, "note": 60, "velocity": 100, "tick": 1},
+        {"type": "control_change", "channel": 0, "control": 1, "value": 64, "tick": 1},
+        {"type": "note_off", "channel": 0, "note": 60, "velocity": 0, "tick": 6}
+      ]
+    },
+    {
+      "start_tick": 8,
+      "stop_tick": 16,
+      "events": [
+        {"type": "note_on", "channel": 0, "note": 64, "velocity": 90, "tick": 9},
+        {"type": "control_change", "channel": 0, "control": 1, "value": 32, "tick": 9},
+        {"type": "note_off", "channel": 0, "note": 64, "velocity": 0, "tick": 14}
+      ]
+    }
+  ]
+}
