@@ -11,6 +11,7 @@ from uuid import uuid4
 from blessed import Terminal
 
 from configutil import load_section, save_section
+from engine.memory.editor import SessionEditor
 from engine.memory.session_model import SessionModel
 from engine.memory import midi_io, storage
 import midicrt as mc
@@ -75,6 +76,10 @@ _view_session_id = ""
 _status_level = "info"
 _editor_tool = "SELECT"
 _editor_selection = {"start": 0, "end": 0, "lane": "notes"}
+_editor: SessionEditor | None = None
+_editor_source_session_id = ""
+_editor_revision_id = "r0"
+_editor_dirty = False
 
 
 def _engine():
@@ -160,7 +165,7 @@ def _build_layout_window(state: dict) -> tuple[int, int, int, int, int]:
     cols = int(state["cols"])
     rows = int(state["rows"])
     y0 = int(state.get("y_offset", 3))
-    top = y0 + 2
+    top = y0 + 12
     bottom = rows - 5
     avail_rows = bottom - top
     total_rows = max(9, avail_rows)
@@ -479,6 +484,11 @@ def _build_memory_view(state: dict, build_grid: bool) -> dict:
 
     sessions_meta = _memory_list()
     session, live = _selected_session(running=running)
+    if _ui_mode == _MODE_MEM_EDIT and _editor is not None:
+        staged = _editor_current_session()
+        if staged is not None:
+            session = staged
+            live = False
 
     page_idx = 0
     page_count = 1
@@ -534,10 +544,17 @@ def _build_memory_view(state: dict, build_grid: bool) -> dict:
 
     metadata_lines = _session_metadata(session, sessions_meta)
 
+    editor_lines: list[str] = []
     if _ui_mode == _MODE_MEM_EDIT:
         sel_a = int(_editor_selection.get("start", 0))
         sel_b = int(_editor_selection.get("end", 0))
         status_line = f"Tool:{_editor_tool}  Select:{min(sel_a, sel_b)}..{max(sel_a, sel_b)}  Lane:{_editor_selection.get('lane', 'notes')}"
+        unsaved = "yes" if _editor_dirty else "no"
+        editor_lines = [
+            f"Rev:{_editor_revision_id}  Unsaved:{unsaved}  Parent:{_editor_source_session_id or '--'}",
+            "Ops: q quant  [/] nudge  t/g transpose  +/- velocity  c cc-scale  k cc-thin",
+            "Ops: r program  o split  O merge  y copy  v paste  u undo  U redo  Enter apply  Esc cancel",
+        ]
     elif _ui_mode == _MODE_MEM_PLAYBACK:
         status_line = "Audition: Enter play/stop, left/right page, ,/. session"
     else:
@@ -567,6 +584,7 @@ def _build_memory_view(state: dict, build_grid: bool) -> dict:
         "header_right": header_right,
         "legend": legend,
         "status_line": status_line,
+        "editor_lines": editor_lines,
         "metadata_lines": metadata_lines,
         "input_mode": bool(base.vis_input_mode),
         "input_text": str(base.vis_input_text),
@@ -595,10 +613,11 @@ def _view_to_widget(view: dict) -> Column:
         else str(view["legend"])
     )
     status_line = str(view.get("status_line", ""))
+    editor_lines = [Line.plain(str(x)) for x in list(view.get("editor_lines", []))]
     metadata_lines = [Line.plain(str(x)) for x in list(view.get("metadata_lines", []))]
     footer = base._merge_left_right(str(view["footer_left"]), str(view["footer_right"]), cols)
     children = [
-        TextBlock(lines=[Line.plain(header), Line.plain(info), Line.plain(status_line)] + metadata_lines),
+        TextBlock(lines=[Line.plain(header), Line.plain(info), Line.plain(status_line)] + editor_lines + metadata_lines),
         PianoRollWidget(
             pitches=list(view["pitches"]),
             cells=list(view["grid"]),
@@ -644,6 +663,106 @@ def _selected_session_meta() -> tuple[SessionModel | None, list[dict]]:
     return sess, sessions
 
 
+def _editor_current_session() -> SessionModel | None:
+    if _editor is None:
+        return None
+    try:
+        return _editor.current_session
+    except Exception:
+        return None
+
+
+def _editor_sync_status() -> None:
+    global _editor_revision_id, _editor_dirty
+    if _editor is None:
+        _editor_revision_id = "r0"
+        _editor_dirty = False
+        return
+    try:
+        hist = list(_editor.revision_history)
+        _editor_revision_id = str(hist[-1].revision_id if hist else "r0")
+        _editor_dirty = len(hist) > 1
+    except Exception:
+        _editor_revision_id = "r0"
+        _editor_dirty = False
+
+
+def _editor_begin_for_selected() -> bool:
+    global _editor, _editor_source_session_id
+    session, _sessions = _selected_session_meta()
+    if session is None:
+        _set_status("Edit start failed: no session selected", "error")
+        return False
+    sid = str(session.header.session_id)
+    if _editor is not None and sid == _editor_source_session_id:
+        _editor_sync_status()
+        return True
+    try:
+        _editor = SessionEditor(source_session=session)
+        _editor_source_session_id = sid
+        _editor_selection["start"] = int(session.header.start_tick)
+        _editor_selection["end"] = int(max(session.header.start_tick, session.header.stop_tick))
+        _editor_set_selection_from_page()
+        _editor_sync_status()
+        _set_status(f"Editor opened for {sid}")
+        return True
+    except Exception as exc:
+        _editor = None
+        _editor_source_session_id = ""
+        _editor_sync_status()
+        _set_status(f"Edit start failed: {exc}", "error")
+        return False
+
+
+def _editor_exit(*, apply_changes: bool) -> None:
+    global _editor, _editor_source_session_id
+    if _editor is None:
+        _set_mode(_MODE_MEM_BROWSER)
+        _set_status("Mode: MEM_BROWSER")
+        return
+    if not apply_changes:
+        _editor = None
+        _editor_source_session_id = ""
+        _editor_sync_status()
+        _set_mode(_MODE_MEM_BROWSER)
+        _set_status("Edit canceled")
+        return
+    _editor_sync_status()
+    _set_mode(_MODE_MEM_BROWSER)
+    if _editor_dirty:
+        _set_status("Edit kept in staging; press s to save")
+    else:
+        _set_status("No changes to apply")
+
+
+def _editor_apply_op(op: dict, label: str) -> bool:
+    if _editor is None:
+        _set_status("Editor not active", "error")
+        return False
+    try:
+        _editor.apply(op)
+        _editor_sync_status()
+        _set_status(f"Edit: {label}")
+        return True
+    except Exception as exc:
+        _set_status(f"Edit failed: {exc}", "error")
+        return False
+
+
+def _editor_set_selection_from_page() -> bool:
+    if _editor is None:
+        return False
+    lo = int(min(_editor_selection.get("start", 0), _editor_selection.get("end", 0)))
+    hi = int(max(_editor_selection.get("start", 0), _editor_selection.get("end", 0)))
+    try:
+        _editor.apply({"type": "set_selection", "tick_start": lo, "tick_end": hi})
+        _set_status(f"Selection {lo}..{hi}")
+        return True
+    except Exception as exc:
+        _set_status(f"Selection failed: {exc}", "error")
+        return False
+
+
 def _navigate_session(step: int) -> None:
     global _view_session_idx, _view_session_id
     sessions = _memory_list()
@@ -682,21 +801,40 @@ def _navigate_page(step: int) -> None:
 
 def _save_session_snapshot() -> None:
     session, _sessions = _selected_session_meta()
+    if _ui_mode == _MODE_MEM_EDIT and _editor is not None:
+        session = _editor_current_session()
     if session is None:
         _set_status("Save failed: no session selected", "error")
         return
     try:
         export_root = _MEMORY_EXPORT_DIR if os.path.isabs(_MEMORY_EXPORT_DIR) else os.path.join(os.getcwd(), _MEMORY_EXPORT_DIR)
-        sid = f"edit-{uuid4().hex[:8]}"
+        os.makedirs(export_root, exist_ok=True)
+        parent_sid = _editor_source_session_id or str(session.header.session_id)
+        rev = _editor_revision_id if (_ui_mode == _MODE_MEM_EDIT and _editor is not None) else "r0"
+        sid = f"edit-{parent_sid.split('@rev-')[0]}-{rev}-{uuid4().hex[:6]}"
         session.header.session_id = sid
-        path = storage.save_session(export_root, session)
-        _set_status(f"Saved session snapshot: {os.path.basename(path)}")
+        session.export_path = f"parent={parent_sid};revision={rev}"
+        session_path = storage.save_session(export_root, session)
+        rows = [row for row in storage.load_index(export_root) if str(row.get("id", "")) != sid]
+        rows.append(
+            storage.build_index_record(
+                session,
+                session_path=session_path,
+                midi_path=session.export_path,
+                origin=f"edit-parent:{parent_sid};revision:{rev}",
+            )
+        )
+        rows.sort(key=lambda row: float(row.get("created_ts", 0.0)), reverse=True)
+        storage.save_index(export_root, rows)
+        _set_status(f"Saved edited session: {sid}")
     except Exception as exc:
         _set_status(f"Save failed: {exc}", "error")
 
 
 def _export_session_midi() -> None:
     session, _sessions = _selected_session_meta()
+    if _ui_mode == _MODE_MEM_EDIT and _editor is not None:
+        session = _editor_current_session()
     if session is None:
         _set_status("Export failed: no session selected", "error")
         return
@@ -765,7 +903,7 @@ def on_tick(state):
 
 
 def keypress(ch):
-    global _ui_mode
+    global _ui_mode, _editor_tool
 
     s = str(ch)
     if s.lower() == _MEMORY_TOGGLE_KEY:
@@ -782,8 +920,9 @@ def keypress(ch):
         _set_status("Mode: MEM_BROWSER")
         return True
     if s.lower() == "e":
-        _set_mode(_MODE_MEM_EDIT)
-        _set_status("Mode: MEM_EDIT")
+        if _editor_begin_for_selected():
+            _set_mode(_MODE_MEM_EDIT)
+            _set_status("Mode: MEM_EDIT")
         return True
     if s.lower() == "p":
         _set_mode(_MODE_MEM_PLAYBACK)
@@ -819,16 +958,62 @@ def keypress(ch):
             return True
 
     if _ui_mode == _MODE_MEM_EDIT:
-        if ch.is_sequence and ch.name == "KEY_UP":
-            _editor_selection["start"] = max(0, int(_editor_selection.get("start", 0)) - 1)
-            _set_status("Selection start moved")
+        if ch.is_sequence and ch.name == "KEY_ESCAPE":
+            _editor_exit(apply_changes=False)
             return True
-        if ch.is_sequence and ch.name == "KEY_DOWN":
-            _editor_selection["end"] = int(_editor_selection.get("end", 0)) + 1
-            _set_status("Selection end moved")
+        if s in {"\n", "\r"} or (ch.is_sequence and ch.name == "KEY_ENTER"):
+            _editor_exit(apply_changes=True)
             return True
 
-    if _ui_mode == _MODE_MEM_PLAYBACK and (s == "\n" or (ch.is_sequence and ch.name == "KEY_ENTER")):
+        if ch.is_sequence and ch.name == "KEY_UP":
+            _editor_selection["start"] = max(0, int(_editor_selection.get("start", 0)) - int(base.TICKS_PER_COL))
+            _editor_selection["end"] = max(_editor_selection["start"], int(_editor_selection.get("end", 0)) - int(base.TICKS_PER_COL))
+            _editor_set_selection_from_page()
+            return True
+        if ch.is_sequence and ch.name == "KEY_DOWN":
+            _editor_selection["start"] = int(_editor_selection.get("start", 0)) + int(base.TICKS_PER_COL)
+            _editor_selection["end"] = int(_editor_selection.get("end", 0)) + int(base.TICKS_PER_COL)
+            _editor_set_selection_from_page()
+            return True
+
+        ops = {
+            "q": ({"type": "quantize", "grid": int(base.TICKS_PER_COL)}, "quantize"),
+            "[": ({"type": "nudge", "delta_ticks": -int(base.TICKS_PER_COL)}, "nudge -"),
+            "]": ({"type": "nudge", "delta_ticks": int(base.TICKS_PER_COL)}, "nudge +"),
+            "t": ({"type": "transpose", "semitones": 1}, "transpose +1"),
+            "g": ({"type": "transpose", "semitones": -1}, "transpose -1"),
+            "+": ({"type": "velocity", "scale": 1.0, "offset": 8}, "velocity +8"),
+            "-": ({"type": "velocity", "scale": 1.0, "offset": -8}, "velocity -8"),
+            "c": ({"type": "cc_scale", "scale": 1.0, "offset": 8}, "cc scale +8"),
+            "k": ({"type": "cc_thin", "step": 2}, "cc thin/2"),
+            "r": ({"type": "program_change_set", "channel": 1, "tick": int(min(_editor_selection.get("start", 0), _editor_selection.get("end", 0))), "program": 0, "replace": True}, "program set ch1=0"),
+            "o": ({"type": "split_clip", "tick": int(min(_editor_selection.get("start", 0), _editor_selection.get("end", 0)))}, "split clip"),
+            "O": ({"type": "merge_clips", "first_index": 0, "second_index": 1}, "merge clips"),
+            "y": ({"type": "copy_region", "tick_start": int(min(_editor_selection.get("start", 0), _editor_selection.get("end", 0))), "tick_end": int(max(_editor_selection.get("start", 0), _editor_selection.get("end", 0)))}, "copy"),
+            "v": ({"type": "paste_region", "dest_tick": int(max(_editor_selection.get("start", 0), _editor_selection.get("end", 0)))}, "paste"),
+        }
+        if s in ops:
+            _editor_tool = s.upper()
+            op, label = ops[s]
+            _editor_apply_op(op, label)
+            return True
+
+        if s == "u":
+            if _editor is None or _editor.undo() is None:
+                _set_status("Undo unavailable", "error")
+            else:
+                _editor_sync_status()
+                _set_status("Undo")
+            return True
+        if s == "U":
+            if _editor is None or _editor.redo() is None:
+                _set_status("Redo unavailable", "error")
+            else:
+                _editor_sync_status()
+                _set_status("Redo")
+            return True
+
+    if _ui_mode == _MODE_MEM_PLAYBACK and (s in {"\n", "\r"} or (ch.is_sequence and ch.name == "KEY_ENTER")):
         _set_status("Playback audition toggled")
         return True
 
@@ -867,8 +1052,12 @@ def draw(state):
     base._draw_right_reverse(y0, view["header_right"], cols)
     draw_line(y0 + 1, str(view["legend"])[:cols])
     draw_line(y0 + 2, str(view.get("status_line", ""))[:cols])
+    editor_lines = list(view.get("editor_lines", []))[:3]
+    for i, eline in enumerate(editor_lines):
+        draw_line(y0 + 3 + i, str(eline)[:cols])
+    meta_y = y0 + 3 + len(editor_lines)
     for i, mline in enumerate(list(view.get("metadata_lines", []))[:6]):
-        draw_line(y0 + 3 + i, str(mline)[:cols])
+        draw_line(meta_y + i, str(mline)[:cols])
 
     top = int(view["top"])
     draw_line(top, (f"{'Bars':>7} |" + str(view["timeline"]))[:cols])
