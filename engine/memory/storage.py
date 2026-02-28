@@ -97,6 +97,10 @@ def build_index_record(session: SessionModel, *, session_path: str, midi_path: s
     created_ts = float(session.stop_time or session.start_time or time.time())
     return {
         "id": str(session.header.session_id),
+        "parent_session_id": "",
+        "revision_id": str(session.header.session_id),
+        "op_summary": "",
+        "source_kind": str(origin),
         "created_ts": created_ts,
         "start_tick": start_tick,
         "stop_tick": stop_tick,
@@ -110,6 +114,96 @@ def build_index_record(session: SessionModel, *, session_path: str, midi_path: s
         "midi_path": str(midi_path or session.export_path or ""),
         "origin": str(origin),
     }
+
+
+def _index_row_key(row: dict[str, Any]) -> str:
+    return str(row.get("id", ""))
+
+
+def upsert_index_record(rows: list[dict[str, Any]], record: dict[str, Any]) -> list[dict[str, Any]]:
+    """Append or replace an index record by session id.
+
+    Returns the same list for convenience.
+    """
+    key = _index_row_key(record)
+    if not key:
+        return rows
+    for idx, row in enumerate(rows):
+        if _index_row_key(row) == key:
+            rows[idx] = record
+            return rows
+    rows.append(record)
+    return rows
+
+
+def update_index_record_by_session_id(
+    rows: list[dict[str, Any]], session_id: str, updates: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Patch an existing row or create a minimal row if missing."""
+    sid = str(session_id or "")
+    if not sid:
+        return rows
+    for idx, row in enumerate(rows):
+        if _index_row_key(row) == sid:
+            patched = dict(row)
+            patched.update(updates)
+            rows[idx] = patched
+            return rows
+    created = {"id": sid}
+    created.update(updates)
+    rows.append(created)
+    return rows
+
+
+def append_or_update_index_record(root_dir: str, record: dict[str, Any]) -> list[dict[str, Any]]:
+    rows = load_index(root_dir)
+    upsert_index_record(rows, record)
+    save_index(root_dir, rows)
+    return rows
+
+
+def latest_revision_chain(root_dir: str, base_session_id: str) -> list[dict[str, Any]]:
+    """Return the newest known ancestry chain from `base_session_id`.
+
+    Chain selection uses parent pointers; when multiple children exist, the newest
+    child by `(created_ts, id)` is chosen.
+    """
+    base_id = str(base_session_id or "")
+    if not base_id:
+        return []
+    rows = load_index(root_dir)
+    by_id = {_index_row_key(row): row for row in rows if _index_row_key(row)}
+    if not by_id:
+        return []
+
+    chain: list[dict[str, Any]] = []
+    current_id = base_id
+    if current_id not in by_id:
+        candidates = [
+            row
+            for row in rows
+            if str(row.get("revision_id", "") or "") == base_id
+        ]
+        if not candidates:
+            return []
+        current = min(candidates, key=lambda r: (float(r.get("created_ts", 0.0) or 0.0), _index_row_key(r)))
+        current_id = _index_row_key(current)
+
+    visited: set[str] = set()
+    while current_id and current_id in by_id and current_id not in visited:
+        visited.add(current_id)
+        row = by_id[current_id]
+        chain.append(row)
+        children = [
+            child
+            for child in rows
+            if str(child.get("parent_session_id", "") or "") == current_id
+        ]
+        if not children:
+            break
+        latest = max(children, key=lambda r: (float(r.get("created_ts", 0.0) or 0.0), _index_row_key(r)))
+        current_id = _index_row_key(latest)
+    return chain
 
 
 def _index_path(root_dir: str) -> str:
