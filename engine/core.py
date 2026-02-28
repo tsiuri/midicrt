@@ -19,6 +19,7 @@ from engine.scheduler import ModuleScheduler
 from engine.state.schema import build_snapshot, normalize_deep_research_payload
 from engine.deep_research.platform import resolve_feature_flags
 from engine.memory.capture import MemoryCaptureManager
+from engine.memory.replay import ReplayController
 from engine.state.tempo_map import TempoMap
 
 
@@ -90,6 +91,7 @@ class MidiEngine:
             library_dir=str(mem_cfg.get("memory_library_dir", "")).strip() or None,
             project_root=os.path.dirname(os.path.dirname(__file__)),
         )
+        self._memory_replay = ReplayController(emit_midi=self._emit_replay_message)
         self._capture_events = deque()
         self._capture_seq = 0
         self._last_capture_meta: dict[str, Any] = {
@@ -433,6 +435,69 @@ class MidiEngine:
         with self._lock:
             return dict(self._memory_capture.status())
 
+    def memory_replay_start(
+        self,
+        session_id: str,
+        *,
+        loop_start_tick: int | None = None,
+        loop_end_tick: int | None = None,
+    ) -> bool:
+        with self._lock:
+            session = self._memory_capture.memory_get(str(session_id))
+            if session is None:
+                return False
+            tick_now = int(self.state.tick_counter)
+            running_now = bool(self.state.running)
+            return bool(
+                self._memory_replay.start(
+                    session=session,
+                    engine_tick=tick_now,
+                    running=running_now,
+                    loop_start_tick=loop_start_tick,
+                    loop_end_tick=loop_end_tick,
+                )
+            )
+
+    def memory_replay_stop(self) -> bool:
+        with self._lock:
+            self._memory_replay.stop()
+            return True
+
+    def memory_replay_toggle(
+        self,
+        session_id: str,
+        *,
+        loop_start_tick: int | None = None,
+        loop_end_tick: int | None = None,
+    ) -> bool:
+        with self._lock:
+            status = self._memory_replay.status()
+        if bool(status.get("playing")):
+            return self.memory_replay_stop()
+        return self.memory_replay_start(
+            session_id,
+            loop_start_tick=loop_start_tick,
+            loop_end_tick=loop_end_tick,
+        )
+
+    def memory_replay_loop_region(self, *, start_tick: int | None = None, end_tick: int | None = None) -> bool:
+        with self._lock:
+            self._memory_replay.set_loop_region(start_tick=start_tick, end_tick=end_tick)
+            return True
+
+    def memory_replay_status(self) -> dict[str, Any]:
+        with self._lock:
+            return dict(self._memory_replay.status())
+
+
+    def _emit_replay_message(self, msg: mido.Message) -> None:
+        hook = self._command_hooks.get("send_midi")
+        if not callable(hook):
+            return
+        try:
+            hook(msg)
+        except Exception:
+            pass
 
     def set_ui_context(self, *, cols: int | None = None, rows: int | None = None, y_offset: int | None = None, current_page: int | None = None) -> None:
         if cols is not None:
@@ -746,6 +811,8 @@ class MidiEngine:
         return module_state, views
 
     def _update_transport(self, event: dict[str, Any]) -> None:
+        replay_tick = 0
+        replay_running = False
         with self._lock:
             kind = event["kind"]
             cur_running = bool(self.state.running)
@@ -793,6 +860,12 @@ class MidiEngine:
                     else:
                         self.state.active_notes[channel].discard(note)
                 self.state.status_text = f"{kind} ch={channel} note={note}"
+
+            replay_tick = int(self.state.tick_counter)
+            replay_running = bool(self.state.running)
+
+        self._memory_replay.on_transport(tick=replay_tick, running=replay_running)
+
 
     def _collect_meter_candidates(self) -> list[dict[str, Any]]:
         candidates: list[dict[str, Any]] = []
