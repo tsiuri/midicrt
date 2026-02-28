@@ -1,5 +1,6 @@
 from .capture import MemoryCaptureManager
 from .editor import SessionEditor, SessionRevision, TimeSelection
+from .replay import ReplayController, ReplayStatus
 from .session_model import (
     SCHEMA_NAME,
     SCHEMA_VERSION,
@@ -17,6 +18,8 @@ from .session_model import (
 __all__ = [
     "MemoryCaptureManager",
     "SessionEditor",
+    "ReplayController",
+    "ReplayStatus",
     "SessionRevision",
     "SCHEMA_NAME",
     "SCHEMA_VERSION",
