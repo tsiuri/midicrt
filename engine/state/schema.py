@@ -28,6 +28,17 @@ class ChannelSnapshot:
 
 
 @dataclass
+class MemorySnapshot:
+    armed: bool = False
+    current_id: str = ""
+    session_count: int = 0
+    max_sessions: int = 0
+    replay_playing: bool = False
+    replay_session_id: str = ""
+    replay_tick: int = 0
+
+
+@dataclass
 class StateSnapshot:
     schema_version: int
     timestamp: float
@@ -42,6 +53,7 @@ class StateSnapshot:
     module_health: dict[str, Any] = field(default_factory=dict)
     ui_context: dict[str, Any] = field(default_factory=dict)
     deep_research: dict[str, Any] | None = None
+    memory: MemorySnapshot = field(default_factory=MemorySnapshot)
 
     def as_dict(self) -> dict[str, Any]:
         payload = {
@@ -69,6 +81,15 @@ class StateSnapshot:
             "retrospective_capture": self.retrospective_capture,
             "module_health": self.module_health,
             "ui_context": self.ui_context,
+            "memory": {
+                "armed": self.memory.armed,
+                "current_id": self.memory.current_id,
+                "session_count": self.memory.session_count,
+                "max_sessions": self.memory.max_sessions,
+                "replay_playing": self.memory.replay_playing,
+                "replay_session_id": self.memory.replay_session_id,
+                "replay_tick": self.memory.replay_tick,
+            },
         }
         if self.views:
             payload["views"] = self.views
@@ -128,6 +149,7 @@ def build_snapshot(
     module_health: dict[str, Any] | None = None,
     ui_context: dict[str, Any] | None = None,
     deep_research: dict[str, Any] | None = None,
+    memory: dict[str, Any] | None = None,
 ) -> StateSnapshot:
     active_notes = active_notes or {}
     normalized = {ch: sorted(notes) for ch, notes in active_notes.items()}
@@ -162,6 +184,18 @@ def build_snapshot(
     if isinstance(module_health, dict):
         normalized_module_health.update(module_health)
 
+    normalized_memory = {
+        "armed": False,
+        "current_id": "",
+        "session_count": 0,
+        "max_sessions": 0,
+        "replay_playing": False,
+        "replay_session_id": "",
+        "replay_tick": 0,
+    }
+    if isinstance(memory, dict):
+        normalized_memory.update(memory)
+
     return StateSnapshot(
         schema_version=SCHEMA_VERSION,
         timestamp=timestamp,
@@ -187,4 +221,13 @@ def build_snapshot(
         module_health=normalized_module_health,
         ui_context=ui_context or {},
         deep_research=normalize_deep_research_payload(deep_research),
+        memory=MemorySnapshot(
+            armed=bool(normalized_memory.get("armed", False)),
+            current_id=str(normalized_memory.get("current_id", "")),
+            session_count=max(0, int(normalized_memory.get("session_count", 0))),
+            max_sessions=max(0, int(normalized_memory.get("max_sessions", 0))),
+            replay_playing=bool(normalized_memory.get("replay_playing", False)),
+            replay_session_id=str(normalized_memory.get("replay_session_id", "")),
+            replay_tick=max(0, int(normalized_memory.get("replay_tick", 0))),
+        ),
     )
