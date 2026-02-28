@@ -53,6 +53,19 @@ Implementations must close active notes under these conditions:
 
 When closeout is synthesized (for cleanup), writers may emit synthesized `note_off` events with `source="synth"` while preserving original input events.
 
+
+## Session index metadata (storage)
+
+`engine/memory/storage.py` index rows are additive metadata and now include revision/provenance keys:
+
+- `parent_session_id`: parent row id (empty for roots).
+- `revision_id`: stable ancestry/root id for related revisions.
+- `op_summary`: human-readable operation summary (capture/import/edit details).
+- `source_kind`: normalized origin (`capture`, `import`, `edit`, etc.).
+
+Index writes remain atomic via temp-file + rename and fsync before replace.
+Readers should tolerate unknown/additive keys in index/session payloads.
+
 ## Compatibility policy
 
 - **Minor/patch (`1.x.y`)**: additive changes only (optional fields, new event kinds).
