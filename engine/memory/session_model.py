@@ -75,7 +75,7 @@ class SessionModel:
     header: SessionHeader
     events: list[MidiEvent] = field(default_factory=list)
     note_spans: list[NoteSpan] = field(default_factory=list)
-    active_notes: dict[tuple[int, int], tuple[int, int]] = field(default_factory=dict)
+    active_notes: dict[tuple[int, int], list[tuple[int, int]]] = field(default_factory=dict)
     recent_hits: list[tuple[int, int, int, float]] = field(default_factory=list)
     cc_events: list[tuple[int, int, int, int, float]] = field(default_factory=list)
     cc_order: list[tuple[int, int]] = field(default_factory=list)
@@ -122,12 +122,14 @@ class SessionModel:
                 pressure=int(getattr(msg, "value", 0)),
             )
         if kind == "note_on":
+            velocity = int(getattr(msg, "velocity", 0))
+            normalized_kind: EventKind = "note_off" if velocity == 0 else "note_on"
             return self.append_normalized_event(
-                kind="note_on",
+                kind=normalized_kind,
                 tick=tick,
                 channel=channel,
                 note=int(getattr(msg, "note", -1)),
-                velocity=int(getattr(msg, "velocity", 0)),
+                velocity=velocity,
             )
         if kind == "note_off":
             return self.append_normalized_event(
@@ -153,10 +155,13 @@ class SessionModel:
         )
 
     def close_active_note(self, *, channel: int, note: int, end_tick: int, emit_synth_off: bool) -> None:
-        active = self.active_notes.pop((int(channel), int(note)), None)
-        if not active:
+        key = (int(channel), int(note))
+        active_stack = self.active_notes.get(key)
+        if not active_stack:
             return
-        start_tick, velocity = active
+        start_tick, velocity = active_stack.pop()
+        if not active_stack:
+            self.active_notes.pop(key, None)
         end_tick = max(int(end_tick), int(start_tick))
         self.note_spans.append(
             NoteSpan(
@@ -179,11 +184,13 @@ class SessionModel:
 
     def flush_active_notes(self, *, end_tick: int, emit_synth_off: bool = True) -> None:
         for channel, note in list(self.active_notes.keys()):
-            self.close_active_note(channel=channel, note=note, end_tick=end_tick, emit_synth_off=emit_synth_off)
+            while self.active_notes.get((int(channel), int(note))):
+                self.close_active_note(channel=channel, note=note, end_tick=end_tick, emit_synth_off=emit_synth_off)
 
     def close_channel_active_notes(self, *, channel: int, end_tick: int, emit_synth_off: bool = True) -> None:
         for ch, note in [key for key in self.active_notes if int(key[0]) == int(channel)]:
-            self.close_active_note(channel=ch, note=note, end_tick=end_tick, emit_synth_off=emit_synth_off)
+            while self.active_notes.get((int(ch), int(note))):
+                self.close_active_note(channel=ch, note=note, end_tick=end_tick, emit_synth_off=emit_synth_off)
 
     def stop_flush(self, stop_tick: int) -> None:
         self.flush_active_notes(end_tick=stop_tick, emit_synth_off=True)
