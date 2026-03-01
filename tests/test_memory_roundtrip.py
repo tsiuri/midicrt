@@ -78,6 +78,27 @@ class MemoryRoundtripTest(unittest.TestCase):
                 [self._event_tuple(ev) for ev in loaded.events],
             )
 
+    def test_exported_midi_tempo_meta_events_are_ordered_by_tick(self):
+        source = self._build_fixture_session()
+        with tempfile.TemporaryDirectory() as tmp:
+            out_path = pathlib.Path(tmp) / "ordered.mid"
+            exported = midi_io.export_session_midi(source, str(out_path))
+            self.assertEqual(exported, str(out_path))
+
+            midi = midi_io.mido.MidiFile(str(out_path))
+            self.assertGreaterEqual(len(midi.tracks), 1)
+
+            abs_tick = 0
+            tempo_abs_ticks = []
+            for msg in midi.tracks[0]:
+                abs_tick += int(getattr(msg, "time", 0) or 0)
+                if getattr(msg, "is_meta", False) and msg.type == "set_tempo":
+                    tempo_abs_ticks.append(abs_tick)
+
+            # session ppqn=24, midi ticks_per_beat=480 => scale 20x
+            self.assertEqual(tempo_abs_ticks, [0, 160])
+            self.assertEqual(tempo_abs_ticks, sorted(tempo_abs_ticks))
+
 
 if __name__ == "__main__":
     unittest.main()
