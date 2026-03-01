@@ -165,6 +165,26 @@ Fallback behavior:
 On startup, midicrt appends a self-check line to `log.txt` recording the active
 profile and backend.
 
+### Pi 3B runtime policy (hardware-conscious defaults)
+
+`core.fps` remains fully configurable, but Raspberry Pi 3B deployments should
+prefer:
+
+- `core.fps = 36` for balanced smoothness/thermals (recommended default)
+- `core.fps = 30` for cooler/safer sustained runtime
+
+The runtime now includes a small deterministic budget policy under
+`core.runtime_policy` in `config/settings.json`:
+
+- tracks rolling frame-time average and over-budget ratio,
+- exposes a footer status (`budget`, `ovr`, `lvl`),
+- and, when over budget for sustained windows, lowers non-essential cadences
+  first (page cache TTL, notes badge refresh, plugin overlay refresh) before any
+  visual fidelity changes.
+
+This policy intentionally avoids complex adaptive control loops so it stays easy
+to reason about and easy to revert.
+
 
 ## Web observer (optional, read-only)
 

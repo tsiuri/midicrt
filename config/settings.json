@@ -126,7 +126,7 @@
     "visible_rows_target": 200
   },
   "core": {
-    "fps": 60.00000000000007,
+    "fps": 36.0,
     "header_scroll_speed": 4.0,
     "ipc": {
       "enabled": true,
@@ -175,6 +175,39 @@
     "feature_flags": {
       "contract_page_views": false,
       "contract_legacy_event_router": true
+    },
+    "runtime_policy": {
+      "enabled": true,
+      "window_frames": 90,
+      "sustain_windows": 3,
+      "relax_windows": 4,
+      "over_budget_ratio": 0.35,
+      "page_cache_ttl_ms": 200,
+      "notes_page_cache_hz": 30,
+      "notes_badge_hz": 24,
+      "plugin_overlay_hz": 10,
+      "degrade_steps": [
+        {
+          "page_cache_ttl_ms": 260,
+          "notes_page_cache_hz": 24,
+          "notes_badge_hz": 18,
+          "plugin_overlay_hz": 8
+        },
+        {
+          "page_cache_ttl_ms": 333,
+          "notes_page_cache_hz": 18,
+          "notes_badge_hz": 12,
+          "plugin_overlay_hz": 6
+        }
+      ],
+      "recommended_pi3b_profiles": {
+        "balanced": {
+          "fps": 36
+        },
+        "cool": {
+          "fps": 30
+        }
+      }
     }
   },
   "panic": {
