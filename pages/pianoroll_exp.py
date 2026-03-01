@@ -15,6 +15,7 @@ from configutil import load_section, save_section
 from engine.memory.editor import SessionEditor
 from engine.memory.session_model import SessionModel
 from engine.memory import midi_io, storage
+from engine.memory.tempo_timeline import TempoTimeline
 import midicrt as mc
 from midicrt import draw_line
 from ui.model import Column, Line, PianoRollCell, PianoRollWidget, Spacer, TextBlock
@@ -31,6 +32,7 @@ _MEMORY_MAX_SESSIONS = 32
 _MEMORY_EXPORT_DIR = "captures/pianoroll_exp"
 _MEMORY_LIBRARY_DIR = ""
 _CC_LANE_MAX_RATIO = 0.25
+_PROJECTION_MODE = "beat"
 
 _cfg = load_section("pianoroll_exp")
 if _cfg is None:
@@ -40,8 +42,11 @@ try:
     _MEMORY_EXPORT_DIR = str(_cfg.get("memory_export_dir", _MEMORY_EXPORT_DIR))
     _MEMORY_LIBRARY_DIR = str(_cfg.get("memory_library_dir", _MEMORY_LIBRARY_DIR))
     _CC_LANE_MAX_RATIO = float(_cfg.get("cc_lane_max_ratio", _CC_LANE_MAX_RATIO))
+    _PROJECTION_MODE = str(_cfg.get("projection_mode", _PROJECTION_MODE)).strip().lower() or "beat"
 except Exception:
     pass
+if _PROJECTION_MODE not in {"beat", "tempo_relative"}:
+    _PROJECTION_MODE = "beat"
 
 try:
     save_section(
@@ -51,6 +56,7 @@ try:
             "memory_export_dir": str(_MEMORY_EXPORT_DIR),
             "memory_library_dir": str(_MEMORY_LIBRARY_DIR),
             "cc_lane_max_ratio": float(max(0.0, min(0.5, _CC_LANE_MAX_RATIO))),
+            "projection_mode": str(_PROJECTION_MODE),
         },
     )
 except Exception:
@@ -448,10 +454,17 @@ def _project_session_page(
     page_start: int,
     page_end_excl: int,
     include_live_active: bool,
+    projection_mode: str,
+    current_bpm: float,
+    anchor_tick: int,
 ) -> tuple[list[list[tuple[int, int, int]]], list[tuple[int, int, int, int, int, int]], int]:
     tpc = max(1, int(base.TICKS_PER_COL))
     best_cols = [{} for _ in range(max(1, roll_cols))]
     spans_for_render = []
+    proj_mode = str(projection_mode or "beat").strip().lower()
+    if proj_mode not in {"beat", "tempo_relative"}:
+        proj_mode = "beat"
+    tempo_timeline = TempoTimeline.from_session(session) if proj_mode == "tempo_relative" else None
 
     # Use pre-built sorted span list from the derived cache; fall back to building it.
     # The `not include_live_active` guard has been removed: the derived cache is now
@@ -521,16 +534,25 @@ def _project_session_page(
         e = int(end)
         if e < s:
             e = s
-        if e < page_start or s >= page_end_excl:
+
+        proj_s = float(s)
+        proj_e = float(e)
+        if tempo_timeline is not None:
+            proj_s = float(tempo_timeline.project_tick(s, current_bpm=current_bpm, anchor_tick=anchor_tick))
+            proj_e = float(tempo_timeline.project_tick(e, current_bpm=current_bpm, anchor_tick=anchor_tick))
+            if proj_e < proj_s:
+                proj_e = proj_s
+
+        if proj_e < float(page_start) or proj_s >= float(page_end_excl):
             continue
 
-        clip_s = max(s, page_start)
-        clip_e = min(e, page_end_excl - 1)
+        clip_s = max(proj_s, float(page_start))
+        clip_e = min(proj_e, float(page_end_excl - 1))
         if clip_e < clip_s:
             continue
 
-        c0 = max(0, min(roll_cols - 1, (clip_s - page_start) // tpc))
-        c1 = max(0, min(roll_cols - 1, (clip_e - page_start) // tpc))
+        c0 = max(0, min(roll_cols - 1, int((clip_s - float(page_start)) // tpc)))
+        c1 = max(0, min(roll_cols - 1, int((clip_e - float(page_start)) // tpc)))
         for c in range(c0, c1 + 1):
             prev = best_cols[c].get(pitch)
             if prev is None or vel >= int(prev[1]):
@@ -538,7 +560,7 @@ def _project_session_page(
 
         # Preserve original start tick (s) so compositor overlap detection can
         # distinguish true in-window onsets from spans clipped at page_start.
-        spans_for_render.append((clip_s, clip_e + 1, pitch, ch, vel, s))
+        spans_for_render.append((int(clip_s), int(clip_e) + 1, pitch, ch, vel, s))
 
     columns = [[(p, ch, vel) for p, (ch, vel) in col.items()] for col in best_cols]
     return columns, spans_for_render, int(len(session.active_notes) if include_live_active else 0)
@@ -621,6 +643,9 @@ def _editor_projection(session: SessionModel | None, editor_state: dict, total_r
         page_start=int(editor_state.get("page_start", 0)),
         page_end_excl=int(editor_state.get("page_end_excl", 0)),
         include_live_active=bool(editor_state.get("include_live_active", False)),
+        projection_mode=str(editor_state.get("projection_mode", _PROJECTION_MODE)),
+        current_bpm=float(editor_state.get("current_bpm", base.IDLE_SCROLL_BPM)),
+        anchor_tick=int(editor_state.get("anchor_tick", editor_state.get("page_start", 0))),
     )
 
     cc_lanes = _build_cc_lanes(
@@ -734,6 +759,9 @@ def _build_memory_view(state: dict, build_grid: bool) -> dict:
             "page_start": page_start,
             "page_end_excl": page_end_excl,
             "include_live_active": live,
+            "projection_mode": _PROJECTION_MODE,
+            "current_bpm": float(state.get("bpm", getattr(session.header, "bpm", base.IDLE_SCROLL_BPM) if session else base.IDLE_SCROLL_BPM)),
+            "anchor_tick": int(getattr(session.header, "start_tick", page_start) if session is not None else page_start),
             "cols": cols,
         },
         total_rows,
@@ -770,7 +798,7 @@ def _build_memory_view(state: dict, build_grid: bool) -> dict:
     legend = f"{base._channel_legend()} [h=live m=browser e=edit p=audition]"
     footer_left = (
         f"Range: {base._notename(base.pitch_low)}-{base._notename(base.pitch_high)}  "
-        f"T/col:{base.TICKS_PER_COL}  Active:{projection['active_count']}  Cols:{roll_cols}"
+        f"T/col:{base.TICKS_PER_COL}  Active:{projection['active_count']}  Cols:{roll_cols}  Proj:{_PROJECTION_MODE}"
     )
     if _memory_status:
         footer_left = f"{footer_left}  {_memory_status}"
@@ -804,6 +832,7 @@ def _build_memory_view(state: dict, build_grid: bool) -> dict:
         "cc_lines": list(projection["cc_lines"]),
         "tick_right": tick_right,
         "tick_now": tick_right,
+        "projection_mode": str(_PROJECTION_MODE),
         "footer_left": footer_left,
         "footer_right": footer_right,
         "overflow": {"above": "", "below": ""},
@@ -839,6 +868,7 @@ def _view_to_widget(view: dict) -> Column:
             timeline=str(view["timeline"]),
             left_margin=int(base.LEFT_MARGIN),
             style_mode=str(base.PIXEL_STYLE),
+            projection_mode=str(view.get("projection_mode", "beat")),
         ),
     ]
     children.append(Spacer(rows=1))

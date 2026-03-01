@@ -8,6 +8,7 @@ from blessed import Terminal
 from midicrt import draw_line
 from configutil import load_section, save_section
 from engine.modules.pianoroll_state import PianoRollState
+from engine.memory.tempo_timeline import TempoTimeline
 from ui.model import Column, Line, PianoRollCell, PianoRollWidget, Spacer, TextBlock
 
 term = Terminal()
@@ -21,6 +22,7 @@ MAX_VISIBLE_ROWS = 20
 IDLE_SCROLL_BPM = 120  # scroll speed when transport stopped
 OUT_RANGE_HOLD = 2.5  # seconds to show out-of-range note indicator
 PIXEL_STYLE = "text"  # text | dense
+PROJECTION_MODE = "beat"  # beat | tempo_relative
 
 _cfg = load_section("pianoroll")
 if _cfg is None:
@@ -34,10 +36,13 @@ try:
     IDLE_SCROLL_BPM = float(_cfg.get("idle_scroll_bpm", IDLE_SCROLL_BPM))
     OUT_RANGE_HOLD = float(_cfg.get("out_range_hold", OUT_RANGE_HOLD))
     PIXEL_STYLE = str(_cfg.get("pixel_style", PIXEL_STYLE)).strip().lower() or "text"
+    PROJECTION_MODE = str(_cfg.get("projection_mode", PROJECTION_MODE)).strip().lower() or "beat"
 except Exception:
     pass
 if PIXEL_STYLE not in {"text", "dense"}:
     PIXEL_STYLE = "text"
+if PROJECTION_MODE not in {"beat", "tempo_relative"}:
+    PROJECTION_MODE = "beat"
 
 
 def _save_cfg():
@@ -53,6 +58,7 @@ def _save_cfg():
                 "idle_scroll_bpm": float(IDLE_SCROLL_BPM),
                 "out_range_hold": float(OUT_RANGE_HOLD),
                 "pixel_style": str(PIXEL_STYLE),
+                "projection_mode": str(PROJECTION_MODE),
             },
         )
     except Exception:
@@ -114,7 +120,7 @@ def on_tick(state):
 # -------- Channel visibility --------
 def _channel_legend():
     lst = " ".join(str(c) for c in sorted(visible_channels))
-    return f"Vis: {lst}   [d=ch10, v=edit, *=all, y=style:{PIXEL_STYLE}]"
+    return f"Vis: {lst}   [d=ch10, v=edit, *=all, y=style:{PIXEL_STYLE}, p=proj:{PROJECTION_MODE}]"
 
 
 def apply_visibility_list(text):
@@ -144,7 +150,7 @@ def apply_visibility_list(text):
 
 
 def keypress(ch):
-    global vis_input_mode, vis_input_text, pitch_low, pitch_high, PIXEL_STYLE
+    global vis_input_mode, vis_input_text, pitch_low, pitch_high, PIXEL_STYLE, PROJECTION_MODE
     if vis_input_mode:
         if ch.name == "KEY_ENTER":
             apply_visibility_list(vis_input_text.strip())
@@ -181,6 +187,11 @@ def keypress(ch):
         return True
     if str(ch).lower() == "y":
         PIXEL_STYLE = "dense" if PIXEL_STYLE == "text" else "text"
+        _save_cfg()
+        return True
+
+    if str(ch).lower() == "p":
+        PROJECTION_MODE = "tempo_relative" if PROJECTION_MODE == "beat" else "beat"
         _save_cfg()
         return True
 
@@ -273,6 +284,11 @@ def _coerce_pianoroll_payload(payload, roll_cols, pitch_low_val, pitch_high_val)
         "overflow_flags": payload.get("overflow_flags", {}),
         "overflow": payload.get("overflow", {}),
         "columns": payload.get("columns", []),
+        "projection_mode": str(payload.get("projection_mode", PROJECTION_MODE)),
+        "tempo_segments": payload.get("tempo_segments", []),
+        "ppqn": int(payload.get("ppqn", 24)) if isinstance(payload, dict) else 24,
+        "session_start_tick": int(payload.get("session_start_tick", 0)) if isinstance(payload, dict) else 0,
+        "anchor_tick": int(payload.get("anchor_tick", payload.get("tick_now", payload.get("tick_right", 0)))) if isinstance(payload, dict) else 0,
     }
     cols = normalized["columns"] if isinstance(normalized["columns"], list) else []
     if len(cols) < roll_cols:
@@ -321,9 +337,78 @@ def _payload_from_direct_state(state, roll_cols, now):
             "below_count": 0,
         },
         "columns": columns,
+        "projection_mode": str(PROJECTION_MODE),
         "_source": "direct_state",
         "_adapted_at": float(now),
     }
+
+
+def _resolve_projection_mode(state):
+    views = state.get("views") if isinstance(state.get("views"), dict) else {}
+    payload_raw = views.get("pianoroll") or views.get("8")
+    if isinstance(payload_raw, dict):
+        mode = str(payload_raw.get("projection_mode", "")).strip().lower()
+        if mode in {"beat", "tempo_relative"}:
+            return mode
+    return PROJECTION_MODE
+
+
+def _project_payload_tempo_relative(payload: dict, *, current_bpm: float) -> dict:
+    if not isinstance(payload, dict):
+        return payload
+    spans = payload.get("spans")
+    if not isinstance(spans, list) or not spans:
+        return payload
+
+    tempo_segments = payload.get("tempo_segments", [])
+    if not isinstance(tempo_segments, list) or not tempo_segments:
+        return payload
+
+    try:
+        ppqn = int(payload.get("ppqn", 24))
+    except Exception:
+        ppqn = 24
+    session_start_tick = int(payload.get("session_start_tick", payload.get("anchor_tick", 0)))
+
+    seg_pairs = []
+    for seg in tempo_segments:
+        if not isinstance(seg, dict):
+            continue
+        try:
+            seg_pairs.append((int(seg.get("start_tick", session_start_tick)), float(seg.get("bpm", 120.0))))
+        except Exception:
+            continue
+    if not seg_pairs:
+        return payload
+
+    timeline = TempoTimeline(anchor_tick=session_start_tick, ppqn=ppqn, segments=seg_pairs)
+    anchor_tick = int(payload.get("anchor_tick", payload.get("tick_now", payload.get("tick_right", 0))))
+    bpm = float(current_bpm if current_bpm > 0 else payload.get("current_bpm", 120.0) or 120.0)
+
+    projected_spans = []
+    for item in spans:
+        if not isinstance(item, (list, tuple)) or len(item) < 5:
+            continue
+        start, end, pitch, ch, vel = item[:5]
+        try:
+            s = float(timeline.project_tick(start, current_bpm=bpm, anchor_tick=anchor_tick))
+            e = float(timeline.project_tick(end, current_bpm=bpm, anchor_tick=anchor_tick))
+            if e < s:
+                e = s
+        except Exception:
+            continue
+        out = [int(s), int(e), int(pitch), int(ch), int(vel)]
+        if len(item) >= 6:
+            out.append(int(item[5]))
+        projected_spans.append(out)
+
+    cloned = dict(payload)
+    cloned["spans"] = projected_spans
+    cloned["tick_now"] = int(anchor_tick)
+    cloned["tick_right"] = int(anchor_tick)
+    cloned["projection_mode"] = "tempo_relative"
+    cloned["projection_anchor_tick"] = int(anchor_tick)
+    return cloned
 
 
 def _resolve_pianoroll_payload(state, roll_cols, pitch_low_val, pitch_high_val, now):
@@ -335,6 +420,7 @@ def _resolve_pianoroll_payload(state, roll_cols, pitch_low_val, pitch_high_val, 
         payload_raw = {
             "pitch_low": int(pitch_low_val),
             "pitch_high": int(pitch_high_val),
+            "projection_mode": str(PROJECTION_MODE),
             **roll_state.get_view_payload(
                 pitch_low=pitch_low_val,
                 pitch_high=pitch_high_val,
@@ -412,6 +498,9 @@ def build_roll_view(state, build_grid: bool = True):
         pitch_high_val=pitch_high,
         now=now,
     )
+    projection_mode = _resolve_projection_mode(state)
+    if projection_mode == "tempo_relative":
+        payload = _project_payload_tempo_relative(payload, current_bpm=float(state.get("bpm", IDLE_SCROLL_BPM) or IDLE_SCROLL_BPM))
     visible_cols = payload["columns"]
     tick_right = payload.get("tick_right", state.get("tick", 0))
     tick_now = payload.get("tick_now", state.get("tick", tick_right))
@@ -504,6 +593,7 @@ def build_roll_view(state, build_grid: bool = True):
         "spans": spans,
         "tick_right": int(tick_right),
         "tick_now": int(tick_now),
+        "projection_mode": str(projection_mode),
         "footer_left": footer_left,
         "footer_right": footer_right,
         "overflow": {
@@ -549,6 +639,7 @@ def build_widget(state):
                 timeline=view["timeline"],
                 left_margin=LEFT_MARGIN,
                 style_mode=PIXEL_STYLE,
+                projection_mode=view.get("projection_mode", "beat"),
             ),
             Spacer(rows=1),
             TextBlock(lines=[footer_line]),
