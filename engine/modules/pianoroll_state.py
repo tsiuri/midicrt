@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from heapq import nsmallest
 from collections import deque
 from typing import Any
 import os
@@ -224,38 +225,45 @@ class PianoRollState:
         self._ensure_cols(roll_cols)
         self._refresh_out_of_range(pitch_low=pitch_low, pitch_high=pitch_high, now=now)
 
+        tick_now = self._tick_now()
+        active_items = self.active.items()
+        recent_hits_list = list(self.recent_hits)
+
         visible_cols = self._visible_cols(roll_cols)
-        overlay = [(p, ch, v) for (p, ch, v, ts) in list(self.recent_hits) if (now - ts) <= 0.25]
+        overlay = [(p, ch, v) for (p, ch, v, ts) in recent_hits_list if (now - ts) <= 0.25]
         if overlay and visible_cols:
             visible_cols[-1] = list(visible_cols[-1]) + overlay
 
-        active_notes_payload = [
-            [ch, pitch, vel]
-            for (ch, pitch), (vel, _start) in sorted(self.active.items(), key=lambda item: (item[0][1], item[0][0]))[:max_active_notes]
-        ]
+        sort_key = lambda item: (item[0][1], item[0][0])
+        if max_active_notes <= 0:
+            selected_active: list[tuple[tuple[int, int], tuple[int, int]]] = []
+        elif len(self.active) > max_active_notes:
+            selected_active = nsmallest(max_active_notes, active_items, key=sort_key)
+        else:
+            selected_active = sorted(active_items, key=sort_key)
+        active_notes_payload = [[ch, pitch, vel] for (ch, pitch), (vel, _start) in selected_active]
 
         recent_hits_payload = []
-        for pitch, ch, vel, ts in list(self.recent_hits)[-max_recent_hits:]:
+        for pitch, ch, vel, ts in recent_hits_list[-max_recent_hits:]:
             recent_hits_payload.append([pitch, ch, vel, int(max(0.0, now - ts) * 1000.0)])
 
         above_pitches = {
             note
-            for (note, _ch, _vel, ts) in list(self.recent_hits)
+            for (note, _ch, _vel, ts) in recent_hits_list
             if (now - ts) <= self.out_range_hold and note > pitch_high
         }
         below_pitches = {
             note
-            for (note, _ch, _vel, ts) in list(self.recent_hits)
+            for (note, _ch, _vel, ts) in recent_hits_list
             if (now - ts) <= self.out_range_hold and note < pitch_low
         }
-        for (_ch, note), (_vel, _start) in self.active.items():
+        for (_ch, note), (_vel, _start) in active_items:
             if note > pitch_high:
                 above_pitches.add(note)
             elif note < pitch_low:
                 below_pitches.add(note)
 
         tick_right = int(self.last_tick)
-        tick_now = self._tick_now()
         tick_left = tick_now - max(1, int(roll_cols) - 1) * self.ticks_per_col
         tick_right_edge = tick_now + self.ticks_per_col
         prune_before = tick_left - self.ticks_per_col
@@ -263,13 +271,13 @@ class PianoRollState:
             self.spans.popleft()
 
         spans: list[list[int]] = []
-        for start, end, pitch, ch, vel in list(self.spans):
+        for start, end, pitch, ch, vel in self.spans:
             if pitch < pitch_low or pitch > pitch_high:
                 continue
             if end < tick_left or start > tick_right_edge:
                 continue
             spans.append([int(start), int(end), int(pitch), int(ch), int(vel)])
-        for (ch, pitch), (vel, start) in self.active.items():
+        for (ch, pitch), (vel, start) in active_items:
             if pitch < pitch_low or pitch > pitch_high:
                 continue
             end = tick_now
