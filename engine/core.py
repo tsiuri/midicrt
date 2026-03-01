@@ -892,6 +892,8 @@ class MidiEngine:
                 bpm=float(self.state.bpm),
                 running=bool(self.state.running),
                 prev_running=bool(cur_running),
+                meter_estimate=str(tempo_snapshot.meter_estimate),
+                meter_confidence=float(tempo_snapshot.confidence),
             )
 
             if kind == "start":

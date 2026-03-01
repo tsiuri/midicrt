@@ -75,6 +75,39 @@ class MemoryCaptureManagerTest(unittest.TestCase):
             spans = sorted((s.start_tick, s.end_tick, s.pitch, s.velocity) for s in session.note_spans)
             self.assertEqual(spans, [(1, 4, 60, 100), (4, 8, 60, 70)])
 
+    def test_tempo_and_meter_segments_append_with_gates(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mgr = self._manager(tmp)
+            mgr.memory_start(tick=0, bpm=120.0, running=False)
+
+            # Session starts with an initial base segment.
+            mgr.on_transport(
+                tick=0,
+                bpm=120.0,
+                running=True,
+                prev_running=False,
+                meter_estimate="4/4",
+                meter_confidence=0.9,
+            )
+            # Suppressed: bpm delta below hysteresis threshold.
+            mgr.on_transport(tick=12, bpm=120.2, running=True, prev_running=True, meter_estimate="4/4", meter_confidence=0.9)
+            # Appended: bpm delta above threshold and enough tick spacing.
+            mgr.on_transport(tick=24, bpm=121.0, running=True, prev_running=True, meter_estimate="4/4", meter_confidence=0.9)
+            # Suppressed: same meter label.
+            mgr.on_transport(tick=30, bpm=121.0, running=True, prev_running=True, meter_estimate="4/4", meter_confidence=0.9)
+            # Suppressed: confidence too low.
+            mgr.on_transport(tick=36, bpm=121.6, running=True, prev_running=True, meter_estimate="3/4", meter_confidence=0.2)
+            # Appended: confident meter label change.
+            mgr.on_transport(tick=48, bpm=122.0, running=True, prev_running=True, meter_estimate="3/4", meter_confidence=0.95)
+
+            live = mgr.memory_get_current_display()
+            self.assertIsNotNone(live)
+            self.assertEqual([(seg.start_tick, seg.bpm) for seg in live.header.tempo_segments], [(0, 120.0), (24, 121.0), (36, 121.6), (48, 122.0)])
+            self.assertEqual(
+                [(seg.start_tick, seg.numerator, seg.denominator) for seg in live.header.time_signature_segments],
+                [(0, 4, 4), (48, 3, 4)],
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
