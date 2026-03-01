@@ -317,5 +317,29 @@
     "memory_export_dir": "captures/pianoroll_exp",
     "memory_library_dir": "",
     "cc_lane_max_ratio": 0.25
+  },
+  "pianoroll_perf": {
+    "enabled": true,
+    "frame_budget_ms": 16.67,
+    "ema_alpha": 0.12,
+    "hysteresis_up_frames": 5,
+    "hysteresis_down_frames": 24,
+    "tier1": {
+      "frame_ms": 15.5,
+      "miss_ratio": 0.12
+    },
+    "tier2": {
+      "frame_ms": 18.5,
+      "miss_ratio": 0.22
+    },
+    "tier3": {
+      "frame_ms": 24.0,
+      "miss_ratio": 0.4
+    },
+    "effects": {
+      "overlap_flash": true,
+      "row_fade": true,
+      "dotted_guides": true
+    }
   }
 }
