@@ -241,6 +241,8 @@ reference for future changes.
 - Page 13 (`#` / Shift+3): Voice Monitor.
 - Page 14 (`$` / Shift+4): Config editor.
 - Page 15 (`%` / Shift+5): Experimental time signature page.
+- Page 16 (`^` / Shift+6): Experimental Piano Roll (memory/live hybrid).
+- Page 17 (`&` / Shift+7): MIDI + audio-spectrum IMG2TXT visualizer.
 
 **Audio / Tuner**
 - `pages/tuner.py` uses aubio pitch; shares audio input with `pages/audiospectrum.py`.
@@ -515,3 +517,27 @@ If running in virtual mode:
 
 When using direct hardware input mode, `aseqsend` to `RtMidiIn Client` will not
 reach midicrt because no virtual input is active.
+
+## MIDI send helper CLI (preferred)
+
+Use the repository helper when asked to send MIDI from shell:
+
+- `./midisend` (wrapper)
+- `./scripts/midisend.py` (direct Python entry)
+
+Agent guidance:
+- Prefer `./midisend` over manual `aseqsend` byte strings for routine sends.
+- Use `./midisend list` first if destination port selection is unclear.
+
+Examples:
+- List ports and chosen default:
+  - `./midisend list`
+- Send note:
+  - `./midisend note C4 --ch 1 --vel 96 --dur-ms 140`
+- Send CC:
+  - `./midisend cc 74 100 --ch 2`
+- Send Program Change:
+  - `./midisend pc 12 --ch 1`
+- Send SysEx (auto-wraps `F0`/`F7` if omitted):
+  - `./midisend sysex 7D 6D 63 41 01 08`
+  - `./midisend sysex F0 7D 6D 63 40 10 F7`

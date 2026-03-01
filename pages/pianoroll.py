@@ -518,12 +518,12 @@ def draw(state):
         chars = []
         for cell in view["grid"][row]:
             v = cell.velocity
-            if v >= 100:
+            if v >= 96:
                 chars.append("█")
-            elif v >= 60:
+            elif v >= 48:
                 chars.append("▓")
             elif v > 0:
-                chars.append("░")
+                chars.append("▒")
             else:
                 chars.append(" ")
         draw_line(top + 1 + row, (label + "".join(chars).ljust(view["roll_cols"])[: view["roll_cols"]])[:cols])

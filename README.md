@@ -393,7 +393,7 @@ Legacy page/plugin event hooks now flow through a single engine path in `engine/
 
 Page/widget migration status (current):
 
-1. ✅ Page widget migration: complete for all built-in pages (0–15 now expose `build_widget(state)`).
+1. ✅ Page widget migration: complete for all built-in pages (0–17 now expose `build_widget(state)`).
 2. ✅ Pixel parity milestone #1: Piano Roll widget + pixel presentation (implemented).
 3. ✅ Core parity pages completed: Transport, Notes, and Event Log are on the widget/render pipeline.
 4. 🔄 Remaining migration effort is now integration hardening (engine/UI boundaries, tests, observer robustness), not new page ports.
@@ -496,6 +496,8 @@ Future roadmap entries should include both owner and rough estimate in days for 
 | 13 | Voice Monitor   | Per-channel polyphony        |
 | 14 | Config          | Interactive settings editor  |
 | 15 | TimeSig Exp     | Experimental meter estimate  |
+| 16 | Piano Roll Exp  | Memory/live hybrid roll page |
+| 17 | MIDI IMG2TXT    | MIDI + spectrum ASCII visuals |
 
 ## Plugins
 
@@ -558,7 +560,7 @@ F0  7D  6D  63  <ver>  <cmd>  [args...]  F7
 
 | Cmd  | Args     | Effect                                  |
 |------|----------|-----------------------------------------|
-| `01` | `<page>` | Switch to any loaded page ID (currently 0–15) |
+| `01` | `<page>` | Switch to any loaded page ID (current default build includes 0–17) |
 | `02` | `00`     | Wake / deactivate screensaver           |
 | `02` | `01`     | Force screensaver on immediately        |
 | `03` | `00`     | Disable page cycler                     |
@@ -607,6 +609,24 @@ with mido.open_output('GreenCRT Monitor') as p:
 "
 ```
 
+### MIDI send helper CLI (preferred)
+
+Use the repo helper for interactive/testing sends instead of hand-writing
+`aseqsend` byte strings each time:
+
+```bash
+./midisend list
+./midisend note C4 --ch 1 --vel 96 --dur-ms 140
+./midisend cc 74 100 --ch 2
+./midisend pc 12 --ch 1
+./midisend sysex 7D 6D 63 41 01 08
+```
+
+Notes:
+- `./midisend` resolves to `scripts/midisend.py`.
+- Default destination port is auto-detected (override with `--port` or `MIDISEND_PORT`).
+- `sysex` auto-wraps with `F0`/`F7` when omitted.
+
 ### zscreensaver.py — Screensaver
 
 Blanks the screen after a period of MIDI silence to prevent burn-in.
@@ -622,7 +642,7 @@ Global keys:
 
 - 0-9: switch pages 0–9 (0 is help)
 - t: switch to page 10 (Tuner)
-- ! / @ / # / $ / %: switch to pages 11 / 12 / 13 / 14 / 15
+- ! / @ / # / $ / % / ^ / &: switch to pages 11 / 12 / 13 / 14 / 15 / 16 / 17
 - q or Esc: quit
 
 Page-specific keys:
@@ -661,3 +681,12 @@ Page-specific keys:
   - , / .: device prev/next
   - 0: default device
   - r: refresh devices
+- Page 17 (MIDI IMG2TXT):
+  - `[`: lower block size (higher detail)
+  - `]`: raise block size (chunkier img2txt)
+  - c: cycle character ramps
+  - i: invert brightness mapping
+  - g / h: gamma down/up
+  - a: toggle audio-reactive processing on/off (MIDI-only mode when off)
+  - j / k: lower/raise Page 17 FPS cap
+  - u: toggle auto quality scaling

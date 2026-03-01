@@ -3,6 +3,7 @@ BACKGROUND = True
 PAGE_ID = 16
 PAGE_NAME = "Piano Roll Exp"
 
+import bisect
 import os
 import sys
 import time
@@ -81,6 +82,32 @@ _editor_source_session_id = ""
 _editor_revision_id = "r0"
 _editor_dirty = False
 
+# Session data cache — avoids deepcopy on every draw frame
+_session_cache: "SessionModel | None" = None
+_session_cache_id: str = ""
+_session_cache_t: float = 0.0
+_sessions_meta_cache: list = []
+_sessions_meta_cache_t: float = 0.0
+_SESSION_CACHE_TTL = 0.1    # 10 Hz max refresh (halves deepcopy rate; 100 ms active-note lag)
+
+# Derived-data cache: recomputed only when session or roll_cols changes.
+# These are O(events/spans) so must NOT run every 60Hz frame.
+_derived_session_id: str = ""
+_derived_roll_cols: int = 0
+_derived_metadata: list = []
+_derived_page_count: int = 1
+_derived_cc_tracks: list = []
+_derived_spans: list = []          # sorted (start, end, pitch, ch, vel) tuples
+_derived_span_starts: list = []   # parallel list of start_ticks for bisect
+_derived_max_span_dur: int = 0    # max (end-start) across all spans — bisect lower bound
+_derived_span_count: int = 0      # len(session.note_spans) at last derive — used to find newly-released notes
+_derived_cache_t: float = 0.0     # wall-clock time of last derived refresh
+_DERIVED_LIVE_TTL = 0.2           # re-derive at 5 Hz during live so recently-released notes stay visible
+
+# Rate-limit on_tick memory_status poll (5 Hz is plenty)
+_status_poll_t: float = 0.0
+_STATUS_POLL_TTL = 0.2
+
 
 def _engine():
     eng = getattr(mc, "ENGINE", None)
@@ -106,6 +133,119 @@ def _memory_get(session_id: str) -> SessionModel | None:
     except Exception:
         return None
 
+
+def _memory_get_current_display() -> "SessionModel | None":
+    """Lightweight live-session snapshot — shallow-copies only display-relevant fields,
+    skips the ever-growing events list entirely."""
+    eng = _engine()
+    if eng is None:
+        return None
+    try:
+        return eng.memory_get_current_display()
+    except Exception:
+        return None
+
+
+def _memory_get_ref(session_id: str) -> SessionModel | None:
+    """Direct reference to a finalized session — no deepcopy, safe for read-only display."""
+    eng = _engine()
+    if eng is None:
+        return None
+    try:
+        return eng.memory_get_ref(session_id)
+    except Exception:
+        return None
+
+
+def _get_cached_session(running: bool) -> "tuple[list[dict], SessionModel | None, bool]":
+    """Rate-limited session data fetch (max 20 Hz) with stale-on-stop protection."""
+    global _session_cache, _session_cache_id, _session_cache_t
+    global _sessions_meta_cache, _sessions_meta_cache_t
+    global _view_session_idx, _view_session_id
+
+    now = time.time()
+
+    # Refresh sessions list at TTL cadence.
+    if now - _sessions_meta_cache_t >= _SESSION_CACHE_TTL:
+        _sessions_meta_cache = _memory_list()
+        _sessions_meta_cache_t = now
+    sessions_meta = _sessions_meta_cache
+
+    if running:
+        # Live recording: use the lightweight display snapshot (skips events list).
+        if now - _session_cache_t >= _SESSION_CACHE_TTL or _session_cache_id != "current":
+            _session_cache = _memory_get_current_display()
+            _session_cache_id = "current"
+            _session_cache_t = now
+        if _session_cache is not None:
+            return sessions_meta, _session_cache, True
+        # Memory not capturing — fall through to show most-recent finalized session.
+
+    # Non-running: pick the selected (or most-recent) finalized session.
+    ids = [str(item.get("id", "")) for item in sessions_meta if str(item.get("id", ""))]
+    if not ids:
+        _view_session_idx = -1
+        _view_session_id = ""
+        _session_cache_id = ""
+        # Don't clear _session_cache: it may still hold the live snapshot while
+        # _finalize_session() races to add the new session to the index.
+        # Returning it keeps notes visible instead of a blank flash.
+        return sessions_meta, _session_cache, False
+
+    if _view_session_id and _view_session_id in ids:
+        _view_session_idx = ids.index(_view_session_id)
+    if _view_session_idx < 0 or _view_session_idx >= len(ids):
+        _view_session_idx = len(ids) - 1
+    _view_session_id = ids[_view_session_idx]
+
+    target_id = _view_session_id
+    if _session_cache_id != target_id:
+        # Finalized sessions are immutable — use a direct reference, no deepcopy.
+        _session_cache = _memory_get_ref(target_id)
+        _session_cache_id = target_id
+        _session_cache_t = now
+    return sessions_meta, _session_cache, False
+
+
+def _refresh_derived(session: "SessionModel | None", sessions_meta: list, roll_cols: int) -> None:
+    """Recompute O(events/spans) derived data and cache it.
+
+    Called only when session identity or roll_cols changes — never at 60 Hz.
+    """
+    global _derived_session_id, _derived_roll_cols, _derived_metadata
+    global _derived_page_count, _derived_cc_tracks
+    global _derived_spans, _derived_span_starts, _derived_max_span_dur, _derived_span_count, _derived_cache_t
+    if session is None:
+        _derived_session_id = ""
+        _derived_roll_cols = int(roll_cols)
+        _derived_metadata = _session_metadata(None, sessions_meta)
+        _derived_page_count = 1
+        _derived_cc_tracks = []
+        _derived_spans = []
+        _derived_span_starts = []
+        _derived_max_span_dur = 0
+        _derived_span_count = 0
+    else:
+        _derived_session_id = str(session.header.session_id)
+        _derived_roll_cols = int(roll_cols)
+        _derived_metadata = _session_metadata(session, sessions_meta)
+        _derived_page_count = _session_page_count(session, roll_cols)
+        _derived_cc_tracks = _session_cc_tracks(session)
+        # Pre-build sorted span list so _project_session_page can binary-search it.
+        spans = sorted(
+            ((int(s.start_tick), int(s.end_tick), int(s.pitch), int(s.channel), int(s.velocity))
+             for s in session.note_spans),
+            key=lambda t: t[0],
+        )
+        _derived_spans = spans
+        _derived_span_starts = [s[0] for s in spans]
+        _derived_max_span_dur = max((s[1] - s[0] for s in spans), default=0)
+        # Record how many spans were in note_spans at this derive time so
+        # _project_session_page can supplement with spans added since then.
+        _derived_span_count = len(session.note_spans)
+    _derived_cache_t = time.time()
+
+
 def _roll_cols_from_screen_cols(cols: int) -> int:
     return max(16, int(cols) - int(base.LEFT_MARGIN) - 2)
 
@@ -115,7 +255,7 @@ def _ticks_per_page(roll_cols: int) -> int:
     tpc = max(1, int(base.TICKS_PER_COL))
     bar_ticks = 24 * 4
     raw = max(1, int(roll_cols)) * tpc
-    page_ticks = (raw // bar_ticks) * bar_ticks
+    page_ticks = ((raw + bar_ticks - 1) // bar_ticks) * bar_ticks
     if page_ticks < bar_ticks:
         page_ticks = bar_ticks
     return int(page_ticks)
@@ -135,7 +275,7 @@ def _session_page_count(session: SessionModel, roll_cols: int) -> int:
     if session.note_spans:
         stop = max(stop, max(int(s.end_tick) for s in session.note_spans))
     if session.active_notes:
-        stop = max(stop, max(int(v[0]) for v in session.active_notes.values()))
+        stop = max(stop, max(int(v[-1][0]) for v in session.active_notes.values() if v))
     dur = max(1, stop - origin + int(base.TICKS_PER_COL))
     return max(1, (dur + page_ticks - 1) // page_ticks)
 
@@ -179,7 +319,10 @@ def _recent_overflow(session: SessionModel, pitch_low: int, pitch_high: int) -> 
     above = [r for r in recent if int(r[0]) > pitch_high]
     below = [r for r in recent if int(r[0]) < pitch_low]
 
-    for (ch, note), (_start, vel) in session.active_notes.items():
+    for (ch, note), stack in session.active_notes.items():
+        if not stack:
+            continue
+        _start, vel = stack[-1]
         if int(note) > pitch_high:
             above.append((int(note), int(ch), int(vel), now))
         elif int(note) < pitch_low:
@@ -305,18 +448,67 @@ def _project_session_page(
     page_start: int,
     page_end_excl: int,
     include_live_active: bool,
-) -> tuple[list[list[tuple[int, int, int]]], list[tuple[int, int, int, int, int]], int]:
+) -> tuple[list[list[tuple[int, int, int]]], list[tuple[int, int, int, int, int, int]], int]:
     tpc = max(1, int(base.TICKS_PER_COL))
     best_cols = [{} for _ in range(max(1, roll_cols))]
     spans_for_render = []
 
-    spans = [(s.start_tick, s.end_tick, s.pitch, s.channel, s.velocity) for s in session.note_spans]
+    # Use pre-built sorted span list from the derived cache; fall back to building it.
+    # The `not include_live_active` guard has been removed: the derived cache is now
+    # refreshed at 5 Hz (_DERIVED_LIVE_TTL = 0.2) even during live recording, so it
+    # is fresh enough to binary-search.  Active notes are still appended below.
+    use_derived = (_derived_session_id == session.header.session_id and _derived_span_starts)
+    if use_derived:
+        # Binary-search upper bound: skip spans starting at or after page_end_excl.
+        upper = bisect.bisect_left(_derived_span_starts, page_end_excl)
+        # Binary-search lower bound: skip spans that ended before page_start.
+        # Any span with start < (page_start - max_span_dur) is guaranteed to end before page_start.
+        lower_tick = page_start - max(0, _derived_max_span_dur)
+        lower = bisect.bisect_left(_derived_span_starts, lower_tick) if lower_tick > 0 else 0
+        raw_spans = _derived_spans[lower:upper]
+    elif _derived_session_id == session.header.session_id:
+        raw_spans = _derived_spans
+    else:
+        raw_spans = [(int(s.start_tick), int(s.end_tick), int(s.pitch), int(s.channel), int(s.velocity))
+                     for s in session.note_spans]
+    # Always supplement with spans added to note_spans since the last derive.
+    # This covers:
+    #   • just-released notes during live recording (was gated on include_live_active before)
+    #   • notes flushed from active_notes by _finalize_session() on transport stop
+    # When _derived_span_count == len(session.note_spans) the slice is empty, zero cost.
+    new_since_derive = [
+        (int(s.start_tick), int(s.end_tick), int(s.pitch), int(s.channel), int(s.velocity))
+        for s in session.note_spans[_derived_span_count:]
+    ]
     if include_live_active:
         now_tick = int(max(page_start, _last_tick))
-        for (ch, note), (start, vel) in session.active_notes.items():
-            spans.append((int(start), int(now_tick), int(note), int(ch), int(vel)))
+        extra = [
+            (int(start), int(now_tick), int(note), int(ch), int(vel))
+            for (ch, note), stack in session.active_notes.items()
+            if stack
+            for start, vel in (stack[-1],)
+        ]
+        raw_spans = list(raw_spans) + new_since_derive + extra
+    elif new_since_derive:
+        raw_spans = list(raw_spans) + new_since_derive
 
-    for start, end, pitch, ch, vel in spans:
+    # Show notes that are still in active_notes but we're not in live mode —
+    # this happens in the brief window after transport stop while _finalize_session()
+    # hasn't run yet (snapshot still has open active_notes; finalized session clears them).
+    # Render them as closed at the last known tick so they don't vanish at stop time.
+    # For finalized sessions active_notes is always empty so this is a no-op.
+    if not include_live_active and session.active_notes:
+        stopped_at = int(_last_tick)
+        stopped_notes = [
+            (int(start), stopped_at, int(note), int(ch), int(vel))
+            for (ch, note), stack in session.active_notes.items()
+            if stack
+            for start, vel in (stack[-1],)
+        ]
+        if stopped_notes:
+            raw_spans = list(raw_spans) + stopped_notes
+
+    for start, end, pitch, ch, vel in raw_spans:
         pitch = int(pitch)
         ch = int(ch)
         vel = int(vel)
@@ -344,7 +536,9 @@ def _project_session_page(
             if prev is None or vel >= int(prev[1]):
                 best_cols[c][pitch] = (ch, vel)
 
-        spans_for_render.append((clip_s, clip_e + 1, pitch, ch, vel))
+        # Preserve original start tick (s) so compositor overlap detection can
+        # distinguish true in-window onsets from spans clipped at page_start.
+        spans_for_render.append((clip_s, clip_e + 1, pitch, ch, vel, s))
 
     columns = [[(p, ch, vel) for p, (ch, vel) in col.items()] for col in best_cols]
     return columns, spans_for_render, int(len(session.active_notes) if include_live_active else 0)
@@ -399,18 +593,21 @@ def _session_metadata(session: SessionModel | None, sessions_meta: list[dict]) -
 def _editor_projection(session: SessionModel | None, editor_state: dict, total_rows: int, build_grid: bool) -> dict:
     roll_cols = int(editor_state.get("roll_cols", 16))
     if session is None:
+        note_rows = max(1, total_rows - 2)
+        base.pitch_high = base.pitch_low + note_rows - 1
+        pitches = list(range(base.pitch_high, base.pitch_low - 1, -1))
         return {
             "columns": [[] for _ in range(max(1, roll_cols))],
             "spans": [],
             "cc_lanes": [],
             "cc_lines": [],
-            "pitches": [],
-            "grid": [],
-            "note_rows": max(1, total_rows - 2),
+            "pitches": pitches,
+            "grid": [[PianoRollCell() for _ in range(roll_cols)] for _ in pitches],
+            "note_rows": note_rows,
             "active_count": 0,
         }
 
-    cc_tracks = _session_cc_tracks(session)
+    cc_tracks = _derived_cc_tracks if _derived_cc_tracks is not None else _session_cc_tracks(session)
     cc_rows_cap = int(max(0.0, min(0.5, float(_CC_LANE_MAX_RATIO))) * float(total_rows))
     cc_rows = min(len(cc_tracks), max(0, cc_rows_cap)) if cc_tracks else 0
     note_rows = max(1, total_rows - 1 - cc_rows)
@@ -482,24 +679,34 @@ def _build_memory_view(state: dict, build_grid: bool) -> dict:
     running = bool(state.get("running", False))
     tick_now = int(state.get("tick", _last_tick))
 
-    sessions_meta = _memory_list()
-    session, live = _selected_session(running=running)
+    sessions_meta, session, live = _get_cached_session(running)
     if _ui_mode == _MODE_MEM_EDIT and _editor is not None:
         staged = _editor_current_session()
         if staged is not None:
             session = staged
             live = False
 
+    # Refresh derived cache when session identity, roll_cols, or (for live) time changes.
+    now_t = time.time()
+    sid_now = str(session.header.session_id) if session is not None else ""
+    need_derive = (
+        sid_now != _derived_session_id
+        or roll_cols != _derived_roll_cols
+        or (live and now_t - _derived_cache_t >= _DERIVED_LIVE_TTL)
+    )
+    if need_derive:
+        _refresh_derived(session, sessions_meta, roll_cols)
+
     page_idx = 0
-    page_count = 1
-    page_start = int(tick_now)
-    page_end_excl = page_start + max(1, roll_cols * int(base.TICKS_PER_COL))
+    page_count = _derived_page_count
+    page_start = 0   # safe fallback — overwritten below when session is not None
+    page_end_excl = max(1, roll_cols * int(base.TICKS_PER_COL))
     timeline = " " * roll_cols
 
     if session is not None:
         page_ticks = _ticks_per_page(roll_cols)
         page_origin = _session_page_origin(int(session.header.start_tick))
-        page_count = _session_page_count(session, roll_cols)
+        page_count = _derived_page_count
         if live:
             page_idx = max(0, (tick_now - page_origin) // page_ticks)
             _view_page_idx = page_idx
@@ -542,7 +749,7 @@ def _build_memory_view(state: dict, build_grid: bool) -> dict:
     header_right = f"{mode_label.upper()} S{sess_pos}/{max(1, len(sessions_meta))} P{page_idx + 1}/{page_count}"
     header_left = f"--- {PAGE_NAME} ({mode_label}) ---"
 
-    metadata_lines = _session_metadata(session, sessions_meta)
+    metadata_lines = list(_derived_metadata)
 
     editor_lines: list[str] = []
     if _ui_mode == _MODE_MEM_EDIT:
@@ -790,11 +997,15 @@ def _navigate_page(step: int) -> None:
     if not _view_session_id:
         _set_status("No session selected", "error")
         return
-    sess = _memory_get(_view_session_id)
-    if sess is None:
-        _set_status("Session unavailable", "error")
-        return
-    page_count = max(1, _session_page_count(sess, _last_roll_cols))
+    # Use derived cache when available to avoid a session fetch.
+    if _derived_session_id == _view_session_id and _derived_page_count > 0:
+        page_count = _derived_page_count
+    else:
+        sess = _memory_get_ref(_view_session_id)
+        if sess is None:
+            _set_status("Session unavailable", "error")
+            return
+        page_count = max(1, _session_page_count(sess, _last_roll_cols))
     _view_page_idx = max(0, min(page_count - 1, int(_view_page_idx) + int(step)))
     _set_status(f"Page {_view_page_idx + 1}/{page_count}")
 
@@ -839,9 +1050,20 @@ def _export_session_midi() -> None:
         _set_status("Export failed: no session selected", "error")
         return
     try:
-        export_root = _MEMORY_EXPORT_DIR if os.path.isabs(_MEMORY_EXPORT_DIR) else os.path.join(os.getcwd(), _MEMORY_EXPORT_DIR)
-        os.makedirs(export_root, exist_ok=True)
-        out_path = os.path.join(export_root, f"manual-export-{session.header.session_id}.mid")
+        # Use the engine's per-boot MIDI dir so manual exports land alongside auto-exports.
+        eng = _engine()
+        if eng is not None:
+            try:
+                midi_root = eng.memory_midi_dir()
+            except Exception:
+                midi_root = None
+        else:
+            midi_root = None
+        if not midi_root:
+            export_root = _MEMORY_EXPORT_DIR if os.path.isabs(_MEMORY_EXPORT_DIR) else os.path.join(os.getcwd(), _MEMORY_EXPORT_DIR)
+            midi_root = export_root
+        os.makedirs(midi_root, exist_ok=True)
+        out_path = os.path.join(midi_root, f"manual-export-{session.header.session_id}.mid")
         mid = midi_io.export_session_midi(session, out_path)
         if not mid:
             raise RuntimeError("no MIDI events to export")
@@ -880,6 +1102,9 @@ def _import_library_session() -> None:
 
 def on_tick(state):
     global _last_running, _last_tick
+    global _view_session_id, _view_session_idx, _session_cache_id, _session_cache_t
+    global _sessions_meta_cache_t, _derived_cache_t, _derived_session_id
+    global _session_cache
 
     base.on_tick(state)
 
@@ -887,17 +1112,44 @@ def on_tick(state):
     tick_now = int(state.get("tick", _last_tick))
     _last_tick = tick_now
 
-    status = {}
-    eng = _engine()
-    if eng is not None:
-        try:
-            status = eng.memory_status()
-        except Exception:
-            status = {}
-    if status.get("armed") and status.get("current_id"):
-        _set_status("REC")
-    elif _ui_mode != _MODE_LIVE and not _memory_status:
-        _set_status("MEM")
+    # Detect transport stop: reset session selection so we show the newly
+    # finalized session instead of whatever was browsed before recording.
+    if _last_running and not running and _ui_mode != _MODE_LIVE:
+        # Grab a fresh snapshot right now to capture notes released in the
+        # last SESSION_CACHE_TTL window that may not yet be in _session_cache.
+        # Only overwrites if _current is still live (before _finalize_session runs).
+        _snap = _memory_get_current_display()
+        if _snap is not None:
+            _session_cache = _snap
+        _view_session_id = ""
+        _view_session_idx = -1
+        _session_cache_id = ""
+        _session_cache_t = 0.0
+        # Force immediate metadata refresh so the just-finalized recording
+        # is selectable on the first post-stop frame.
+        _sessions_meta_cache_t = 0.0
+        _derived_cache_t = 0.0
+        # Reset derived ID so _refresh_derived() re-runs on whatever session
+        # is shown (snapshot or finalized), picking up any spans added since
+        # the last live derive and ensuring _derived_span_count is current.
+        _derived_session_id = ""
+
+    # Rate-limit memory_status lock acquisition to 5 Hz.
+    global _status_poll_t
+    now_t = time.time()
+    if now_t - _status_poll_t >= _STATUS_POLL_TTL:
+        _status_poll_t = now_t
+        status = {}
+        eng = _engine()
+        if eng is not None:
+            try:
+                status = eng.memory_status()
+            except Exception:
+                status = {}
+        if status.get("armed") and status.get("current_id"):
+            _set_status("REC")
+        elif _ui_mode != _MODE_LIVE and not _memory_status:
+            _set_status("MEM")
 
     _last_running = running
 
@@ -907,11 +1159,22 @@ def keypress(ch):
 
     s = str(ch)
     if s.lower() == _MEMORY_TOGGLE_KEY:
+        eng = _engine()
         if _ui_mode == _MODE_LIVE:
             _set_mode(_MODE_MEM_BROWSER)
-            _set_status("Mode: MEM_BROWSER")
+            if eng is not None:
+                try:
+                    eng.memory_start()
+                except Exception:
+                    pass
+            _set_status("Mode: MEM_BROWSER (armed)")
         else:
             _set_mode(_MODE_LIVE)
+            if eng is not None:
+                try:
+                    eng.memory_stop()
+                except Exception:
+                    pass
             _set_status("Mode: LIVE")
         return True
 
@@ -935,27 +1198,19 @@ def keypress(ch):
     if _ui_mode == _MODE_LIVE:
         return bool(base.keypress(ch))
 
-    if s == "," or (ch.is_sequence and ch.name == "KEY_LEFT" and _ui_mode == _MODE_MEM_BROWSER):
+    if s == ",":
         _navigate_session(-1)
         return True
-    if s == "." or (ch.is_sequence and ch.name == "KEY_RIGHT" and _ui_mode == _MODE_MEM_BROWSER):
+    if s == ".":
         _navigate_session(1)
         return True
 
-    if ch.is_sequence and ch.name == "KEY_PPAGE":
+    if ch.is_sequence and ch.name in {"KEY_LEFT", "KEY_PPAGE"}:
         _navigate_page(-1)
         return True
-    if ch.is_sequence and ch.name == "KEY_NPAGE":
+    if ch.is_sequence and ch.name in {"KEY_RIGHT", "KEY_NPAGE"}:
         _navigate_page(1)
         return True
-
-    if _ui_mode in {_MODE_MEM_EDIT, _MODE_MEM_PLAYBACK}:
-        if ch.is_sequence and ch.name == "KEY_LEFT":
-            _navigate_page(-1)
-            return True
-        if ch.is_sequence and ch.name == "KEY_RIGHT":
-            _navigate_page(1)
-            return True
 
     if _ui_mode == _MODE_MEM_EDIT:
         if ch.is_sequence and ch.name == "KEY_ESCAPE":
@@ -1030,6 +1285,25 @@ def keypress(ch):
     return bool(base.keypress(ch))
 
 
+def compositor_cache_key() -> str | None:
+    """Return an opaque key for the current render state.
+
+    midicrt's draw loop calls this (if present) to decide whether the
+    compositor page buffer can be reused instead of re-rendered.
+
+    Returns None to disable caching (e.g., during live recording where
+    the display changes every tick).
+    """
+    if _ui_mode == _MODE_LIVE:
+        return None   # live view changes every tick
+    # Read the engine runtime flag directly so cache behavior stays correct even
+    # if on_tick() hasn't advanced _last_running yet.
+    if bool(getattr(mc, "running", False)) or _last_running:
+        return None   # live session content changes every tick even in MEM_BROWSER mode
+    # Include the derived_cache_t so we invalidate once after _refresh_derived completes.
+    return f"{_ui_mode}:{_view_session_id}:{_view_page_idx}:{_last_roll_cols}:{_derived_cache_t}"
+
+
 def build_widget(state):
     use_sparse = state.get("render_backend") == "compositor"
     if _ui_mode == _MODE_LIVE:
@@ -1067,12 +1341,12 @@ def draw(state):
         chars = []
         for cell in view["grid"][row]:
             v = int(cell.velocity)
-            if v >= 100:
+            if v >= 96:
                 chars.append("#")
-            elif v >= 60:
+            elif v >= 48:
                 chars.append("+")
             elif v > 0:
-                chars.append(".")
+                chars.append("*")
             else:
                 chars.append(" ")
         draw_line(top + 1 + row, (label + "".join(chars).ljust(view["roll_cols"])[: view["roll_cols"]])[:cols])

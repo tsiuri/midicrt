@@ -209,6 +209,15 @@ except Exception:
     pass
 if not isinstance(MODULE_POLICIES.get("legacy.event_shim"), dict):
     MODULE_POLICIES["legacy.event_shim"] = {"enabled": True, "policy": "event_driven", "interval_hz": 10.0}
+_zh_pol = MODULE_POLICIES.get("plugins.zharmony")
+if not isinstance(_zh_pol, dict):
+    MODULE_POLICIES["plugins.zharmony"] = {"enabled": True, "policy": "event_driven", "interval_hz": 60.0}
+else:
+    # Chord/key detection must ingest every note event; interval throttling drops notes.
+    _zh_pol["enabled"] = bool(_zh_pol.get("enabled", True))
+    _zh_pol["policy"] = "event_driven"
+    _zh_pol["interval_hz"] = float(_zh_pol.get("interval_hz", 60.0))
+    MODULE_POLICIES["plugins.zharmony"] = _zh_pol
 try:
     save_section("core", {
         "fps": float(FPS),
@@ -453,6 +462,7 @@ def handle_engine_event(event, msg: mido.Message):
 sysex_status = ""       # last sysex command summary, displayed in footer
 sysex_status_time = 0.0
 fps_status = ""         # rolling fps text displayed in footer
+footer_status_text = "" # latest transport/status text (moved to bottom footer area)
 _scheduler_health_status = ""
 
 # ---------------------------------------------------------------------
@@ -673,6 +683,56 @@ def _ui_loop_body():
         state = plugin_state_dict()
         _pt0 = _pt("snapshot", _pt0)
 
+        # --- COMPOSITOR WHOLE-FRAME SKIP ---
+        # When page content + transport state are unchanged, skip all rendering.
+        # fb0 retains the last flushed frame without re-writing.
+        page = PAGES.get(current_page)
+        _comp_skip_frame = False
+        if _compositor is not None and page is not None and current_page != 1:
+            try:
+                _ck_fn_skip = getattr(page, "compositor_cache_key", None)
+                _skip_key = _ck_fn_skip() if callable(_ck_fn_skip) else None
+                if _skip_key is not None:
+                    _full_frame_key_now = (
+                        _skip_key,
+                        bool(snapshot.get("running", False)),
+                        int(snapshot.get("bar_counter", 0)),
+                        int(snapshot.get("bpm", 0.0)),
+                        int(snapshot.get("tick_counter", 0)) // 24,
+                        bool(sysex_status and (time.time() - sysex_status_time) < 3.0),
+                    )
+                    _full_age = time.monotonic() - getattr(ui_loop, "_full_frame_t", 0.0)
+                    if (_full_frame_key_now == getattr(ui_loop, "_full_frame_key", None)
+                            and _full_age < 0.05):
+                        _comp_skip_frame = True
+            except Exception:
+                pass
+
+        if _comp_skip_frame:
+            if page and hasattr(page, "on_tick"):
+                try:
+                    page.on_tick(state)
+                except Exception:
+                    pass
+            if _prof_enabled:
+                _pt("total", _frame_t0)
+                _prof_n += 1
+                _now_prof = time.monotonic()
+                if _now_prof - _prof_last_dump >= _PROF_INTERVAL:
+                    _prof_last_dump = _now_prof
+                    lines = [f"frames={_prof_n}  page={current_page}"]
+                    for k, v in sorted(_prof_accum.items(), key=lambda x: -x[1]):
+                        lines.append(f"  {k:<14s}: {v/_prof_n*1000:.2f}ms")
+                    try:
+                        with open("/tmp/midicrt_perf.txt", "w") as _pf:
+                            _pf.write("\n".join(lines) + "\n")
+                    except Exception:
+                        pass
+                    _prof_accum.clear()
+                    _prof_n = 0
+            time.sleep(max(0, _frame_budget - (time.monotonic() - _frame_t0)))
+            continue
+
         # --- HEADER (row 0) — scrolling marquee when wider than screen
         _now = time.time()
         # page_titles only changes when PAGES changes (rare) — cache join + doubled string.
@@ -742,19 +802,19 @@ def _ui_loop_body():
         _frame_now = time.monotonic()
         _frame_dt = _frame_now - getattr(ui_loop, "_frame_last_t", _frame_now)
         ui_loop._frame_last_t = _frame_now
-        global fps_status
+        global fps_status, footer_status_text
         fps_status = f"fps:{1.0/_frame_dt:.1f}" if _frame_dt > 0 else "fps:--"
+        footer_status_text = str(ui_snapshot.get("status_text", "") or "")
         footer_right_parts = [p for p in (fps_status, _scheduler_health_status) if p]
         if sysex_status and (time.time() - sysex_status_time) < 3.0:
             footer_right_parts.append(sysex_status)
         ui_snapshot["fps_status"] = fps_status
         ui_snapshot["footer"] = {
-            "left": ui_snapshot.get("status_text", ""),
+            "left": footer_status_text,
             "right": " | ".join(footer_right_parts),
         }
-        footer_widget = build_footer_widget(ui_snapshot)
-        footer_rendered = _ui_line_renderer.render(footer_widget, Frame(cols=SCREEN_COLS, rows=1))
-        draw_line(2, footer_rendered[0] if footer_rendered else "")
+        # Keep row 2 clear; footer/status now lives in the bottom loopprogress meter.
+        draw_line(2, "")
 
         _pt0 = _pt("footer", _pt0)
         # --- SCREENSAVER CHECK: skip all drawing if active
@@ -769,13 +829,13 @@ def _ui_loop_body():
             continue
 
         # --- PAGE CONTENT (start row 3)
-        page = PAGES.get(current_page)
         if page and hasattr(page, "on_tick"):
             try:
                 page.on_tick(state)
             except Exception:
                 pass
-        _use_notes_page_cache = False
+        _content_cache_hit = False
+        _used_notes_page_cache = False
         if _compositor is not None and current_page == 1:
             cache = getattr(ui_loop, "_notes_page_cache", None)
             cache_next = getattr(ui_loop, "_notes_page_next_t", 0.0)
@@ -786,11 +846,37 @@ def _ui_loop_body():
                     w_px = cache.shape[1]
                     if w_px == _compositor.comp._buf.shape[1]:
                         _compositor.comp._buf[y0_px:y0_px + h_px, :w_px] = cache
-                        _use_notes_page_cache = True
+                        _content_cache_hit = True
+                        _used_notes_page_cache = True
                 except Exception:
-                    _use_notes_page_cache = False
+                    _content_cache_hit = False
+                    _used_notes_page_cache = False
 
-        if not _use_notes_page_cache and page:
+        # Generic compositor page-content cache: pages can expose compositor_cache_key()
+        # to skip re-rendering when their content hasn't changed.
+        # A max TTL of 200ms ensures the display refreshes at least 5 Hz even for static content.
+        _PAGE_CACHE_MAX_AGE = 0.2
+        if not _content_cache_hit and _compositor is not None and page and current_page != 1:
+            try:
+                cache_key_fn = getattr(page, "compositor_cache_key", None)
+                if callable(cache_key_fn):
+                    new_key = cache_key_fn()
+                    cache_age = time.monotonic() - getattr(ui_loop, "_page_cache_t", 0.0)
+                    if (new_key is not None
+                            and new_key == getattr(ui_loop, "_page_cache_key", None)
+                            and cache_age < _PAGE_CACHE_MAX_AGE):
+                        cached_buf = getattr(ui_loop, "_page_cache_buf", None)
+                        if cached_buf is not None:
+                            y0_px = 3 * _compositor.comp.char_h
+                            h_px = cached_buf.shape[0]
+                            w_px = cached_buf.shape[1]
+                            if w_px == _compositor.comp._buf.shape[1]:
+                                _compositor.comp._buf[y0_px:y0_px + h_px, :w_px] = cached_buf
+                                _content_cache_hit = True
+            except Exception:
+                pass
+
+        if not _content_cache_hit and page:
             try:
                 content_rows = max(0, SCREEN_ROWS - 3)
                 if hasattr(page, "build_widget"):
@@ -813,12 +899,29 @@ def _ui_loop_body():
                         draw_line(3 + idx, line)
             except Exception as e:
                 draw_line(3, f"[Error {current_page}] {e}")
-        elif not _use_notes_page_cache:
+        elif not _content_cache_hit:
             draw_line(3, f"No page loaded for {current_page}")
 
         _pt0 = _pt("page", _pt0)
+
+        # Save generic compositor page-content cache after a fresh render.
+        if not _content_cache_hit and _compositor is not None and page and current_page != 1:
+            try:
+                cache_key_fn = getattr(page, "compositor_cache_key", None)
+                if callable(cache_key_fn):
+                    new_key = cache_key_fn()
+                    if new_key is not None:
+                        y0_px = 3 * _compositor.comp.char_h
+                        h_px = max(0, SCREEN_ROWS - 3) * _compositor.comp.char_h
+                        y1_px = min(_compositor.comp._buf.shape[0], y0_px + h_px)
+                        ui_loop._page_cache_buf = _compositor.comp._buf[y0_px:y1_px, :].copy()
+                        ui_loop._page_cache_key = new_key
+                        ui_loop._page_cache_t = time.monotonic()
+            except Exception:
+                pass
+
         # --- PLUGIN VISUALS (respect y_offset)
-        if _do_plugin_draw and not _use_notes_page_cache:
+        if _do_plugin_draw and not _used_notes_page_cache:
             now_plugins = time.monotonic()
             if (
                 now_plugins >= getattr(ui_loop, "_plugin_cache_next_t", 0.0)
@@ -846,7 +949,7 @@ def _ui_loop_body():
                     draw_line(row_idx, row_text)
 
         _pt0 = _pt("plugins", _pt0)
-        if _compositor is not None and current_page == 1 and not _use_notes_page_cache:
+        if _compositor is not None and current_page == 1 and not _used_notes_page_cache:
             try:
                 y0_px = 3 * _compositor.comp.char_h
                 h_px = max(0, SCREEN_ROWS - 3) * _compositor.comp.char_h
@@ -905,8 +1008,54 @@ def _ui_loop_body():
                     roll_payload=getattr(ui_loop, "_notes_badge_roll", None),
                 )
             _pt0 = _pt("badge", _pt0)
-            _compositor.frame_flush()
-            _pt0 = _pt("flush", _pt0)
+            _do_flush = True
+            # Optional per-page flush hint: skip redundant framebuffer flushes
+            # when content is unchanged, but enforce a max interval safety net.
+            if page is not None:
+                try:
+                    _fh_fn = getattr(page, "compositor_flush_hint", None)
+                    if callable(_fh_fn):
+                        _hint = _fh_fn()
+                        _hint_dirty = True
+                        _hint_max_interval = 0.0
+                        if isinstance(_hint, dict):
+                            _hint_dirty = bool(_hint.get("dirty", True))
+                            _hint_max_interval = float(_hint.get("max_interval", 0.0))
+                        elif isinstance(_hint, (tuple, list)):
+                            if len(_hint) >= 1:
+                                _hint_dirty = bool(_hint[0])
+                            if len(_hint) >= 2:
+                                _hint_max_interval = float(_hint[1])
+                        elif isinstance(_hint, bool):
+                            _hint_dirty = bool(_hint)
+                        _now_flush = time.monotonic()
+                        _last_flush = float(getattr(ui_loop, "_compositor_last_flush_t", 0.0))
+                        if (not _hint_dirty) and _hint_max_interval > 0.0 and (_now_flush - _last_flush) < _hint_max_interval:
+                            _do_flush = False
+                except Exception:
+                    _do_flush = True
+            if _do_flush:
+                _compositor.frame_flush()
+                ui_loop._compositor_last_flush_t = time.monotonic()
+                _pt0 = _pt("flush", _pt0)
+            # Save whole-frame compositor cache key so subsequent frames can be skipped.
+            if page is not None and current_page != 1:
+                try:
+                    _ck_fn_ff = getattr(page, "compositor_cache_key", None)
+                    if callable(_ck_fn_ff):
+                        _fk_ff = _ck_fn_ff()
+                        if _fk_ff is not None:
+                            ui_loop._full_frame_key = (
+                                _fk_ff,
+                                bool(snapshot.get("running", False)),
+                                int(snapshot.get("bar_counter", 0)),
+                                int(snapshot.get("bpm", 0.0)),
+                                int(snapshot.get("tick_counter", 0)) // 24,
+                                bool(sysex_status and (time.time() - sysex_status_time) < 3.0),
+                            )
+                            ui_loop._full_frame_t = time.monotonic()
+                except Exception:
+                    pass
         else:
             sys.stdout.flush()
         if _prof_enabled:
@@ -1487,6 +1636,9 @@ def keyboard_listener():
                 continue
             elif key == "^":
                 switch_page(16)
+                continue
+            elif key == "&":
+                switch_page(17)
                 continue
             elif key.lower() == "t":
                 switch_page(10)

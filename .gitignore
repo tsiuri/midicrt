@@ -16,6 +16,8 @@ midicrt_autoconnect.log
 sysex.log
 sysex.d/
 vars.txt
+*.mid
+*.MID
 
 # Duplicate / lowercase alias
 agents.md

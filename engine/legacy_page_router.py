@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -12,15 +13,24 @@ class LegacyPageRouter:
     midi_activity_handler: Callable[[Any], None] | None = None
     enabled: bool = True
 
-    _MIDI_BG_KINDS = {"note_on", "note_off", "control_change", "program_change"}
-    _bg_tick_div: int = 0  # counts clock ticks; on_tick fired every 5th (~24 Hz at 300 BPM)
+    _MIDI_BG_KINDS = {
+        "note_on",
+        "note_off",
+        "control_change",
+        "program_change",
+        "start",
+        "continue",
+        "stop",
+    }
+    _bg_tick_hz: float = 24.0
+    _bg_tick_last_ts: float = 0.0
 
     def route(self, event: dict[str, Any]) -> None:
         if not self.enabled or not callable(self.pages_provider):
             return
         kind = str(event.get("kind", ""))
         msg = event.get("raw")
-        # Only fetch pages dict when we actually need it (note/CC/clock, not active_sensing etc.)
+        # Only fetch pages dict when we actually need it.
         if kind != "clock" and (msg is None or kind not in self._MIDI_BG_KINDS):
             return
         if not hasattr(self, "_pages_cache") or self._pages_cache is None:
@@ -32,11 +42,19 @@ class LegacyPageRouter:
         current_page = int(self.current_page_provider() if callable(self.current_page_provider) else -1)
 
         if kind == "clock":
-            self._bg_tick_div = (self._bg_tick_div + 1) % 5
-            if self._bg_tick_div == 0:
-                self._route_background_ticks(pages, current_page)
+            self._maybe_route_background_ticks(pages, current_page)
         if msg is not None and kind in self._MIDI_BG_KINDS:
             self._route_midi_handlers(pages, current_page, msg)
+            # Keep BACKGROUND pages responsive even when transport clocks are sparse.
+            self._maybe_route_background_ticks(pages, current_page)
+
+    def _maybe_route_background_ticks(self, pages: dict[int, Any], current_page: int) -> None:
+        hz = max(1.0, float(self._bg_tick_hz))
+        now = time.monotonic()
+        if (now - float(self._bg_tick_last_ts)) < (1.0 / hz):
+            return
+        self._bg_tick_last_ts = now
+        self._route_background_ticks(pages, current_page)
 
     def _route_background_ticks(self, pages: dict[int, Any], current_page: int) -> None:
         plugin_state = None

@@ -1,0 +1,1010 @@
+{
+  "_seq": 48,
+  "active_notes": {},
+  "cc_events": [],
+  "cc_order": [],
+  "events": [
+    {
+      "channel": 1,
+      "control": null,
+      "kind": "note_on",
+      "note": 48,
+      "pitch": null,
+      "pressure": null,
+      "program": null,
+      "seq": 1,
+      "source": "input",
+      "tick": 2,
+      "value": null,
+      "velocity": 64
+    },
+    {
+      "channel": 2,
+      "control": null,
+      "kind": "note_on",
+      "note": 74,
+      "pitch": null,
+      "pressure": null,
+      "program": null,
+      "seq": 2,
+      "source": "input",
+      "tick": 2,
+      "value": null,
+      "velocity": 64
+    },
+    {
+      "channel": 1,
+      "control": null,
+      "kind": "note_off",
+      "note": 48,
+      "pitch": null,
+      "pressure": null,
+      "program": null,
+      "seq": 3,
+      "source": "input",
+      "tick": 14,
+      "value": null,
+      "velocity": 0
+    },
+    {
+      "channel": 1,
+      "control": null,
+      "kind": "note_on",
+      "note": 48,
+      "pitch": null,
+      "pressure": null,
+      "program": null,
+      "seq": 4,
+      "source": "input",
+      "tick": 14,
+      "value": null,
+      "velocity": 64
+    },
+    {
+      "channel": 2,
+      "control": null,
+      "kind": "note_off",
+      "note": 74,
+      "pitch": null,
+      "pressure": null,
+      "program": null,
+      "seq": 5,
+      "source": "input",
+      "tick": 14,
+      "value": null,
+      "velocity": 0
+    },
+    {
+      "channel": 2,
+      "control": null,
+      "kind": "note_on",
+      "note": 48,
+      "pitch": null,
+      "pressure": null,
+      "program": null,
+      "seq": 6,
+      "source": "input",
+      "tick": 14,
+      "value": null,
+      "velocity": 64
+    },
+    {
+      "channel": 1,
+      "control": null,
+      "kind": "note_off",
+      "note": 48,
+      "pitch": null,
+      "pressure": null,
+      "program": null,
+      "seq": 7,
+      "source": "input",
+      "tick": 26,
+      "value": null,
+      "velocity": 0
+    },
+    {
+      "channel": 1,
+      "control": null,
+      "kind": "note_on",
+      "note": 48,
+      "pitch": null,
+      "pressure": null,
+      "program": null,
+      "seq": 8,
+      "source": "input",
+      "tick": 26,
+      "value": null,
+      "velocity": 64
+    },
+    {
+      "channel": 2,
+      "control": null,
+      "kind": "note_off",
+      "note": 48,
+      "pitch": null,
+      "pressure": null,
+      "program": null,
+      "seq": 9,
+      "source": "input",
+      "tick": 26,
+      "value": null,
+      "velocity": 0
+    },
+    {
+      "channel": 2,
+      "control": null,
+      "kind": "note_on",
+      "note": 54,
+      "pitch": null,
+      "pressure": null,
+      "program": null,
+      "seq": 10,
+      "source": "input",
+      "tick": 26,
+      "value": null,
+      "velocity": 64
+    },
+    {
+      "channel": 1,
+      "control": null,
+      "kind": "note_off",
+      "note": 48,
+      "pitch": null,
+      "pressure": null,
+      "program": null,
+      "seq": 11,
+      "source": "input",
+      "tick": 38,
+      "value": null,
+      "velocity": 0
+    },
+    {
+      "channel": 1,
+      "control": null,
+      "kind": "note_on",
+      "note": 48,
+      "pitch": null,
+      "pressure": null,
+      "program": null,
+      "seq": 12,
+      "source": "input",
+      "tick": 38,
+      "value": null,
+      "velocity": 64
+    },
+    {
+      "channel": 2,
+      "control": null,
+      "kind": "note_off",
+      "note": 54,
+      "pitch": null,
+      "pressure": null,
+      "program": null,
+      "seq": 13,
+      "source": "input",
+      "tick": 38,
+      "value": null,
+      "velocity": 0
+    },
+    {
+      "channel": 2,
+      "control": null,
+      "kind": "note_on",
+      "note": 67,
+      "pitch": null,
+      "pressure": null,
+      "program": null,
+      "seq": 14,
+      "source": "input",
+      "tick": 38,
+      "value": null,
+      "velocity": 64
+    },
+    {
+      "channel": 1,
+      "control": null,
+      "kind": "note_off",
+      "note": 48,
+      "pitch": null,
+      "pressure": null,
+      "program": null,
+      "seq": 15,
+      "source": "input",
+      "tick": 50,
+      "value": null,
+      "velocity": 0
+    },
+    {
+      "channel": 1,
+      "control": null,
+      "kind": "note_on",
+      "note": 48,
+      "pitch": null,
+      "pressure": null,
+      "program": null,
+      "seq": 16,
+      "source": "input",
+      "tick": 50,
+      "value": null,
+      "velocity": 64
+    },
+    {
+      "channel": 2,
+      "control": null,
+      "kind": "note_off",
+      "note": 67,
+      "pitch": null,
+      "pressure": null,
+      "program": null,
+      "seq": 17,
+      "source": "input",
+      "tick": 50,
+      "value": null,
+      "velocity": 0
+    },
+    {
+      "channel": 2,
+      "control": null,
+      "kind": "note_on",
+      "note": 52,
+      "pitch": null,
+      "pressure": null,
+      "program": null,
+      "seq": 18,
+      "source": "input",
+      "tick": 50,
+      "value": null,
+      "velocity": 64
+    },
+    {
+      "channel": 1,
+      "control": null,
+      "kind": "note_off",
+      "note": 48,
+      "pitch": null,
+      "pressure": null,
+      "program": null,
+      "seq": 19,
+      "source": "input",
+      "tick": 62,
+      "value": null,
+      "velocity": 0
+    },
+    {
+      "channel": 1,
+      "control": null,
+      "kind": "note_on",
+      "note": 57,
+      "pitch": null,
+      "pressure": null,
+      "program": null,
+      "seq": 20,
+      "source": "input",
+      "tick": 62,
+      "value": null,
+      "velocity": 64
+    },
+    {
+      "channel": 2,
+      "control": null,
+      "kind": "note_off",
+      "note": 52,
+      "pitch": null,
+      "pressure": null,
+      "program": null,
+      "seq": 21,
+      "source": "input",
+      "tick": 62,
+      "value": null,
+      "velocity": 0
+    },
+    {
+      "channel": 2,
+      "control": null,
+      "kind": "note_on",
+      "note": 52,
+      "pitch": null,
+      "pressure": null,
+      "program": null,
+      "seq": 22,
+      "source": "input",
+      "tick": 62,
+      "value": null,
+      "velocity": 64
+    },
+    {
+      "channel": 1,
+      "control": null,
+      "kind": "note_off",
+      "note": 57,
+      "pitch": null,
+      "pressure": null,
+      "program": null,
+      "seq": 23,
+      "source": "input",
+      "tick": 74,
+      "value": null,
+      "velocity": 0
+    },
+    {
+      "channel": 1,
+      "control": null,
+      "kind": "note_on",
+      "note": 68,
+      "pitch": null,
+      "pressure": null,
+      "program": null,
+      "seq": 24,
+      "source": "input",
+      "tick": 74,
+      "value": null,
+      "velocity": 64
+    },
+    {
+      "channel": 2,
+      "control": null,
+      "kind": "note_off",
+      "note": 52,
+      "pitch": null,
+      "pressure": null,
+      "program": null,
+      "seq": 25,
+      "source": "input",
+      "tick": 74,
+      "value": null,
+      "velocity": 0
+    },
+    {
+      "channel": 2,
+      "control": null,
+      "kind": "note_on",
+      "note": 61,
+      "pitch": null,
+      "pressure": null,
+      "program": null,
+      "seq": 26,
+      "source": "input",
+      "tick": 74,
+      "value": null,
+      "velocity": 64
+    },
+    {
+      "channel": 1,
+      "control": null,
+      "kind": "note_off",
+      "note": 68,
+      "pitch": null,
+      "pressure": null,
+      "program": null,
+      "seq": 27,
+      "source": "input",
+      "tick": 86,
+      "value": null,
+      "velocity": 0
+    },
+    {
+      "channel": 1,
+      "control": null,
+      "kind": "note_on",
+      "note": 54,
+      "pitch": null,
+      "pressure": null,
+      "program": null,
+      "seq": 28,
+      "source": "input",
+      "tick": 86,
+      "value": null,
+      "velocity": 64
+    },
+    {
+      "channel": 2,
+      "control": null,
+      "kind": "note_off",
+      "note": 61,
+      "pitch": null,
+      "pressure": null,
+      "program": null,
+      "seq": 29,
+      "source": "input",
+      "tick": 86,
+      "value": null,
+      "velocity": 0
+    },
+    {
+      "channel": 2,
+      "control": null,
+      "kind": "note_on",
+      "note": 66,
+      "pitch": null,
+      "pressure": null,
+      "program": null,
+      "seq": 30,
+      "source": "input",
+      "tick": 86,
+      "value": null,
+      "velocity": 64
+    },
+    {
+      "channel": 1,
+      "control": null,
+      "kind": "note_off",
+      "note": 54,
+      "pitch": null,
+      "pressure": null,
+      "program": null,
+      "seq": 31,
+      "source": "input",
+      "tick": 98,
+      "value": null,
+      "velocity": 0
+    },
+    {
+      "channel": 1,
+      "control": null,
+      "kind": "note_on",
+      "note": 54,
+      "pitch": null,
+      "pressure": null,
+      "program": null,
+      "seq": 32,
+      "source": "input",
+      "tick": 98,
+      "value": null,
+      "velocity": 64
+    },
+    {
+      "channel": 2,
+      "control": null,
+      "kind": "note_off",
+      "note": 66,
+      "pitch": null,
+      "pressure": null,
+      "program": null,
+      "seq": 33,
+      "source": "input",
+      "tick": 98,
+      "value": null,
+      "velocity": 0
+    },
+    {
+      "channel": 2,
+      "control": null,
+      "kind": "note_on",
+      "note": 66,
+      "pitch": null,
+      "pressure": null,
+      "program": null,
+      "seq": 34,
+      "source": "input",
+      "tick": 98,
+      "value": null,
+      "velocity": 64
+    },
+    {
+      "channel": 1,
+      "control": null,
+      "kind": "note_off",
+      "note": 54,
+      "pitch": null,
+      "pressure": null,
+      "program": null,
+      "seq": 35,
+      "source": "input",
+      "tick": 110,
+      "value": null,
+      "velocity": 0
+    },
+    {
+      "channel": 1,
+      "control": null,
+      "kind": "note_on",
+      "note": 68,
+      "pitch": null,
+      "pressure": null,
+      "program": null,
+      "seq": 36,
+      "source": "input",
+      "tick": 110,
+      "value": null,
+      "velocity": 64
+    },
+    {
+      "channel": 2,
+      "control": null,
+      "kind": "note_off",
+      "note": 66,
+      "pitch": null,
+      "pressure": null,
+      "program": null,
+      "seq": 37,
+      "source": "input",
+      "tick": 110,
+      "value": null,
+      "velocity": 0
+    },
+    {
+      "channel": 2,
+      "control": null,
+      "kind": "note_on",
+      "note": 61,
+      "pitch": null,
+      "pressure": null,
+      "program": null,
+      "seq": 38,
+      "source": "input",
+      "tick": 110,
+      "value": null,
+      "velocity": 64
+    },
+    {
+      "channel": 1,
+      "control": null,
+      "kind": "note_off",
+      "note": 68,
+      "pitch": null,
+      "pressure": null,
+      "program": null,
+      "seq": 39,
+      "source": "input",
+      "tick": 122,
+      "value": null,
+      "velocity": 0
+    },
+    {
+      "channel": 1,
+      "control": null,
+      "kind": "note_on",
+      "note": 57,
+      "pitch": null,
+      "pressure": null,
+      "program": null,
+      "seq": 40,
+      "source": "input",
+      "tick": 122,
+      "value": null,
+      "velocity": 64
+    },
+    {
+      "channel": 2,
+      "control": null,
+      "kind": "note_off",
+      "note": 61,
+      "pitch": null,
+      "pressure": null,
+      "program": null,
+      "seq": 41,
+      "source": "input",
+      "tick": 122,
+      "value": null,
+      "velocity": 0
+    },
+    {
+      "channel": 2,
+      "control": null,
+      "kind": "note_on",
+      "note": 52,
+      "pitch": null,
+      "pressure": null,
+      "program": null,
+      "seq": 42,
+      "source": "input",
+      "tick": 122,
+      "value": null,
+      "velocity": 64
+    },
+    {
+      "channel": 1,
+      "control": null,
+      "kind": "note_off",
+      "note": 57,
+      "pitch": null,
+      "pressure": null,
+      "program": null,
+      "seq": 43,
+      "source": "input",
+      "tick": 134,
+      "value": null,
+      "velocity": 0
+    },
+    {
+      "channel": 1,
+      "control": null,
+      "kind": "note_on",
+      "note": 48,
+      "pitch": null,
+      "pressure": null,
+      "program": null,
+      "seq": 44,
+      "source": "input",
+      "tick": 134,
+      "value": null,
+      "velocity": 64
+    },
+    {
+      "channel": 2,
+      "control": null,
+      "kind": "note_off",
+      "note": 52,
+      "pitch": null,
+      "pressure": null,
+      "program": null,
+      "seq": 45,
+      "source": "input",
+      "tick": 134,
+      "value": null,
+      "velocity": 0
+    },
+    {
+      "channel": 2,
+      "control": null,
+      "kind": "note_on",
+      "note": 52,
+      "pitch": null,
+      "pressure": null,
+      "program": null,
+      "seq": 46,
+      "source": "input",
+      "tick": 134,
+      "value": null,
+      "velocity": 64
+    },
+    {
+      "channel": 1,
+      "control": null,
+      "kind": "note_off",
+      "note": 48,
+      "pitch": null,
+      "pressure": null,
+      "program": null,
+      "seq": 47,
+      "source": "input",
+      "tick": 140,
+      "value": null,
+      "velocity": 0
+    },
+    {
+      "channel": 2,
+      "control": null,
+      "kind": "note_off",
+      "note": 52,
+      "pitch": null,
+      "pressure": null,
+      "program": null,
+      "seq": 48,
+      "source": "input",
+      "tick": 140,
+      "value": null,
+      "velocity": 0
+    }
+  ],
+  "export_path": "/home/billie/codex/midicrt/captures/pianoroll_exp/engine-memory-20260227-232735-0003.mid",
+  "header": {
+    "bpm": 120.0,
+    "ppqn": 24,
+    "session_id": "engine-memory-e5d818fd8161",
+    "start_tick": 0,
+    "stop_tick": 140,
+    "tempo_segments": [],
+    "time_signature_segments": []
+  },
+  "note_spans": [
+    {
+      "channel": 1,
+      "end_tick": 14,
+      "pitch": 48,
+      "start_tick": 2,
+      "velocity": 64
+    },
+    {
+      "channel": 2,
+      "end_tick": 14,
+      "pitch": 74,
+      "start_tick": 2,
+      "velocity": 64
+    },
+    {
+      "channel": 1,
+      "end_tick": 26,
+      "pitch": 48,
+      "start_tick": 14,
+      "velocity": 64
+    },
+    {
+      "channel": 2,
+      "end_tick": 26,
+      "pitch": 48,
+      "start_tick": 14,
+      "velocity": 64
+    },
+    {
+      "channel": 1,
+      "end_tick": 38,
+      "pitch": 48,
+      "start_tick": 26,
+      "velocity": 64
+    },
+    {
+      "channel": 2,
+      "end_tick": 38,
+      "pitch": 54,
+      "start_tick": 26,
+      "velocity": 64
+    },
+    {
+      "channel": 1,
+      "end_tick": 50,
+      "pitch": 48,
+      "start_tick": 38,
+      "velocity": 64
+    },
+    {
+      "channel": 2,
+      "end_tick": 50,
+      "pitch": 67,
+      "start_tick": 38,
+      "velocity": 64
+    },
+    {
+      "channel": 1,
+      "end_tick": 62,
+      "pitch": 48,
+      "start_tick": 50,
+      "velocity": 64
+    },
+    {
+      "channel": 2,
+      "end_tick": 62,
+      "pitch": 52,
+      "start_tick": 50,
+      "velocity": 64
+    },
+    {
+      "channel": 1,
+      "end_tick": 74,
+      "pitch": 57,
+      "start_tick": 62,
+      "velocity": 64
+    },
+    {
+      "channel": 2,
+      "end_tick": 74,
+      "pitch": 52,
+      "start_tick": 62,
+      "velocity": 64
+    },
+    {
+      "channel": 1,
+      "end_tick": 86,
+      "pitch": 68,
+      "start_tick": 74,
+      "velocity": 64
+    },
+    {
+      "channel": 2,
+      "end_tick": 86,
+      "pitch": 61,
+      "start_tick": 74,
+      "velocity": 64
+    },
+    {
+      "channel": 1,
+      "end_tick": 98,
+      "pitch": 54,
+      "start_tick": 86,
+      "velocity": 64
+    },
+    {
+      "channel": 2,
+      "end_tick": 98,
+      "pitch": 66,
+      "start_tick": 86,
+      "velocity": 64
+    },
+    {
+      "channel": 1,
+      "end_tick": 110,
+      "pitch": 54,
+      "start_tick": 98,
+      "velocity": 64
+    },
+    {
+      "channel": 2,
+      "end_tick": 110,
+      "pitch": 66,
+      "start_tick": 98,
+      "velocity": 64
+    },
+    {
+      "channel": 1,
+      "end_tick": 122,
+      "pitch": 68,
+      "start_tick": 110,
+      "velocity": 64
+    },
+    {
+      "channel": 2,
+      "end_tick": 122,
+      "pitch": 61,
+      "start_tick": 110,
+      "velocity": 64
+    },
+    {
+      "channel": 1,
+      "end_tick": 134,
+      "pitch": 57,
+      "start_tick": 122,
+      "velocity": 64
+    },
+    {
+      "channel": 2,
+      "end_tick": 134,
+      "pitch": 52,
+      "start_tick": 122,
+      "velocity": 64
+    },
+    {
+      "channel": 1,
+      "end_tick": 140,
+      "pitch": 48,
+      "start_tick": 134,
+      "velocity": 64
+    },
+    {
+      "channel": 2,
+      "end_tick": 140,
+      "pitch": 52,
+      "start_tick": 134,
+      "velocity": 64
+    }
+  ],
+  "recent_hits": [
+    [
+      48,
+      1,
+      64,
+      1772263654.726503
+    ],
+    [
+      74,
+      2,
+      64,
+      1772263654.7275982
+    ],
+    [
+      48,
+      1,
+      64,
+      1772263654.8126838
+    ],
+    [
+      48,
+      2,
+      64,
+      1772263654.8154
+    ],
+    [
+      48,
+      1,
+      64,
+      1772263654.9125307
+    ],
+    [
+      54,
+      2,
+      64,
+      1772263654.9150922
+    ],
+    [
+      48,
+      1,
+      64,
+      1772263655.0179272
+    ],
+    [
+      67,
+      2,
+      64,
+      1772263655.0204961
+    ],
+    [
+      48,
+      1,
+      64,
+      1772263655.11385
+    ],
+    [
+      52,
+      2,
+      64,
+      1772263655.1370811
+    ],
+    [
+      57,
+      1,
+      64,
+      1772263655.2123344
+    ],
+    [
+      52,
+      2,
+      64,
+      1772263655.2145605
+    ],
+    [
+      68,
+      1,
+      64,
+      1772263655.320107
+    ],
+    [
+      61,
+      2,
+      64,
+      1772263655.3224528
+    ],
+    [
+      54,
+      1,
+      64,
+      1772263655.41193
+    ],
+    [
+      66,
+      2,
+      64,
+      1772263655.432017
+    ],
+    [
+      54,
+      1,
+      64,
+      1772263655.5138927
+    ],
+    [
+      66,
+      2,
+      64,
+      1772263655.5179336
+    ],
+    [
+      68,
+      1,
+      64,
+      1772263655.625323
+    ],
+    [
+      61,
+      2,
+      64,
+      1772263655.6304271
+    ],
+    [
+      57,
+      1,
+      64,
+      1772263655.7241716
+    ],
+    [
+      52,
+      2,
+      64,
+      1772263655.7265394
+    ],
+    [
+      48,
+      1,
+      64,
+      1772263655.851552
+    ],
+    [
+      52,
+      2,
+      64,
+      1772263655.854082
+    ]
+  ],
+  "schema_name": "midicrt.session",
+  "schema_version": "1.0.0",
+  "start_time": 1772263654.7104237,
+  "stop_time": 1772263655.8780544
+}

@@ -14,20 +14,40 @@ def _note_off(ch: int, note: int):
         active_notes[ch] = {(n, v) for (n, v) in active_notes[ch] if n != note}
 
 def handle(msg):
-    ch = msg.channel + 1
     now = time.time()
+    kind = getattr(msg, "type", "")
 
-    if msg.type == "note_on":
+    # New transport run should start from a clean non-memory display state.
+    if kind == "start":
+        for ch in active_notes:
+            active_notes[ch].clear()
+        return
+
+    # Transport stop should clear held notes even when no note_off arrives.
+    if kind == "stop":
+        for ch in active_notes:
+            active_notes[ch].clear()
+        return
+
+    if kind not in {"note_on", "note_off", "control_change"}:
+        return
+
+    ch_raw = getattr(msg, "channel", None)
+    if ch_raw is None:
+        return
+    ch = int(ch_raw) + 1
+
+    if kind == "note_on":
         if msg.velocity == 0:
             _note_off(ch, msg.note)
         else:
             _note_off(ch, msg.note)
             active_notes[ch].add((msg.note, msg.velocity))
 
-    elif msg.type == "note_off":
+    elif kind == "note_off":
         _note_off(ch, msg.note)
 
-    elif msg.type == "control_change":
+    elif kind == "control_change":
         # record this CC
         cc_history[ch].append((msg.control, now))
         # keep only last 1s
@@ -65,4 +85,3 @@ def get_notes(ch: int) -> str:
         cc_str = " " * 16  # constant width to avoid flicker
 
     return note_text + cc_str
-

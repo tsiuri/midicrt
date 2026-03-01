@@ -15,6 +15,7 @@ from ui.model import (
     MicrotimingHistogramWidget,
     ModuleHealthWidget,
     NotesWidget,
+    OverlayLayerWidget,
     PageLinesWidget,
     PianoRollWidget,
     Segment,
@@ -32,12 +33,12 @@ class TextRenderer:
 
     @staticmethod
     def _velocity_char(v: int) -> str:
-        if v >= 100:
+        if v >= 96:
             return "█"
-        if v >= 60:
+        if v >= 48:
             return "▓"
         if v > 0:
-            return "░"
+            return "▒"
         return " "
 
     @staticmethod

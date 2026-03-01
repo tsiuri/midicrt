@@ -28,6 +28,22 @@ class PianoRollState:
         self.last_above: tuple[int, int, float] | None = None
         self.last_below: tuple[int, int, float] | None = None
 
+    def _reset_transport_history(self) -> None:
+        """Clear non-memory visual history when a new transport run starts."""
+        self.active.clear()
+        self.spans.clear()
+        self.recent_hits.clear()
+        self.last_above = None
+        self.last_below = None
+        self.last_tick = 0
+        self.last_raw_tick = 0.0
+        self.last_time = None
+        self.last_raw_time = None
+        if self.time_cols > 0:
+            self.cols_buf = deque([[] for _ in range(self.time_cols)], maxlen=self.time_cols)
+        else:
+            self.cols_buf = deque()
+
     def _close_active(self, ch: int, note: int, end_tick: int) -> None:
         active = self.active.pop((ch, note), None)
         if not active:
@@ -43,6 +59,10 @@ class PianoRollState:
     def on_midi_event(self, msg: Any, pitch_low: int, pitch_high: int, now: float | None = None) -> None:
         now = time.time() if now is None else float(now)
         kind = getattr(msg, "type", "")
+
+        if kind == "start":
+            self._reset_transport_history()
+            return
 
         if kind == "note_on":
             ch = int(getattr(msg, "channel", 0)) + 1
@@ -79,6 +99,7 @@ class PianoRollState:
             keys = list(self.active.keys())
             for key in keys:
                 self._close_active(key[0], key[1], end_tick=self._tick_now())
+            self.recent_hits.clear()
 
     def on_tick(
         self,

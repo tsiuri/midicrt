@@ -1,0 +1,204 @@
+{
+  "_seq": 9,
+  "active_notes": {},
+  "cc_events": [],
+  "cc_order": [],
+  "events": [
+    {
+      "channel": 1,
+      "control": null,
+      "kind": "note_off",
+      "note": 54,
+      "pitch": null,
+      "pressure": null,
+      "program": null,
+      "seq": 1,
+      "source": "input",
+      "tick": 493,
+      "value": null,
+      "velocity": 0
+    },
+    {
+      "channel": 1,
+      "control": null,
+      "kind": "note_on",
+      "note": 68,
+      "pitch": null,
+      "pressure": null,
+      "program": null,
+      "seq": 2,
+      "source": "input",
+      "tick": 493,
+      "value": null,
+      "velocity": 64
+    },
+    {
+      "channel": 1,
+      "control": null,
+      "kind": "note_off",
+      "note": 68,
+      "pitch": null,
+      "pressure": null,
+      "program": null,
+      "seq": 3,
+      "source": "input",
+      "tick": 505,
+      "value": null,
+      "velocity": 0
+    },
+    {
+      "channel": 1,
+      "control": null,
+      "kind": "note_on",
+      "note": 57,
+      "pitch": null,
+      "pressure": null,
+      "program": null,
+      "seq": 4,
+      "source": "input",
+      "tick": 505,
+      "value": null,
+      "velocity": 64
+    },
+    {
+      "channel": 2,
+      "control": null,
+      "kind": "note_on",
+      "note": 68,
+      "pitch": null,
+      "pressure": null,
+      "program": null,
+      "seq": 5,
+      "source": "input",
+      "tick": 505,
+      "value": null,
+      "velocity": 64
+    },
+    {
+      "channel": 1,
+      "control": null,
+      "kind": "note_off",
+      "note": 57,
+      "pitch": null,
+      "pressure": null,
+      "program": null,
+      "seq": 6,
+      "source": "input",
+      "tick": 517,
+      "value": null,
+      "velocity": 0
+    },
+    {
+      "channel": 2,
+      "control": null,
+      "kind": "note_off",
+      "note": 68,
+      "pitch": null,
+      "pressure": null,
+      "program": null,
+      "seq": 7,
+      "source": "input",
+      "tick": 517,
+      "value": null,
+      "velocity": 0
+    },
+    {
+      "channel": 2,
+      "control": null,
+      "kind": "note_on",
+      "note": 95,
+      "pitch": null,
+      "pressure": null,
+      "program": null,
+      "seq": 8,
+      "source": "input",
+      "tick": 517,
+      "value": null,
+      "velocity": 64
+    },
+    {
+      "channel": 2,
+      "control": null,
+      "kind": "note_off",
+      "note": 95,
+      "pitch": null,
+      "pressure": null,
+      "program": null,
+      "seq": 9,
+      "source": "input",
+      "tick": 529,
+      "value": null,
+      "velocity": 0
+    }
+  ],
+  "export_path": "/home/billie/codex/midicrt/captures/pianoroll_exp/20260228-200850/engine-memory-20260228-200915-0002.mid",
+  "header": {
+    "bpm": 166.2618374684367,
+    "ppqn": 24,
+    "session_id": "engine-memory-c7e0f20ffd0f",
+    "start_tick": 486,
+    "stop_tick": 530,
+    "tempo_segments": [],
+    "time_signature_segments": []
+  },
+  "note_spans": [
+    {
+      "channel": 1,
+      "end_tick": 505,
+      "pitch": 68,
+      "start_tick": 493,
+      "velocity": 64
+    },
+    {
+      "channel": 1,
+      "end_tick": 517,
+      "pitch": 57,
+      "start_tick": 505,
+      "velocity": 64
+    },
+    {
+      "channel": 2,
+      "end_tick": 517,
+      "pitch": 68,
+      "start_tick": 505,
+      "velocity": 64
+    },
+    {
+      "channel": 2,
+      "end_tick": 529,
+      "pitch": 95,
+      "start_tick": 517,
+      "velocity": 64
+    }
+  ],
+  "recent_hits": [
+    [
+      68,
+      1,
+      64,
+      1772338153.5267508
+    ],
+    [
+      57,
+      1,
+      64,
+      1772338154.0263271
+    ],
+    [
+      68,
+      2,
+      64,
+      1772338154.0287611
+    ],
+    [
+      95,
+      2,
+      64,
+      1772338154.4618323
+    ]
+  ],
+  "schema_name": "midicrt.session",
+  "schema_version": "1.0.0",
+  "start_time": 1772338153.2716584,
+  "stop_time": 1772338155.0062628
+}

@@ -138,7 +138,7 @@
       "modules": {
         "plugins.zharmony": {
           "enabled": true,
-          "policy": "interval_hz",
+          "policy": "event_driven",
           "interval_hz": 12.0
         },
         "plugins.ztimesig": {
@@ -315,7 +315,7 @@
   "pianoroll_exp": {
     "memory_max_sessions": 32,
     "memory_export_dir": "captures/pianoroll_exp",
-    "cc_lane_max_ratio": 0.25,
-    "memory_library_dir": ""
+    "memory_library_dir": "",
+    "cc_lane_max_ratio": 0.25
   }
 }

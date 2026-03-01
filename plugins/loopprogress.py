@@ -2,7 +2,7 @@
 # Plugin: Loop Progress Bar (works with plugin_state argument)
 #
 # Shows a moving '*' across [        ] resetting every 8 bars.
-# Also renders sysex status to the left of the bar.
+# Also renders compact scheduler/sysex status to the left of the bar.
 
 import sys
 import time
@@ -36,15 +36,16 @@ def draw(state):
 
     x_bar = (screen_cols // 2) - (len(visual) // 2)
 
-    # Footer status shown to the left of the bar: FPS + recent SysEx summary.
+    # Footer status shown to the left of the bar:
+    # scheduler health + recent SysEx summary.
     left_width = max(0, x_bar - 1)
-    fps = (getattr(midicrt, "fps_status", "") or "").strip()
+    sched = (getattr(midicrt, "_scheduler_health_status", "") or "").strip()
     sx = midicrt.sysex_status
     sx_text = ""
     if sx and (time.time() - midicrt.sysex_status_time) < SYSEX_DISPLAY_SECS:
         sx_text = sx.strip()
-    parts = [p for p in (fps, sx_text) if p]
-    status = "  ".join(parts)
+    parts = [p for p in (sched, sx_text) if p]
+    status = " | ".join(parts)
     left_text = status[:left_width].ljust(left_width) if status else (" " * left_width)
 
     sys.stdout.write(t.move_yx(y, 0) + left_text + " " + visual)

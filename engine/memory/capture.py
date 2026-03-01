@@ -10,7 +10,7 @@ from typing import Any
 import mido
 
 from engine.memory import midi_io, storage
-from engine.memory.session_model import SessionModel, build_session_model
+from engine.memory.session_model import SessionModel, SessionHeader, build_session_model
 
 
 class MemoryCaptureManager:
@@ -30,10 +30,15 @@ class MemoryCaptureManager:
         self._export_dir = str(export_dir)
         self._library_dir = str(library_dir) if library_dir else ""
         self._project_root = str(project_root or os.getcwd())
+        # Subfolder for MIDI exports, named after boot time — created once per program run.
+        self._boot_stamp = time.strftime("%Y%m%d-%H%M%S")
         self._armed = False
         self._current: SessionModel | None = None
         self._sessions: deque[SessionModel] = deque(maxlen=self._max_sessions)
         self._export_seq = 0
+        # Cache pre-built metadata dicts (keyed by session_id) so memory_list()
+        # doesn't iterate all events on every call.
+        self._meta_cache: dict[str, dict] = {}
         self._load_persisted_sessions()
         self._import_library_sessions()
 
@@ -76,7 +81,7 @@ class MemoryCaptureManager:
             vel = int(getattr(msg, "velocity", 0))
             if vel > 0:
                 session.close_active_note(channel=ch, note=note, end_tick=abs_tick, emit_synth_off=True)
-                session.active_notes[(ch, note)] = (abs_tick, vel)
+                session.active_notes[(ch, note)] = [(abs_tick, vel)]
                 session.recent_hits.append((note, ch, vel, time.time()))
                 if len(session.recent_hits) > 256:
                     session.recent_hits = session.recent_hits[-256:]
@@ -125,7 +130,15 @@ class MemoryCaptureManager:
         return self.memory_start(tick=tick, bpm=bpm, running=running)
 
     def memory_list(self) -> list[dict[str, Any]]:
-        return [self._session_meta(sess) for sess in list(self._sessions)]
+        out = []
+        for sess in list(self._sessions):
+            sid = sess.header.session_id
+            meta = self._meta_cache.get(sid)
+            if meta is None:
+                meta = self._session_meta(sess)
+                self._meta_cache[sid] = meta
+            out.append(meta)
+        return out
 
     def memory_get(self, session_id: str) -> SessionModel | None:
         if session_id == "current":
@@ -133,6 +146,54 @@ class MemoryCaptureManager:
         for sess in self._sessions:
             if sess.header.session_id == session_id:
                 return deepcopy(sess)
+        return None
+
+    def memory_get_current_display(self) -> SessionModel | None:
+        """Lightweight snapshot of the live session for real-time display.
+
+        Avoids deepcopy of the ever-growing events list (not used for rendering).
+        NoteSpan objects are never mutated after creation, so a shallow list copy
+        is safe.  active_notes stacks are small tuples — shallow-copied too.
+        """
+        current = self._current
+        if current is None:
+            return None
+        hdr = current.header
+        snap = SessionModel(
+            schema_name=current.schema_name,
+            schema_version=current.schema_version,
+            header=SessionHeader(
+                session_id=hdr.session_id,
+                start_tick=hdr.start_tick,
+                stop_tick=hdr.stop_tick,
+                ppqn=hdr.ppqn,
+                bpm=hdr.bpm,
+            ),
+            events=[],                                              # skipped — O(N), not needed for display
+            note_spans=list(current.note_spans),                   # shallow: NoteSpan objects are immutable post-creation
+            active_notes={k: list(v) for k, v in current.active_notes.items()},
+            recent_hits=list(current.recent_hits),
+            cc_events=list(current.cc_events),
+            cc_order=list(current.cc_order),
+            export_path=current.export_path,
+            start_time=current.start_time,
+            stop_time=current.stop_time,
+        )
+        return snap
+
+    def memory_get_ref(self, session_id: str) -> SessionModel | None:
+        """Return a direct reference to a finalized (immutable) session.
+
+        Safe to use without the engine lock because finalized sessions in
+        self._sessions are never mutated after _finalize_session() runs.
+        The caller must deepcopy outside the lock if a snapshot is needed.
+        Returns None for "current" (which is actively mutated by the MIDI thread).
+        """
+        if session_id == "current":
+            return None
+        for sess in self._sessions:
+            if sess.header.session_id == session_id:
+                return sess
         return None
 
     def memory_delete(self, session_id: str) -> bool:
@@ -176,6 +237,8 @@ class MemoryCaptureManager:
         session.stop_time = time.time()
         session.export_path = self._export_session_midi(session)
         self._sessions.append(session)
+        # Pre-build metadata cache entry so memory_list() is O(1) per session.
+        self._meta_cache[session.header.session_id] = self._session_meta(session)
         self._store_session(session, origin="capture")
         self._current = None
 
@@ -193,10 +256,18 @@ class MemoryCaptureManager:
             return self._export_dir
         return os.path.join(self._project_root, self._export_dir)
 
+    def _abs_midi_dir(self) -> str:
+        """Per-boot MIDI export subfolder: <export_dir>/<YYYYMMDD-HHMMSS>/"""
+        return os.path.join(self._abs_export_dir(), self._boot_stamp)
+
+    def midi_export_dir(self) -> str:
+        """Public accessor so callers can resolve the current MIDI export dir."""
+        return self._abs_midi_dir()
+
     def _export_session_midi(self, session: SessionModel) -> str | None:
         if not list(session.events or []):
             return None
-        out_dir = self._abs_export_dir()
+        out_dir = self._abs_midi_dir()
         os.makedirs(out_dir, exist_ok=True)
         self._export_seq += 1
         stamp = time.strftime("%Y%m%d-%H%M%S")

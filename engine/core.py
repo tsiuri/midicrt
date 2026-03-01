@@ -444,8 +444,28 @@ class MidiEngine:
             return list(self._memory_capture.memory_list())
 
     def memory_get(self, session_id: str) -> Any:
+        sid = str(session_id)
+        if sid == "current":
+            # Active session is mutated by the MIDI thread — deepcopy must be under lock.
+            with self._lock:
+                return self._memory_capture.memory_get(sid)
+        # Finalized sessions are immutable after _finalize_session().
+        # Get reference under lock, then deepcopy outside to minimise lock hold time.
         with self._lock:
-            return self._memory_capture.memory_get(str(session_id))
+            ref = self._memory_capture.memory_get_ref(sid)
+        return deepcopy(ref) if ref is not None else None
+
+    def memory_get_ref(self, session_id: str) -> Any:
+        """Return a direct reference to a finalized session without deepcopy.
+
+        Safe for read-only display access because finalized sessions are never
+        mutated after _finalize_session().  Returns None for "current".
+        """
+        sid = str(session_id)
+        if sid == "current":
+            return None
+        with self._lock:
+            return self._memory_capture.memory_get_ref(sid)
 
     def memory_delete(self, session_id: str) -> bool:
         with self._lock:
@@ -454,6 +474,15 @@ class MidiEngine:
     def memory_status(self) -> dict[str, Any]:
         with self._lock:
             return dict(self._memory_capture.status())
+
+    def memory_midi_dir(self) -> str:
+        """Return the per-boot MIDI export directory (created on first use)."""
+        return self._memory_capture.midi_export_dir()
+
+    def memory_get_current_display(self) -> Any:
+        """Lightweight display snapshot of live session (skips events list)."""
+        with self._lock:
+            return self._memory_capture.memory_get_current_display()
 
     def memory_replay_start(
         self,

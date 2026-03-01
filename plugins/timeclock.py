@@ -70,12 +70,15 @@ def draw(state):
     lt = time.localtime(now)
     ms_now = int((now % 1) * 1000)
     realtime_str = time.strftime("%H:%M:%S", lt) + f".{ms_now:03d}"
+    fps = (getattr(midicrt, "fps_status", "") or "").strip()
 
     # --- full-line draw ---
     base_text = (
         f"BAR {bar:04d}  BEAT {beat_in_bar:02d}  TICK {ticks_in_bar:03d}   "
         f"{realtime_str}   TIMER {timer_str}"
     )
+    if fps:
+        base_text = f"{base_text}  {fps}"
     x = xmid - (len(base_text) // 2)
     sys.stdout.write(t.move_yx(y, x) + base_text.ljust(midicrt.SCREEN_COLS))
 
