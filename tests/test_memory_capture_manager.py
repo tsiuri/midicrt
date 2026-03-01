@@ -102,11 +102,57 @@ class MemoryCaptureManagerTest(unittest.TestCase):
 
             live = mgr.memory_get_current_display()
             self.assertIsNotNone(live)
-            self.assertEqual([(seg.start_tick, seg.bpm) for seg in live.header.tempo_segments], [(0, 120.0), (24, 121.0), (36, 121.6), (48, 122.0)])
+            self.assertEqual([(seg.start_tick, seg.bpm) for seg in live.header.tempo_segments], [(0, 120.0), (24, 121.0), (36, 121.6)])
             self.assertEqual(
                 [(seg.start_tick, seg.numerator, seg.denominator) for seg in live.header.time_signature_segments],
                 [(0, 4, 4), (48, 3, 4)],
             )
+
+    def test_transport_bpm_and_meter_changes_are_ordered_deduped_and_jitter_suppressed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mgr = self._manager(tmp)
+            mgr.memory_start(tick=0, bpm=120.0, running=False)
+
+            # Begin capture and establish initial meter.
+            mgr.on_transport(
+                tick=0,
+                bpm=120.0,
+                running=True,
+                prev_running=False,
+                meter_estimate="4/4",
+                meter_confidence=0.95,
+            )
+
+            # Tiny tempo jitter below hysteresis threshold should not append.
+            mgr.on_transport(tick=6, bpm=120.2, running=True, prev_running=True, meter_estimate="4/4", meter_confidence=0.95)
+            mgr.on_transport(tick=12, bpm=119.8, running=True, prev_running=True, meter_estimate="4/4", meter_confidence=0.95)
+
+            # First substantial change should append.
+            mgr.on_transport(tick=18, bpm=121.0, running=True, prev_running=True, meter_estimate="4/4", meter_confidence=0.95)
+            # Same bpm at later tick should dedupe.
+            mgr.on_transport(tick=24, bpm=121.0, running=True, prev_running=True, meter_estimate="4/4", meter_confidence=0.95)
+            # Significant bpm change, but within min tick spacing, should suppress.
+            mgr.on_transport(tick=22, bpm=123.0, running=True, prev_running=True, meter_estimate="4/4", meter_confidence=0.95)
+            # Significant bpm change with enough spacing should append.
+            mgr.on_transport(tick=30, bpm=123.0, running=True, prev_running=True, meter_estimate="4/4", meter_confidence=0.95)
+
+            # Meter change with low confidence should suppress.
+            mgr.on_transport(tick=36, bpm=123.0, running=True, prev_running=True, meter_estimate="7/8", meter_confidence=0.2)
+            # Confident meter change should append.
+            mgr.on_transport(tick=42, bpm=123.0, running=True, prev_running=True, meter_estimate="7/8", meter_confidence=0.9)
+            # Duplicate meter should suppress.
+            mgr.on_transport(tick=48, bpm=123.0, running=True, prev_running=True, meter_estimate="7/8", meter_confidence=0.95)
+
+            live = mgr.memory_get_current_display()
+            self.assertIsNotNone(live)
+
+            tempo = [(seg.start_tick, seg.bpm) for seg in live.header.tempo_segments]
+            meters = [(seg.start_tick, seg.numerator, seg.denominator) for seg in live.header.time_signature_segments]
+
+            self.assertEqual(tempo, [(0, 120.0), (18, 121.0), (30, 123.0)])
+            self.assertEqual(meters, [(0, 4, 4), (42, 7, 8)])
+            self.assertEqual(tempo, sorted(tempo, key=lambda item: item[0]))
+            self.assertEqual(meters, sorted(meters, key=lambda item: item[0]))
 
 
 if __name__ == "__main__":
