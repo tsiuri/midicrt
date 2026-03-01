@@ -10,13 +10,16 @@ from typing import Any
 import mido
 
 from engine.memory import midi_io, storage
-from engine.memory.session_model import SessionModel, SessionHeader, build_session_model
+from engine.memory.session_model import SessionModel, SessionHeader, TempoSegment, TimeSignatureSegment, build_session_model
 
 
 class MemoryCaptureManager:
     """Engine-scoped MIDI memory capture with transport-aware session lifecycle."""
 
     _EVENT_KINDS = {"note_on", "note_off", "control_change", "program_change", "pitchwheel", "aftertouch", "polytouch"}
+    _MIN_TEMPO_DELTA_BPM = 0.5
+    _MIN_TEMPO_SEGMENT_TICK_SPACING = 6
+    _MIN_METER_CONFIDENCE = 0.55
 
     def __init__(
         self,
@@ -51,7 +54,16 @@ class MemoryCaptureManager:
         if library_dir is not None:
             self._library_dir = str(library_dir)
 
-    def on_transport(self, *, tick: int, bpm: float, running: bool, prev_running: bool) -> None:
+    def on_transport(
+        self,
+        *,
+        tick: int,
+        bpm: float,
+        running: bool,
+        prev_running: bool,
+        meter_estimate: str = "",
+        meter_confidence: float = 0.0,
+    ) -> None:
         tick = int(tick)
         bpm = float(bpm if bpm and bpm > 0 else 120.0)
         if self._armed:
@@ -62,7 +74,15 @@ class MemoryCaptureManager:
             elif running and self._current is None:
                 self._begin_session(start_tick=tick, bpm=bpm)
         if running and self._current is not None:
-            self._current.header.stop_tick = tick
+            session = self._current
+            session.header.stop_tick = tick
+            self._append_tempo_segment(session=session, tick=tick, bpm=bpm)
+            self._append_time_signature_segment(
+                session=session,
+                tick=tick,
+                meter_estimate=meter_estimate,
+                meter_confidence=meter_confidence,
+            )
 
     def on_event(self, *, event: dict[str, Any], msg: mido.Message, tick: int) -> None:
         session = self._current
@@ -168,6 +188,8 @@ class MemoryCaptureManager:
                 stop_tick=hdr.stop_tick,
                 ppqn=hdr.ppqn,
                 bpm=hdr.bpm,
+                tempo_segments=list(hdr.tempo_segments),
+                time_signature_segments=list(hdr.time_signature_segments),
             ),
             events=[],                                              # skipped — O(N), not needed for display
             note_spans=list(current.note_spans),                   # shallow: NoteSpan objects are immutable post-creation
@@ -223,9 +245,79 @@ class MemoryCaptureManager:
             start_tick=int(start_tick),
             bpm=float(bpm if bpm > 0 else 120.0),
             ppqn=24,
+            tempo_segments=[TempoSegment(start_tick=int(start_tick), bpm=float(bpm if bpm > 0 else 120.0))],
         )
         session.start_time = time.time()
         self._current = session
+
+    def _append_tempo_segment(self, *, session: SessionModel, tick: int, bpm: float) -> None:
+        tick = int(tick)
+        bpm = float(bpm if bpm > 0 else 120.0)
+        segments = session.header.tempo_segments
+        if not segments:
+            segments.append(TempoSegment(start_tick=tick, bpm=bpm))
+            return
+        prev = segments[-1]
+        if not self._should_append_tempo_segment(prev=prev, tick=tick, bpm=bpm):
+            return
+        segments.append(TempoSegment(start_tick=tick, bpm=bpm))
+
+    def _should_append_tempo_segment(self, *, prev: TempoSegment, tick: int, bpm: float) -> bool:
+        prev_tick = int(prev.start_tick)
+        prev_bpm = float(prev.bpm)
+        tick = int(tick)
+        bpm = float(bpm)
+        # Duplicate suppression: same/effectively same tick and tempo.
+        if abs(tick - prev_tick) <= 0 and abs(bpm - prev_bpm) < self._MIN_TEMPO_DELTA_BPM:
+            return False
+        # Require enough tick distance between adjacent writes.
+        if (tick - prev_tick) < self._MIN_TEMPO_SEGMENT_TICK_SPACING:
+            return False
+        # Hysteresis on tempo deltas to avoid jitter churn.
+        if abs(bpm - prev_bpm) < self._MIN_TEMPO_DELTA_BPM:
+            return False
+        return True
+
+    def _append_time_signature_segment(
+        self,
+        *,
+        session: SessionModel,
+        tick: int,
+        meter_estimate: str,
+        meter_confidence: float,
+    ) -> None:
+        if float(meter_confidence) < self._MIN_METER_CONFIDENCE:
+            return
+        parsed = self._parse_meter(meter_estimate)
+        if parsed is None:
+            return
+        numerator, denominator = parsed
+        segments = session.header.time_signature_segments
+        if segments:
+            prev = segments[-1]
+            if int(prev.numerator) == int(numerator) and int(prev.denominator) == int(denominator):
+                return
+        segments.append(
+            TimeSignatureSegment(
+                start_tick=int(tick),
+                numerator=int(numerator),
+                denominator=int(denominator),
+            )
+        )
+
+    def _parse_meter(self, meter_estimate: str) -> tuple[int, int] | None:
+        label = str(meter_estimate or "").strip()
+        if not label or "/" not in label:
+            return None
+        lhs, rhs = label.split("/", 1)
+        try:
+            num = int(lhs)
+            den = int(rhs)
+        except ValueError:
+            return None
+        if num <= 0 or den <= 0:
+            return None
+        return (num, den)
 
     def _finalize_session(self, *, stop_tick: int) -> None:
         if self._current is None:
