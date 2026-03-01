@@ -6,6 +6,8 @@ import time
 from dataclasses import asdict
 from typing import Any
 
+from engine.memory.tempo_timeline import duration_seconds
+
 from engine.memory.session_model import (
     MidiEvent,
     NoteSpan,
@@ -92,7 +94,13 @@ def build_index_record(session: SessionModel, *, session_path: str, midi_path: s
     stop_tick = max(int(session.header.stop_tick), start_tick)
     duration_ticks = max(0, stop_tick - start_tick)
     bpm = float(session.header.bpm or 120.0)
-    duration_seconds = (duration_ticks / max(1, int(session.header.ppqn))) * (60.0 / max(1e-6, bpm))
+    duration_seconds_value = duration_seconds(
+        start_tick,
+        stop_tick,
+        ppqn=int(session.header.ppqn),
+        segments=session.header.tempo_segments,
+        fallback_bpm=bpm,
+    )
     event_counts, channels = session_counts(session)
     created_ts = float(session.stop_time or session.start_time or time.time())
     return {
@@ -105,7 +113,7 @@ def build_index_record(session: SessionModel, *, session_path: str, midi_path: s
         "start_tick": start_tick,
         "stop_tick": stop_tick,
         "duration_ticks": duration_ticks,
-        "duration_seconds": float(duration_seconds),
+        "duration_seconds": float(duration_seconds_value),
         "event_count": int(len(session.events)),
         "note_span_count": int(len(session.note_spans)),
         "event_counts": event_counts,
