@@ -77,6 +77,15 @@ roll_state = PianoRollState(
 
 NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 
+_ROLL_VIEW_CACHE = {
+    "key": None,
+    "timeline": "",
+    "best_cols": None,
+    "spans": None,
+    "grid_key": None,
+    "grid": None,
+}
+
 
 def _notename(n):
     if n < 0:
@@ -319,11 +328,11 @@ def _payload_from_direct_state(state, roll_cols, now):
 
 def _resolve_pianoroll_payload(state, roll_cols, pitch_low_val, pitch_high_val, now):
     views = state.get("views") if isinstance(state.get("views"), dict) else {}
-    payload = views.get("pianoroll") or views.get("8")
-    if payload is None:
-        payload = _payload_from_direct_state(state, roll_cols=roll_cols, now=now)
-    if payload is None:
-        payload = {
+    payload_raw = views.get("pianoroll") or views.get("8")
+    if payload_raw is None:
+        payload_raw = _payload_from_direct_state(state, roll_cols=roll_cols, now=now)
+    if payload_raw is None:
+        payload_raw = {
             "pitch_low": int(pitch_low_val),
             "pitch_high": int(pitch_high_val),
             **roll_state.get_view_payload(
@@ -333,7 +342,31 @@ def _resolve_pianoroll_payload(state, roll_cols, pitch_low_val, pitch_high_val, 
                 now=now,
             ),
         }
-    return _coerce_pianoroll_payload(payload, roll_cols, pitch_low_val, pitch_high_val)
+    payload = _coerce_pianoroll_payload(payload_raw, roll_cols, pitch_low_val, pitch_high_val)
+    payload["_cache_marker"] = _payload_cache_marker(payload_raw)
+    return payload
+
+
+def _payload_cache_marker(payload):
+    if not isinstance(payload, dict):
+        return None
+    for key in (
+        "_version",
+        "version",
+        "update_counter",
+        "_update_counter",
+        "revision",
+        "rev",
+        "seq",
+    ):
+        val = payload.get(key)
+        if isinstance(val, (int, float, str)):
+            return (key, val)
+    return ("identity", id(payload))
+
+
+def _visibility_hash():
+    return hash(tuple(sorted(visible_channels)))
 
 
 def _best_visible_columns(columns):
@@ -384,35 +417,62 @@ def build_roll_view(state, build_grid: bool = True):
     tick_now = payload.get("tick_now", state.get("tick", tick_right))
     bar_ticks = 24 * 4
     beat_ticks = 24
-    timeline_chars = []
-    for i in range(roll_cols):
-        col_tick = tick_right - (roll_cols - 1 - i) * TICKS_PER_COL
-        mark = " "
-        if col_tick % bar_ticks == 0:
-            mark = "|"
-        elif col_tick % beat_ticks == 0:
-            mark = ":"
-        timeline_chars.append(mark)
+    tick_bucket = int(tick_now) // max(1, TICKS_PER_COL)
+    cache_key = (
+        tick_bucket,
+        int(roll_cols),
+        int(pitch_low),
+        int(pitch_high),
+        _visibility_hash(),
+        payload.get("_cache_marker"),
+    )
+
+    if _ROLL_VIEW_CACHE["key"] == cache_key:
+        timeline = _ROLL_VIEW_CACHE["timeline"]
+        best_cols = _ROLL_VIEW_CACHE["best_cols"]
+        spans = _ROLL_VIEW_CACHE["spans"]
+    else:
+        timeline_chars = []
+        for i in range(roll_cols):
+            col_tick = tick_right - (roll_cols - 1 - i) * TICKS_PER_COL
+            mark = " "
+            if col_tick % bar_ticks == 0:
+                mark = "|"
+            elif col_tick % beat_ticks == 0:
+                mark = ":"
+            timeline_chars.append(mark)
+        timeline = "".join(timeline_chars).ljust(roll_cols)[:roll_cols]
+        best_cols = _best_visible_columns(visible_cols)
+        spans = [
+            span for span in payload.get("spans", [])
+            if isinstance(span, (list, tuple)) and len(span) >= 5 and span[3] in visible_channels
+        ]
+        _ROLL_VIEW_CACHE["key"] = cache_key
+        _ROLL_VIEW_CACHE["timeline"] = timeline
+        _ROLL_VIEW_CACHE["best_cols"] = best_cols
+        _ROLL_VIEW_CACHE["spans"] = spans
+        _ROLL_VIEW_CACHE["grid_key"] = None
+        _ROLL_VIEW_CACHE["grid"] = None
 
     pitches = list(range(pitch_high, pitch_low - 1, -1))
-    best_cols = _best_visible_columns(visible_cols)
-    spans = [
-        span for span in payload.get("spans", [])
-        if isinstance(span, (list, tuple)) and len(span) >= 5 and span[3] in visible_channels
-    ]
 
     grid = []
     if build_grid:
-        for pitch in pitches:
-            row_cells = []
-            for col_best in best_cols:
-                match = col_best.get(pitch)
-                if match is None:
-                    row_cells.append(PianoRollCell())
-                else:
-                    ch, vel = match
-                    row_cells.append(PianoRollCell(velocity=int(vel), channel=ch))
-            grid.append(row_cells)
+        if _ROLL_VIEW_CACHE["grid_key"] == cache_key:
+            grid = _ROLL_VIEW_CACHE["grid"] or []
+        else:
+            for pitch in pitches:
+                row_cells = []
+                for col_best in best_cols:
+                    match = col_best.get(pitch)
+                    if match is None:
+                        row_cells.append(PianoRollCell())
+                    else:
+                        ch, vel = match
+                        row_cells.append(PianoRollCell(velocity=int(vel), channel=ch))
+                grid.append(row_cells)
+            _ROLL_VIEW_CACHE["grid_key"] = cache_key
+            _ROLL_VIEW_CACHE["grid"] = grid
 
     columns = [
         [(pitch, ch, vel) for pitch, (ch, vel) in col_best.items()]
@@ -437,7 +497,7 @@ def build_roll_view(state, build_grid: bool = True):
         "legend": _channel_legend(),
         "input_mode": vis_input_mode,
         "input_text": vis_input_text,
-        "timeline": "".join(timeline_chars).ljust(roll_cols)[:roll_cols],
+        "timeline": timeline,
         "pitches": pitches,
         "grid": grid,
         "columns": columns,
