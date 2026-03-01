@@ -105,6 +105,7 @@ class PianoRollWidget(Widget):
     cc_lanes: List[dict[str, Any]] = field(default_factory=list)
     left_margin: int = 10
     style_mode: str = "text"
+    projection_mode: str = "beat"
 
 
 @dataclass(frozen=True)

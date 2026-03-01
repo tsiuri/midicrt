@@ -119,7 +119,8 @@
     "max_visible_rows": 20,
     "idle_scroll_bpm": 120.0,
     "out_range_hold": 2.5,
-    "pixel_style": "text"
+    "pixel_style": "text",
+    "projection_mode": "beat"
   },
   "eventlog": {
     "max_log": 300,
@@ -341,7 +342,8 @@
     "memory_max_sessions": 32,
     "memory_export_dir": "captures/pianoroll_exp",
     "memory_library_dir": "",
-    "cc_lane_max_ratio": 0.25
+    "cc_lane_max_ratio": 0.25,
+    "projection_mode": "beat"
   },
   "pianoroll_perf": {
     "enabled": true,
