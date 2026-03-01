@@ -1296,12 +1296,9 @@ def compositor_cache_key() -> str | None:
     """
     if _ui_mode == _MODE_LIVE:
         return None   # live view changes every tick
-    # Read the engine runtime flag directly so cache behavior stays correct even
-    # if on_tick() hasn't advanced _last_running yet.
-    if bool(getattr(mc, "running", False)) or _last_running:
-        return None   # live session content changes every tick even in MEM_BROWSER mode
-    # Include the derived_cache_t so we invalidate once after _refresh_derived completes.
-    return f"{_ui_mode}:{_view_session_id}:{_view_page_idx}:{_last_roll_cols}:{_derived_cache_t}"
+    # Non-live page-16 modes still have time-based compositor effects
+    # (overlap flashing, row fade), so static cache keys would freeze them.
+    return None
 
 
 def build_widget(state):

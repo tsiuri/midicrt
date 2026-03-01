@@ -715,13 +715,15 @@ class CompositorRenderer(TextRenderer):
         perf_cfg = self._pr_perf_cfg
         perf_tier = self._pr_perf_tier
         effects = perf_cfg.get("effects", {})
-        overlap_flash_enabled = bool(effects.get("overlap_flash", True)) and perf_tier <= 0
-        row_fade_enabled = bool(effects.get("row_fade", True)) and perf_tier <= 1
-        dotted_guides_enabled = bool(effects.get("dotted_guides", True)) and perf_tier <= 2
-        bars_only_mode = perf_tier >= 3
-        row_guide_step = 4 if perf_tier <= 1 else 8
-        row_guide_stride = 1 if perf_tier <= 1 else 2
-        bar_guide_step = 3 if perf_tier <= 1 else 6
+        overlap_flash_enabled = bool(effects.get("overlap_flash", True))
+        # Keep core piano-roll visuals stable even if adaptive perf tier moves.
+        # Tier oscillation can otherwise look like grid/backlight pulsing.
+        row_fade_enabled = bool(effects.get("row_fade", True))
+        dotted_guides_enabled = bool(effects.get("dotted_guides", True))
+        bars_only_mode = False
+        row_guide_step = 4
+        row_guide_stride = 1
+        bar_guide_step = 3
 
         # --- Timeline row ---
         px_y = (PAGE_Y_OFFSET + y_row) * cell_h

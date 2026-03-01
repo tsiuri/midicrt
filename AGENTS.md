@@ -2,6 +2,11 @@
 
 This file tracks launch, config, and development notes for midicrt.
 
+## Active Task Docs
+
+- Variable tempo capture + piano roll tempo-relative rescaling:
+  - `docs/tasks/TASK-2026-03-01-variable-tempo-capture-and-pianoroll-rescaling.md`
+
 ## Entrypoint
 
 - /home/billie/run_midicrt.sh
