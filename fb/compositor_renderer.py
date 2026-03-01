@@ -17,6 +17,7 @@ import math
 import time
 
 import numpy as np
+from configutil import load_section
 
 from fb.compositor import (
     Compositor, GREEN_BRIGHT, GREEN_MID, GREEN_DIM, _rgb565,
@@ -87,6 +88,22 @@ _CC_LANE_BG = _rgb565(0, 24, 10)
 _CC_LANE_BAR = _rgb565(0, 120, 44)
 _CC_LANE_BAR_HI = _rgb565(0, 185, 64)
 
+_PIANOROLL_PERF_DEFAULTS = {
+    "enabled": True,
+    "frame_budget_ms": 16.67,
+    "ema_alpha": 0.12,
+    "hysteresis_up_frames": 5,
+    "hysteresis_down_frames": 24,
+    "tier1": {"frame_ms": 15.5, "miss_ratio": 0.12},
+    "tier2": {"frame_ms": 18.5, "miss_ratio": 0.22},
+    "tier3": {"frame_ms": 24.0, "miss_ratio": 0.40},
+    "effects": {
+        "overlap_flash": True,
+        "row_fade": True,
+        "dotted_guides": True,
+    },
+}
+
 
 class CompositorRenderer(TextRenderer):
     """Routes all midicrt rendering through fb/compositor (PIL → fb0).
@@ -126,6 +143,71 @@ class CompositorRenderer(TextRenderer):
         for i in range(_ROLL_ACTIVE_ROW_FADE_STEPS + 1):
             s = float(i) / float(_ROLL_ACTIVE_ROW_FADE_STEPS)
             self._roll_row_fade_lut[i] = _rgb565(int(rr * s), int(rg * s), int(rb * s))
+        self._pr_perf_cfg = self._load_pianoroll_perf_config()
+        self._pr_perf_tier = 0
+        self._pr_ema_ms = 0.0
+        self._pr_miss_ratio = 0.0
+        self._pr_tier_up_count = 0
+        self._pr_tier_down_count = 0
+
+    def _load_pianoroll_perf_config(self) -> dict:
+        cfg = load_section("pianoroll_perf") or {}
+        out = dict(_PIANOROLL_PERF_DEFAULTS)
+        out.update({k: v for k, v in cfg.items() if k not in {"tier1", "tier2", "tier3", "effects"}})
+        for tier in ("tier1", "tier2", "tier3"):
+            tier_cfg = dict(_PIANOROLL_PERF_DEFAULTS[tier])
+            loaded = cfg.get(tier)
+            if isinstance(loaded, dict):
+                tier_cfg.update(loaded)
+            out[tier] = tier_cfg
+        effects = dict(_PIANOROLL_PERF_DEFAULTS["effects"])
+        loaded_effects = cfg.get("effects")
+        if isinstance(loaded_effects, dict):
+            effects.update(loaded_effects)
+        out["effects"] = effects
+        return out
+
+    def _update_pianoroll_perf_tier(self, frame_ms: float) -> None:
+        cfg = self._pr_perf_cfg
+        if not bool(cfg.get("enabled", True)):
+            self._pr_perf_tier = 0
+            self._pr_ema_ms = frame_ms
+            self._pr_miss_ratio = 0.0
+            self._pr_tier_up_count = 0
+            self._pr_tier_down_count = 0
+            return
+        alpha = max(0.01, min(1.0, float(cfg.get("ema_alpha", 0.12))))
+        budget_ms = max(1.0, float(cfg.get("frame_budget_ms", 16.67)))
+        miss = 1.0 if frame_ms > budget_ms else 0.0
+        if self._pr_ema_ms <= 0.0:
+            self._pr_ema_ms = frame_ms
+        else:
+            self._pr_ema_ms = (1.0 - alpha) * self._pr_ema_ms + alpha * frame_ms
+        self._pr_miss_ratio = (1.0 - alpha) * self._pr_miss_ratio + alpha * miss
+
+        desired = 0
+        for idx, tier in enumerate(("tier1", "tier2", "tier3"), start=1):
+            tc = cfg.get(tier, {})
+            if self._pr_ema_ms >= float(tc.get("frame_ms", 1e9)) or self._pr_miss_ratio >= float(tc.get("miss_ratio", 1e9)):
+                desired = idx
+
+        up_frames = max(1, int(cfg.get("hysteresis_up_frames", 5)))
+        down_frames = max(1, int(cfg.get("hysteresis_down_frames", 24)))
+        if desired > self._pr_perf_tier:
+            self._pr_tier_up_count += 1
+            self._pr_tier_down_count = 0
+            if self._pr_tier_up_count >= up_frames:
+                self._pr_perf_tier = min(3, self._pr_perf_tier + 1)
+                self._pr_tier_up_count = 0
+        elif desired < self._pr_perf_tier:
+            self._pr_tier_down_count += 1
+            self._pr_tier_up_count = 0
+            if self._pr_tier_down_count >= down_frames:
+                self._pr_perf_tier = max(0, self._pr_perf_tier - 1)
+                self._pr_tier_down_count = 0
+        else:
+            self._pr_tier_up_count = 0
+            self._pr_tier_down_count = 0
 
     @staticmethod
     def _velocity_scale(velocity: int) -> float:
@@ -626,9 +708,20 @@ class CompositorRenderer(TextRenderer):
         self, widget: PianoRollWidget, frame: Frame, y_row: int
     ) -> int:
         """Render the piano roll with pixel-resolution coloured note bars."""
+        perf_t0 = time.monotonic()
         comp = self.comp
         cw, cell_h = comp.char_w, comp.char_h
         LEFT_CHARS = max(1, int(getattr(widget, "left_margin", 10)))
+        perf_cfg = self._pr_perf_cfg
+        perf_tier = self._pr_perf_tier
+        effects = perf_cfg.get("effects", {})
+        overlap_flash_enabled = bool(effects.get("overlap_flash", True)) and perf_tier <= 0
+        row_fade_enabled = bool(effects.get("row_fade", True)) and perf_tier <= 1
+        dotted_guides_enabled = bool(effects.get("dotted_guides", True)) and perf_tier <= 2
+        bars_only_mode = perf_tier >= 3
+        row_guide_step = 4 if perf_tier <= 1 else 8
+        row_guide_stride = 1 if perf_tier <= 1 else 2
+        bar_guide_step = 3 if perf_tier <= 1 else 6
 
         # --- Timeline row ---
         px_y = (PAGE_Y_OFFSET + y_row) * cell_h
@@ -652,13 +745,14 @@ class CompositorRenderer(TextRenderer):
                 if x_left <= px_x < x_right:
                     comp.rect(px_x, px_y, 1, cell_h, GREEN_MID)
                 t += bar_ticks
-            t = first_beat
-            while t <= tick_right_edge:
-                if t % bar_ticks != 0:
-                    px_x = x_left + int(round((t - tick_left) * px_per_tick))
-                    if x_left <= px_x < x_right:
-                        comp.rect(px_x, px_y, 1, cell_h, GREEN_DIM)
-                t += beat_ticks
+            if not bars_only_mode:
+                t = first_beat
+                while t <= tick_right_edge:
+                    if t % bar_ticks != 0:
+                        px_x = x_left + int(round((t - tick_left) * px_per_tick))
+                        if x_left <= px_x < x_right:
+                            comp.rect(px_x, px_y, 1, cell_h, GREEN_DIM)
+                    t += beat_ticks
         y_row += 1
 
         pitch_high = widget.pitch_high if widget.pitch_high else (widget.pitches[0] if widget.pitches else None)
@@ -704,7 +798,7 @@ class CompositorRenderer(TextRenderer):
 
         # Extend active-note highlighting across the roll area, then fade out
         # to zero over 1 second after a pitch leaves screen.
-        if pitch_rows > 0 and roll_cols > 0:
+        if row_fade_enabled and pitch_rows > 0 and roll_cols > 0:
             row_w = max(1, roll_cols * cw)
             full_idx = int(_ROLL_ACTIVE_ROW_FADE_STEPS)
             for row_idx in range(pitch_rows):
@@ -728,20 +822,20 @@ class CompositorRenderer(TextRenderer):
                 comp.rect(x0, px_y, row_w, cell_h, tint)
 
         # --- Faint dotted pitch separators + brighter C-row separators ---
-        if pitch_rows > 0 and roll_cols > 0:
+        if dotted_guides_enabled and pitch_rows > 0 and roll_cols > 0:
             x_left = x0
             x_right = x0 + roll_cols * cw
             buf = comp._buf
-            for row_idx in range(1, pitch_rows):
+            for row_idx in range(1, pitch_rows, row_guide_stride):
                 pitch = widget.pitches[row_idx]
                 dot_y = roll_top_px + row_idx * cell_h
                 if not (0 <= dot_y < buf.shape[0]):
                     continue
                 dot_colour = _ROLL_H_DOT_C if (pitch % 12 == 0) else _ROLL_H_DOT
-                buf[dot_y, x_left + (row_idx & 1):x_right:4] = dot_colour
+                buf[dot_y, x_left + (row_idx & 1):x_right:row_guide_step] = dot_colour
 
         # --- Vertical dotted bar guides through the full roll area ---
-        if pitch_rows > 0 and roll_cols > 0:
+        if dotted_guides_enabled and pitch_rows > 0 and roll_cols > 0:
             ticks_per_col = max(1, int(getattr(widget, "ticks_per_col", 1)))
             tick_anchor = int(getattr(widget, "tick_now", getattr(widget, "tick_right", 0)))
             tick_left = tick_anchor - max(1, roll_cols - 1) * ticks_per_col
@@ -755,7 +849,7 @@ class CompositorRenderer(TextRenderer):
             while t <= tick_right_edge:
                 px_x = x_left + int(round((t - tick_left) * px_per_tick))
                 if x_left <= px_x < x_right:
-                    comp._buf[roll_top_px:roll_bottom_px:3, px_x] = _ROLL_V_BAR_DOT
+                    comp._buf[roll_top_px:roll_bottom_px:bar_guide_step, px_x] = _ROLL_V_BAR_DOT
                 t += bar_ticks
 
         # --- Note rows ---
@@ -831,7 +925,7 @@ class CompositorRenderer(TextRenderer):
                 # Dark 1px outer ring — bright fill inside, dark edge outside.
                 # Where notes overlap, the dark ring of the intruding note cuts
                 # visibly through the bright fill of the note beneath it.
-                if width > 2 * _BAR_INSET and bar_h > 2 * _BAR_INSET:
+                if not bars_only_mode and width > 2 * _BAR_INSET and bar_h > 2 * _BAR_INSET:
                     comp.rect(px_start,                      px_y,              _BAR_INSET, bar_h, BG)
                     comp.rect(px_start + width - _BAR_INSET, px_y,              _BAR_INSET, bar_h, BG)
                     comp.rect(px_start + _BAR_INSET,         px_y,              width - 2 * _BAR_INSET, _BAR_INSET, BG)
@@ -840,73 +934,74 @@ class CompositorRenderer(TextRenderer):
             # --- Overlap flash pass ---
             # Sweep over pixel intervals from the bars we actually drew.
             # This prevents false bridging in empty space.
-            _FLASH_HZ = 16.0
-            flash_t = time.monotonic()
-            for opitch, raw_intervals in overlap_drawn.items():
-                # Use all drawn intervals for this pitch; pixel-space overlap only
-                # flashes where bars actually intersect on-screen.
-                intervals = list(raw_intervals)
-                if len(intervals) < 2:
-                    continue
-                # Deduplicate same note press (orig_start + channel), keeping longer end.
-                seen_keys: dict[tuple[int, int], int] = {}
-                deduped: list[tuple[int, int, int, int, int]] = []
-                for entry in intervals:
-                    key = (int(entry[4]), int(entry[2]))  # (orig_start, ch)
-                    idx = seen_keys.get(key)
-                    if idx is None:
-                        seen_keys[key] = len(deduped)
-                        deduped.append(entry)
-                    elif int(entry[1]) > int(deduped[idx][1]):
-                        deduped[idx] = entry
-                pspans = deduped
-                if len(pspans) < 2:
-                    continue
-                # Sweep events: (x, type, idx); type 0=end before 1=start at same x.
-                events: list[tuple] = []
-                for oi, (x0_i, x1_i, _ch, _vel, _orig_st) in enumerate(pspans):
-                    events.append((int(x0_i), 1, oi))
-                    events.append((int(x1_i), 0, oi))
-                events.sort()
-                active: set[int] = set()
-                prev_x: int | None = None
-                orow_idx = pitch_high - opitch
-                opx_y = roll_top_px + orow_idx * cell_h
-                for ox, etype, oidx in events:
-                    if prev_x is not None and len(active) >= 2 and ox > prev_x:
-                        opx_s = max(x_left, min(x_right, int(prev_x)))
-                        opx_e = max(x_left, min(x_right, int(ox)))
-                        ow = opx_e - opx_s
-                        if ow > 0:
-                            active_list = sorted(active)
-                            n = len(active_list)
-                            total_phases = n + 1
-                            # User-tuned overlap speed map (relative to current base):
-                            # slowest: 70%, 2-note: 90%, 3-note: 130%, 4+-note: 170%.
-                            # Note: overlap flash renders only when >=2 notes are active.
-                            if n >= 4:
-                                flash_mult = 1.70
-                            elif n == 3:
-                                flash_mult = 1.30
-                            elif n == 2:
-                                flash_mult = 0.90
-                            else:
-                                flash_mult = 0.70
-                            flash_hz = _FLASH_HZ * flash_mult
-                            phase_idx = int(flash_t * flash_hz) % total_phases
-                            if phase_idx < n:
-                                si = active_list[phase_idx]
-                                ach, avel = pspans[si][2], pspans[si][3]
-                                ach_idx = (int(ach) - 1) % 16
-                                ocolor = self._vel_lut[ach_idx][min(int(avel), 127)]
-                            else:
-                                ocolor = BG
-                            comp.rect(opx_s, opx_y, ow, cell_h, ocolor)
-                    if etype == 1:
-                        active.add(oidx)
-                    else:
-                        active.discard(oidx)
-                    prev_x = ox
+            if overlap_flash_enabled:
+                _FLASH_HZ = 16.0
+                flash_t = time.monotonic()
+                for opitch, raw_intervals in overlap_drawn.items():
+                    # Use all drawn intervals for this pitch; pixel-space overlap only
+                    # flashes where bars actually intersect on-screen.
+                    intervals = list(raw_intervals)
+                    if len(intervals) < 2:
+                        continue
+                    # Deduplicate same note press (orig_start + channel), keeping longer end.
+                    seen_keys: dict[tuple[int, int], int] = {}
+                    deduped: list[tuple[int, int, int, int, int]] = []
+                    for entry in intervals:
+                        key = (int(entry[4]), int(entry[2]))  # (orig_start, ch)
+                        idx = seen_keys.get(key)
+                        if idx is None:
+                            seen_keys[key] = len(deduped)
+                            deduped.append(entry)
+                        elif int(entry[1]) > int(deduped[idx][1]):
+                            deduped[idx] = entry
+                    pspans = deduped
+                    if len(pspans) < 2:
+                        continue
+                    # Sweep events: (x, type, idx); type 0=end before 1=start at same x.
+                    events: list[tuple] = []
+                    for oi, (x0_i, x1_i, _ch, _vel, _orig_st) in enumerate(pspans):
+                        events.append((int(x0_i), 1, oi))
+                        events.append((int(x1_i), 0, oi))
+                    events.sort()
+                    active: set[int] = set()
+                    prev_x: int | None = None
+                    orow_idx = pitch_high - opitch
+                    opx_y = roll_top_px + orow_idx * cell_h
+                    for ox, etype, oidx in events:
+                        if prev_x is not None and len(active) >= 2 and ox > prev_x:
+                            opx_s = max(x_left, min(x_right, int(prev_x)))
+                            opx_e = max(x_left, min(x_right, int(ox)))
+                            ow = opx_e - opx_s
+                            if ow > 0:
+                                active_list = sorted(active)
+                                n = len(active_list)
+                                total_phases = n + 1
+                                # User-tuned overlap speed map (relative to current base):
+                                # slowest: 70%, 2-note: 90%, 3-note: 130%, 4+-note: 170%.
+                                # Note: overlap flash renders only when >=2 notes are active.
+                                if n >= 4:
+                                    flash_mult = 1.70
+                                elif n == 3:
+                                    flash_mult = 1.30
+                                elif n == 2:
+                                    flash_mult = 0.90
+                                else:
+                                    flash_mult = 0.70
+                                flash_hz = _FLASH_HZ * flash_mult
+                                phase_idx = int(flash_t * flash_hz) % total_phases
+                                if phase_idx < n:
+                                    si = active_list[phase_idx]
+                                    ach, avel = pspans[si][2], pspans[si][3]
+                                    ach_idx = (int(ach) - 1) % 16
+                                    ocolor = self._vel_lut[ach_idx][min(int(avel), 127)]
+                                else:
+                                    ocolor = BG
+                                comp.rect(opx_s, opx_y, ow, cell_h, ocolor)
+                        if etype == 1:
+                            active.add(oidx)
+                        else:
+                            active.discard(oidx)
+                        prev_x = ox
         else:
             if columns and pitch_high is not None and pitch_low is not None:
                 for i, col_events in enumerate(columns):
@@ -925,7 +1020,7 @@ class CompositorRenderer(TextRenderer):
                         bar_w = cw - 1
                         bar_h = cell_h
                         comp.rect(px_x, px_y, bar_w, bar_h, color)
-                        if bar_w > 2 * _BAR_INSET and bar_h > 2 * _BAR_INSET:
+                        if not bars_only_mode and bar_w > 2 * _BAR_INSET and bar_h > 2 * _BAR_INSET:
                             comp.rect(px_x,                      px_y,             _BAR_INSET, bar_h, BG)
                             comp.rect(px_x + bar_w - _BAR_INSET, px_y,             _BAR_INSET, bar_h, BG)
                             comp.rect(px_x + _BAR_INSET,         px_y,             bar_w - 2 * _BAR_INSET, _BAR_INSET, BG)
@@ -970,6 +1065,7 @@ class CompositorRenderer(TextRenderer):
                         comp.rect(bar_x, bar_y, bar_w, h, bar_col)
                 y_row += 1
 
+        self._update_pianoroll_perf_tier((time.monotonic() - perf_t0) * 1000.0)
         return y_row
 
     # ------------------------------------------------------------------
