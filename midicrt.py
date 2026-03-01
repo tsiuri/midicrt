@@ -2,6 +2,7 @@
 # midicrt.py — CRT-style MIDI monitor / visualizer for Cirklon
 
 import os, sys, time, glob, importlib.util, subprocess, threading, re, argparse, json
+from collections import deque
 from configutil import load_section, save_section
 from inspect import signature
 from blessed import Terminal
@@ -167,6 +168,81 @@ SCREEN_ROWS = getattr(term, 'height', 30) or 30
 FPS = 60.0
 HEADER_SCROLL_SPEED = 4.0  # characters per second; set to 0 to disable scrolling
 
+
+def _safe_float(value, default):
+    try:
+        return float(value)
+    except Exception:
+        return float(default)
+
+
+def _safe_int(value, default):
+    try:
+        return int(value)
+    except Exception:
+        return int(default)
+
+
+class RuntimeBudgetPolicy:
+    """Small deterministic runtime budget governor for low-power hardware."""
+
+    def __init__(self, target_fps: float, cfg: dict | None):
+        cfg = cfg if isinstance(cfg, dict) else {}
+        self.enabled = bool(cfg.get("enabled", True))
+        self.window = max(16, _safe_int(cfg.get("window_frames", 90), 90))
+        self.sustain_windows = max(1, _safe_int(cfg.get("sustain_windows", 3), 3))
+        self.relax_windows = max(1, _safe_int(cfg.get("relax_windows", 4), 4))
+        self.over_budget_ratio = min(1.0, max(0.05, _safe_float(cfg.get("over_budget_ratio", 0.35), 0.35)))
+        self.target_fps = max(5.0, _safe_float(target_fps, 30.0))
+        self.target_dt = 1.0 / self.target_fps
+        self.frame_dt = deque(maxlen=self.window)
+        self.over_budget_flags = deque(maxlen=self.window)
+        self.level = 0
+        self._over_streak = 0
+        self._under_streak = 0
+
+    def note_frame(self, frame_dt: float):
+        dt = max(0.0, _safe_float(frame_dt, self.target_dt))
+        self.frame_dt.append(dt)
+        self.over_budget_flags.append(1 if dt > self.target_dt else 0)
+        if len(self.over_budget_flags) < self.window:
+            return
+        ratio = self.over_budget_ratio_value()
+        if ratio >= self.over_budget_ratio:
+            self._over_streak += 1
+            self._under_streak = 0
+        elif ratio <= (self.over_budget_ratio * 0.5):
+            self._under_streak += 1
+            self._over_streak = 0
+        else:
+            self._over_streak = 0
+            self._under_streak = 0
+
+    def maybe_step(self) -> str | None:
+        if not self.enabled:
+            return None
+        if self._over_streak >= self.sustain_windows and self.level < 2:
+            self.level += 1
+            self._over_streak = 0
+            self._under_streak = 0
+            return "down"
+        if self._under_streak >= self.relax_windows and self.level > 0:
+            self.level -= 1
+            self._over_streak = 0
+            self._under_streak = 0
+            return "up"
+        return None
+
+    def avg_frame_ms(self) -> float:
+        if not self.frame_dt:
+            return 0.0
+        return (sum(self.frame_dt) / len(self.frame_dt)) * 1000.0
+
+    def over_budget_ratio_value(self) -> float:
+        if not self.over_budget_flags:
+            return 0.0
+        return float(sum(self.over_budget_flags)) / float(len(self.over_budget_flags))
+
 _core_cfg = load_section("core")
 if _core_cfg is None:
     _core_cfg = {}
@@ -179,6 +255,31 @@ AUTOCONNECT_FALLBACK_SOURCES = []
 AUTOCONNECT_FALLBACK_DESTINATIONS = []
 TEMPO_METRICS_CFG = {"interval_window": 24, "baseline_window": 96, "stats_window": 24}
 CORE_FEATURE_FLAGS = {"contract_page_views": False, "contract_legacy_event_router": True}
+RUNTIME_POLICY_CFG = {
+    "enabled": True,
+    "window_frames": 90,
+    "sustain_windows": 3,
+    "relax_windows": 4,
+    "over_budget_ratio": 0.35,
+    "page_cache_ttl_ms": 200,
+    "notes_page_cache_hz": 30,
+    "notes_badge_hz": 24,
+    "plugin_overlay_hz": 10,
+    "degrade_steps": [
+        {
+            "page_cache_ttl_ms": 260,
+            "notes_page_cache_hz": 24,
+            "notes_badge_hz": 18,
+            "plugin_overlay_hz": 8,
+        },
+        {
+            "page_cache_ttl_ms": 333,
+            "notes_page_cache_hz": 18,
+            "notes_badge_hz": 12,
+            "plugin_overlay_hz": 6,
+        },
+    ],
+}
 try:
     FPS = float(_core_cfg.get("fps", FPS))
     HEADER_SCROLL_SPEED = float(_core_cfg.get("header_scroll_speed", HEADER_SCROLL_SPEED))
@@ -198,8 +299,32 @@ try:
         AUTOCONNECT_FALLBACK_DESTINATIONS = [str(v).strip() for v in _fallback_dests if str(v).strip()]
     _tempo_metrics_cfg = _core_cfg.get("tempo_metrics", {}) if isinstance(_core_cfg.get("tempo_metrics", {}), dict) else {}
     _feature_flags_cfg = _core_cfg.get("feature_flags", {}) if isinstance(_core_cfg.get("feature_flags", {}), dict) else {}
+    _runtime_policy_cfg = _core_cfg.get("runtime_policy", {}) if isinstance(_core_cfg.get("runtime_policy", {}), dict) else {}
     CORE_FEATURE_FLAGS["contract_page_views"] = bool(_feature_flags_cfg.get("contract_page_views", CORE_FEATURE_FLAGS["contract_page_views"]))
     CORE_FEATURE_FLAGS["contract_legacy_event_router"] = bool(_feature_flags_cfg.get("contract_legacy_event_router", CORE_FEATURE_FLAGS["contract_legacy_event_router"]))
+    RUNTIME_POLICY_CFG["enabled"] = bool(_runtime_policy_cfg.get("enabled", RUNTIME_POLICY_CFG["enabled"]))
+    RUNTIME_POLICY_CFG["window_frames"] = max(16, int(_runtime_policy_cfg.get("window_frames", RUNTIME_POLICY_CFG["window_frames"])))
+    RUNTIME_POLICY_CFG["sustain_windows"] = max(1, int(_runtime_policy_cfg.get("sustain_windows", RUNTIME_POLICY_CFG["sustain_windows"])))
+    RUNTIME_POLICY_CFG["relax_windows"] = max(1, int(_runtime_policy_cfg.get("relax_windows", RUNTIME_POLICY_CFG["relax_windows"])))
+    RUNTIME_POLICY_CFG["over_budget_ratio"] = min(1.0, max(0.05, float(_runtime_policy_cfg.get("over_budget_ratio", RUNTIME_POLICY_CFG["over_budget_ratio"]))))
+    RUNTIME_POLICY_CFG["page_cache_ttl_ms"] = max(50, int(_runtime_policy_cfg.get("page_cache_ttl_ms", RUNTIME_POLICY_CFG["page_cache_ttl_ms"])))
+    RUNTIME_POLICY_CFG["notes_page_cache_hz"] = max(2, float(_runtime_policy_cfg.get("notes_page_cache_hz", RUNTIME_POLICY_CFG["notes_page_cache_hz"])))
+    RUNTIME_POLICY_CFG["notes_badge_hz"] = max(2, float(_runtime_policy_cfg.get("notes_badge_hz", RUNTIME_POLICY_CFG["notes_badge_hz"])))
+    RUNTIME_POLICY_CFG["plugin_overlay_hz"] = max(2, float(_runtime_policy_cfg.get("plugin_overlay_hz", RUNTIME_POLICY_CFG["plugin_overlay_hz"])))
+    _steps = _runtime_policy_cfg.get("degrade_steps", RUNTIME_POLICY_CFG["degrade_steps"])
+    if isinstance(_steps, list) and _steps:
+        cleaned_steps = []
+        for s in _steps[:4]:
+            if not isinstance(s, dict):
+                continue
+            cleaned_steps.append({
+                "page_cache_ttl_ms": max(50, int(s.get("page_cache_ttl_ms", RUNTIME_POLICY_CFG["page_cache_ttl_ms"]))),
+                "notes_page_cache_hz": max(2, float(s.get("notes_page_cache_hz", RUNTIME_POLICY_CFG["notes_page_cache_hz"]))),
+                "notes_badge_hz": max(2, float(s.get("notes_badge_hz", RUNTIME_POLICY_CFG["notes_badge_hz"]))),
+                "plugin_overlay_hz": max(2, float(s.get("plugin_overlay_hz", RUNTIME_POLICY_CFG["plugin_overlay_hz"]))),
+            })
+        if cleaned_steps:
+            RUNTIME_POLICY_CFG["degrade_steps"] = cleaned_steps
     TEMPO_METRICS_CFG = {
         "interval_window": max(2, int(_tempo_metrics_cfg.get("interval_window", TEMPO_METRICS_CFG["interval_window"]))),
         "baseline_window": max(2, int(_tempo_metrics_cfg.get("baseline_window", TEMPO_METRICS_CFG["baseline_window"]))),
@@ -237,6 +362,7 @@ try:
         },
         "tempo_metrics": dict(TEMPO_METRICS_CFG),
         "feature_flags": dict(CORE_FEATURE_FLAGS),
+        "runtime_policy": dict(RUNTIME_POLICY_CFG),
     })
 except Exception:
     pass
@@ -464,6 +590,7 @@ sysex_status_time = 0.0
 fps_status = ""         # rolling fps text displayed in footer
 footer_status_text = "" # latest transport/status text (moved to bottom footer area)
 _scheduler_health_status = ""
+runtime_budget_status = ""
 
 # ---------------------------------------------------------------------
 # UI loop
@@ -600,7 +727,33 @@ def _ui_loop_body():
     global last_page, current_page, exit_flag, last_header, SCREEN_COLS, SCREEN_ROWS
     global _header_scroll_offset, _header_scroll_last_time
     global _auto_scroll_offset, _auto_scroll_last_time, _auto_last_msg, _auto_last_window
+    global runtime_budget_status
     _frame_budget = 1.0 / FPS
+    _runtime_policy = RuntimeBudgetPolicy(FPS, RUNTIME_POLICY_CFG)
+    _base_degrade = {
+        "page_cache_ttl": max(0.05, float(RUNTIME_POLICY_CFG.get("page_cache_ttl_ms", 200)) / 1000.0),
+        "notes_page_cache_interval": 1.0 / max(2.0, float(RUNTIME_POLICY_CFG.get("notes_page_cache_hz", 30.0))),
+        "notes_badge_interval": 1.0 / max(2.0, float(RUNTIME_POLICY_CFG.get("notes_badge_hz", 24.0))),
+        "plugin_overlay_interval": 1.0 / max(2.0, float(RUNTIME_POLICY_CFG.get("plugin_overlay_hz", 10.0))),
+    }
+    _runtime_steps = []
+    for _step in RUNTIME_POLICY_CFG.get("degrade_steps", []):
+        if isinstance(_step, dict):
+            _runtime_steps.append({
+                "page_cache_ttl": max(0.05, float(_step.get("page_cache_ttl_ms", 200)) / 1000.0),
+                "notes_page_cache_interval": 1.0 / max(2.0, float(_step.get("notes_page_cache_hz", 30.0))),
+                "notes_badge_interval": 1.0 / max(2.0, float(_step.get("notes_badge_hz", 24.0))),
+                "plugin_overlay_interval": 1.0 / max(2.0, float(_step.get("plugin_overlay_hz", 10.0))),
+            })
+    if not _runtime_steps:
+        _runtime_steps = [dict(_base_degrade)]
+    _runtime_tuning = dict(_base_degrade)
+
+    def _apply_runtime_level(level: int):
+        idx = max(0, min(level, len(_runtime_steps)))
+        if idx <= 0:
+            return dict(_base_degrade)
+        return dict(_runtime_steps[idx - 1])
     _do_plugin_draw = not os.environ.get("MIDICRT_DISABLE_PLUGIN_DRAW")
     # --- Profiling instrumentation ---
     _prof_enabled = bool(os.environ.get("MIDICRT_PROFILE"))
@@ -623,6 +776,7 @@ def _ui_loop_body():
     while not exit_flag:
       try:
         _frame_t0 = time.monotonic()
+        _runtime_tuning = _apply_runtime_level(_runtime_policy.level)
         _pt0 = _frame_t0
         # refresh screen size each frame so pages/plugins can use all space
         try:
@@ -805,7 +959,7 @@ def _ui_loop_body():
         global fps_status, footer_status_text
         fps_status = f"fps:{1.0/_frame_dt:.1f}" if _frame_dt > 0 else "fps:--"
         footer_status_text = str(ui_snapshot.get("status_text", "") or "")
-        footer_right_parts = [p for p in (fps_status, _scheduler_health_status) if p]
+        footer_right_parts = [p for p in (fps_status, _scheduler_health_status, runtime_budget_status) if p]
         if sysex_status and (time.time() - sysex_status_time) < 3.0:
             footer_right_parts.append(sysex_status)
         ui_snapshot["fps_status"] = fps_status
@@ -855,7 +1009,7 @@ def _ui_loop_body():
         # Generic compositor page-content cache: pages can expose compositor_cache_key()
         # to skip re-rendering when their content hasn't changed.
         # A max TTL of 200ms ensures the display refreshes at least 5 Hz even for static content.
-        _PAGE_CACHE_MAX_AGE = 0.2
+        _PAGE_CACHE_MAX_AGE = _runtime_tuning["page_cache_ttl"]
         if not _content_cache_hit and _compositor is not None and page and current_page != 1:
             try:
                 cache_key_fn = getattr(page, "compositor_cache_key", None)
@@ -934,7 +1088,7 @@ def _ui_loop_body():
                     SCREEN_ROWS,
                     _plugin_draw_takes_state,
                 )
-                ui_loop._plugin_cache_next_t = now_plugins + 0.1  # 10 Hz
+                ui_loop._plugin_cache_next_t = now_plugins + _runtime_tuning["plugin_overlay_interval"]
             overlay_rows = compose_overlay_rows(
                 getattr(ui_loop, "_plugin_overlay_cache"),
                 cols=SCREEN_COLS,
@@ -955,7 +1109,7 @@ def _ui_loop_body():
                 h_px = max(0, SCREEN_ROWS - 3) * _compositor.comp.char_h
                 y1_px = min(_compositor.comp._buf.shape[0], y0_px + h_px)
                 ui_loop._notes_page_cache = _compositor.comp._buf[y0_px:y1_px, :].copy()
-                ui_loop._notes_page_next_t = time.monotonic() + (1.0 / 30.0)
+                ui_loop._notes_page_next_t = time.monotonic() + _runtime_tuning["notes_page_cache_interval"]
             except Exception:
                 pass
 
@@ -1001,7 +1155,7 @@ def _ui_loop_body():
                     ui_loop._notes_badge_levels = badge_levels
                     ui_loop._notes_badge_pcs = badge_pcs
                     ui_loop._notes_badge_roll = badge_roll
-                    ui_loop._notes_badge_data_next_t = badge_now + (1.0 / 24.0)
+                    ui_loop._notes_badge_data_next_t = badge_now + _runtime_tuning["notes_badge_interval"]
                 _compositor.draw_notes_badge(
                     spectrum_levels=getattr(ui_loop, "_notes_badge_levels", None),
                     active_pcs=getattr(ui_loop, "_notes_badge_pcs", set()),
@@ -1074,6 +1228,19 @@ def _ui_loop_body():
                     pass
                 _prof_accum.clear()
                 _prof_n = 0
+        _frame_dt_done = time.monotonic() - _frame_t0
+        _runtime_policy.note_frame(_frame_dt_done)
+        _step = _runtime_policy.maybe_step()
+        if _step:
+            _append_runtime_log(
+                f"[RuntimePolicy] step={_step} level={_runtime_policy.level} "
+                f"avg_ms={_runtime_policy.avg_frame_ms():.2f} over_budget={_runtime_policy.over_budget_ratio_value():.2f}"
+            )
+        runtime_budget_status = (
+            f"budget:{_runtime_policy.avg_frame_ms():.1f}ms "
+            f"ovr:{_runtime_policy.over_budget_ratio_value()*100.0:.0f}% "
+            f"lvl:{_runtime_policy.level}"
+        )
         time.sleep(max(0, _frame_budget - (time.monotonic() - _frame_t0)))
       except Exception:
         import traceback as _tb
