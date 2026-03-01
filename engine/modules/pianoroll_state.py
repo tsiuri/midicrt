@@ -3,6 +3,11 @@ from __future__ import annotations
 import time
 from collections import deque
 from typing import Any
+import os
+
+
+TRACE_LOG_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "log.txt")
+MAX_STEPS_PER_FRAME = 8
 
 
 class PianoRollState:
@@ -27,6 +32,54 @@ class PianoRollState:
         self.recent_hits: deque[tuple[int, int, int, float]] = deque(maxlen=256)
         self.last_above: tuple[int, int, float] | None = None
         self.last_below: tuple[int, int, float] | None = None
+
+    def _append_trace(self, now: float, *, steps: int, loop_ms: float) -> None:
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(now))
+        line = (
+            f"[{timestamp}] [pianoroll] steps={int(steps)} active={len(self.active)} "
+            f"recent_hits={len(self.recent_hits)} loop_ms={loop_ms:.3f}\n"
+        )
+        try:
+            with open(TRACE_LOG_PATH, "a", encoding="utf-8") as f:
+                f.write(line)
+        except Exception:
+            pass
+
+    def _sample_offsets(self, total_steps: int, sample_count: int) -> list[int]:
+        if sample_count <= 0:
+            return []
+        if sample_count >= total_steps:
+            return list(range(total_steps))
+        # Evenly distribute samples; always include the first and last logical column.
+        max_step_index = total_steps - 1
+        offsets = set()
+        for i in range(sample_count):
+            offsets.add((i * max_step_index) // (sample_count - 1))
+        return sorted(offsets)
+
+    def _append_columns(self, *, steps: int, now: float, overlay_window: float) -> float:
+        if steps <= 0:
+            return 0.0
+
+        loop_start = time.perf_counter()
+        if steps <= MAX_STEPS_PER_FRAME:
+            offsets = range(steps)
+        else:
+            offsets = self._sample_offsets(steps, MAX_STEPS_PER_FRAME)
+
+        for offset in offsets:
+            col_now = now
+            if steps > 1:
+                col_now = now - (((steps - 1 - int(offset)) / float(steps)) * overlay_window)
+
+            now_col = [(pitch, ch, vel) for (ch, pitch), (vel, _start) in self.active.items()]
+            cutoff = col_now - overlay_window
+            recent = [(p, ch, v) for (p, ch, v, ts) in list(self.recent_hits) if ts >= cutoff]
+            if recent:
+                now_col.extend(recent)
+            self.cols_buf.append(now_col)
+
+        return (time.perf_counter() - loop_start) * 1000.0
 
     def _reset_transport_history(self) -> None:
         """Clear non-memory visual history when a new transport run starts."""
@@ -153,13 +206,8 @@ class PianoRollState:
         col_secs = self._column_seconds(running=running, bpm=bpm)
         overlay_window = max(0.05, min(0.25, col_secs))
 
-        for _ in range(steps):
-            now_col = [(pitch, ch, vel) for (ch, pitch), (vel, _start) in self.active.items()]
-            cutoff = now - overlay_window
-            recent = [(p, ch, v) for (p, ch, v, ts) in list(self.recent_hits) if ts >= cutoff]
-            if recent:
-                now_col.extend(recent)
-            self.cols_buf.append(now_col)
+        loop_ms = self._append_columns(steps=steps, now=now, overlay_window=overlay_window)
+        self._append_trace(now, steps=steps, loop_ms=loop_ms)
 
         self._refresh_out_of_range(pitch_low=pitch_low, pitch_high=pitch_high, now=now)
 
