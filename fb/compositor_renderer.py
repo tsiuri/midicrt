@@ -67,17 +67,22 @@ _PIANO_BLACK_SHADOW = _rgb565(0, 4, 1)
 
 _MINI_BG = _rgb565(0, 14, 6)
 _MINI_BORDER = _rgb565(0, 120, 40)
-_MINI_NOTE = _rgb565(0, 180, 60)
-_MINI_NOTE_HI = _rgb565(0, 255, 80)
+_MINI_NOTE_BASE_RGB = (0, 255, 80)
+_MINI_NOTE = _rgb565(0, 128, 40)
+_MINI_NOTE_HI = _rgb565(*_MINI_NOTE_BASE_RGB)
 _MINI_GUIDE = _rgb565(0, 60, 20)
 _MINI_FLARE_CORE = _rgb565(0, 255, 80)
 _MINI_FLARE_GLOW = _rgb565(0, 140, 45)
 _BADGE_UPDATE_HZ = 24.0
+_VEL_BRIGHTNESS_FLOOR = 0.5
 
 # Piano-roll guide lines (all monochrome-green friendly).
 _ROLL_H_DOT = _rgb565(0, 38, 15)        # faint between-note dotted rows
 _ROLL_H_DOT_C = _rgb565(0, 68, 27)      # slightly brighter on C rows
 _ROLL_V_BAR_DOT = _rgb565(0, 86, 33)    # dotted bar-tracking verticals
+_ROLL_ACTIVE_ROW_BASE_RGB = (0, 38, 12)  # 15% row tint at full intensity
+_ROLL_ACTIVE_ROW_FADE_S = 1.0
+_ROLL_ACTIVE_ROW_FADE_STEPS = 64
 _CC_LANE_BG = _rgb565(0, 24, 10)
 _CC_LANE_BAR = _rgb565(0, 120, 44)
 _CC_LANE_BAR_HI = _rgb565(0, 185, 64)
@@ -109,10 +114,34 @@ class CompositorRenderer(TextRenderer):
         for base_rgb in _CH_BASE_RGB:
             lut = np.zeros(128, dtype=np.uint16)
             for v in range(128):
-                scale = 0.4 + 0.6 * (v / 127.0)
+                scale = self._velocity_scale(v)
                 r, g, b = (int(c * scale) for c in base_rgb)
                 lut[v] = _rgb565(r, g, b)
             self._vel_lut.append(lut)
+        # Active-row tint fade state (pitch -> fade-end time).
+        self._roll_row_fade_until: dict[int, float] = {}
+        # Quantized fade LUT for cheap per-row tint decay.
+        self._roll_row_fade_lut = np.zeros(_ROLL_ACTIVE_ROW_FADE_STEPS + 1, dtype=np.uint16)
+        rr, rg, rb = _ROLL_ACTIVE_ROW_BASE_RGB
+        for i in range(_ROLL_ACTIVE_ROW_FADE_STEPS + 1):
+            s = float(i) / float(_ROLL_ACTIVE_ROW_FADE_STEPS)
+            self._roll_row_fade_lut[i] = _rgb565(int(rr * s), int(rg * s), int(rb * s))
+
+    @staticmethod
+    def _velocity_scale(velocity: int) -> float:
+        """Map velocity 1..127 -> brightness 50%..100% (0 stays off)."""
+        v = int(velocity)
+        if v <= 0:
+            return 0.0
+        v = min(127, v)
+        return _VEL_BRIGHTNESS_FLOOR + (1.0 - _VEL_BRIGHTNESS_FLOOR) * (v / 127.0)
+
+    def _velocity_color565(self, base_rgb: tuple[int, int, int], velocity: int) -> int:
+        scale = self._velocity_scale(velocity)
+        if scale <= 0.0:
+            return _rgb565(0, 0, 0)
+        r, g, b = base_rgb
+        return _rgb565(int(r * scale), int(g * scale), int(b * scale))
 
     # ------------------------------------------------------------------
     # Frame lifecycle
@@ -339,7 +368,7 @@ class CompositorRenderer(TextRenderer):
                 if x1 < x0:
                     x0, x1 = x1, x0
                 y0 = _y_at(pitch_i)
-                inner[y0, x0:x1 + 1] = _MINI_NOTE_HI if vel_i > 96 else _MINI_NOTE
+                inner[y0, x0:x1 + 1] = self._velocity_color565(_MINI_NOTE_BASE_RGB, vel_i)
         else:
             cols = payload.get("columns", [])
             if isinstance(cols, list) and cols:
@@ -361,7 +390,7 @@ class CompositorRenderer(TextRenderer):
                         if vel_i <= 0 or pitch_i < pitch_low or pitch_i > pitch_high:
                             continue
                         y0 = _y_at(pitch_i)
-                        inner[y0, cx] = _MINI_NOTE_HI if vel_i > 96 else _MINI_NOTE
+                        inner[y0, cx] = self._velocity_color565(_MINI_NOTE_BASE_RGB, vel_i)
 
         cols = payload.get("columns", [])
         if isinstance(cols, list) and cols:
@@ -642,6 +671,61 @@ class CompositorRenderer(TextRenderer):
         spans = getattr(widget, "spans", None) or []
         columns = getattr(widget, "columns", None) or []
         cc_lanes = getattr(widget, "cc_lanes", None) or []
+        now_mono = time.monotonic()
+
+        # Pitches with any visible note data in the current window.
+        highlight_pitches = set()
+        if pitch_high is not None and pitch_low is not None:
+            if spans:
+                for span in spans:
+                    if not isinstance(span, (list, tuple)) or len(span) < 5:
+                        continue
+                    start_tick, end_tick, pitch, _channel, velocity = span[:5]
+                    if velocity <= 0:
+                        continue
+                    if pitch > pitch_high or pitch < pitch_low:
+                        continue
+                    if end_tick < tick_left or start_tick > tick_right_edge:
+                        continue
+                    highlight_pitches.add(int(pitch))
+            elif columns:
+                for col_events in columns:
+                    for pitch, _channel, velocity in col_events:
+                        if velocity <= 0:
+                            continue
+                        if pitch_high >= pitch >= pitch_low:
+                            highlight_pitches.add(int(pitch))
+
+        # Refresh fade timers for pitches still visible in this window.
+        if highlight_pitches:
+            fade_until = now_mono + float(_ROLL_ACTIVE_ROW_FADE_S)
+            for p in highlight_pitches:
+                self._roll_row_fade_until[int(p)] = fade_until
+
+        # Extend active-note highlighting across the roll area, then fade out
+        # to zero over 1 second after a pitch leaves screen.
+        if pitch_rows > 0 and roll_cols > 0:
+            row_w = max(1, roll_cols * cw)
+            full_idx = int(_ROLL_ACTIVE_ROW_FADE_STEPS)
+            for row_idx in range(pitch_rows):
+                pitch = widget.pitches[row_idx]
+                pitch_i = int(pitch)
+                if pitch_i in highlight_pitches:
+                    tint = int(self._roll_row_fade_lut[full_idx])
+                else:
+                    until = self._roll_row_fade_until.get(pitch_i)
+                    if until is None:
+                        continue
+                    remain = float(until) - now_mono
+                    if remain <= 0.0:
+                        self._roll_row_fade_until.pop(pitch_i, None)
+                        continue
+                    frac = max(0.0, min(1.0, remain / float(_ROLL_ACTIVE_ROW_FADE_S)))
+                    idx = int(round(frac * float(_ROLL_ACTIVE_ROW_FADE_STEPS)))
+                    idx = max(1, min(full_idx, idx))
+                    tint = int(self._roll_row_fade_lut[idx])
+                px_y = roll_top_px + row_idx * cell_h
+                comp.rect(x0, px_y, row_w, cell_h, tint)
 
         # --- Faint dotted pitch separators + brighter C-row separators ---
         if pitch_rows > 0 and roll_cols > 0:
@@ -674,26 +758,6 @@ class CompositorRenderer(TextRenderer):
                     comp._buf[roll_top_px:roll_bottom_px:3, px_x] = _ROLL_V_BAR_DOT
                 t += bar_ticks
 
-        # Pitches that currently have any visible bar get reverse labels.
-        highlight_pitches = set()
-        if pitch_high is not None and pitch_low is not None:
-            if spans:
-                for start_tick, end_tick, pitch, _channel, velocity in spans:
-                    if velocity <= 0:
-                        continue
-                    if pitch > pitch_high or pitch < pitch_low:
-                        continue
-                    if end_tick < tick_left or start_tick > tick_right_edge:
-                        continue
-                    highlight_pitches.add(int(pitch))
-            elif columns:
-                for col_events in columns:
-                    for pitch, _channel, velocity in col_events:
-                        if velocity <= 0:
-                            continue
-                        if pitch_high >= pitch >= pitch_low:
-                            highlight_pitches.add(int(pitch))
-
         # --- Note rows ---
         NOTE_NAMES = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"]
         for pitch in widget.pitches:
@@ -717,6 +781,7 @@ class CompositorRenderer(TextRenderer):
 
         # --- Note bars (continuous spans preferred) ---
         roll_top_px = (PAGE_Y_OFFSET + (y_row - len(widget.pitches))) * cell_h
+        _BAR_INSET = 1  # dark outer-ring width; overlap = dark edge of intruding note cuts through neighbour's bright fill
         if spans and pitch_high is not None and pitch_low is not None:
             roll_cols = len(widget.timeline)
             ticks_per_col = max(1, int(getattr(widget, "ticks_per_col", 1)))
@@ -726,8 +791,14 @@ class CompositorRenderer(TextRenderer):
             px_per_tick = cw / ticks_per_col
             x_left = x0
             x_right = x0 + roll_cols * cw
-
-            for start_tick, end_tick, pitch, channel, velocity in spans:
+            # Track drawn pixel intervals per pitch for overlap flash.
+            # Using drawn geometry avoids tick-domain bridge artefacts.
+            overlap_drawn: dict[int, list[tuple[int, int, int, int, int]]] = {}
+            for span in spans:
+                if not isinstance(span, (list, tuple)) or len(span) < 5:
+                    continue
+                start_tick, end_tick, pitch, channel, velocity = span[:5]
+                orig_start_tick = int(span[5]) if len(span) >= 6 else int(start_tick)
                 if velocity <= 0:
                     continue
                 if pitch > pitch_high or pitch < pitch_low:
@@ -735,7 +806,7 @@ class CompositorRenderer(TextRenderer):
                 if end_tick < tick_left or start_tick > tick_right_edge:
                     continue
                 row_idx = pitch_high - pitch
-                px_y = roll_top_px + row_idx * cell_h + 1
+                px_y = roll_top_px + row_idx * cell_h
                 px_start = x_left + int(round((start_tick - tick_left) * px_per_tick))
                 px_end = x_left + int(round((end_tick - tick_left) * px_per_tick))
                 if px_end < px_start:
@@ -749,7 +820,93 @@ class CompositorRenderer(TextRenderer):
                     width = max(1, x_right - px_start)
                 ch_idx = (int(channel) - 1) if channel is not None else 0
                 color = self._vel_lut[ch_idx % 16][min(int(velocity), 127)]
-                comp.rect(px_start, px_y, width, cell_h - 2, color)
+                bar_h = cell_h
+                px_stop = px_start + width
+                if px_stop <= px_start:
+                    continue
+                comp.rect(px_start, px_y, width, bar_h, color)
+                overlap_drawn.setdefault(int(pitch), []).append(
+                    (int(px_start), int(px_stop), int(channel or 1), int(velocity), int(orig_start_tick))
+                )
+                # Dark 1px outer ring — bright fill inside, dark edge outside.
+                # Where notes overlap, the dark ring of the intruding note cuts
+                # visibly through the bright fill of the note beneath it.
+                if width > 2 * _BAR_INSET and bar_h > 2 * _BAR_INSET:
+                    comp.rect(px_start,                      px_y,              _BAR_INSET, bar_h, BG)
+                    comp.rect(px_start + width - _BAR_INSET, px_y,              _BAR_INSET, bar_h, BG)
+                    comp.rect(px_start + _BAR_INSET,         px_y,              width - 2 * _BAR_INSET, _BAR_INSET, BG)
+                    comp.rect(px_start + _BAR_INSET,         px_y + bar_h - _BAR_INSET, width - 2 * _BAR_INSET, _BAR_INSET, BG)
+
+            # --- Overlap flash pass ---
+            # Sweep over pixel intervals from the bars we actually drew.
+            # This prevents false bridging in empty space.
+            _FLASH_HZ = 16.0
+            flash_t = time.monotonic()
+            for opitch, raw_intervals in overlap_drawn.items():
+                # Use all drawn intervals for this pitch; pixel-space overlap only
+                # flashes where bars actually intersect on-screen.
+                intervals = list(raw_intervals)
+                if len(intervals) < 2:
+                    continue
+                # Deduplicate same note press (orig_start + channel), keeping longer end.
+                seen_keys: dict[tuple[int, int], int] = {}
+                deduped: list[tuple[int, int, int, int, int]] = []
+                for entry in intervals:
+                    key = (int(entry[4]), int(entry[2]))  # (orig_start, ch)
+                    idx = seen_keys.get(key)
+                    if idx is None:
+                        seen_keys[key] = len(deduped)
+                        deduped.append(entry)
+                    elif int(entry[1]) > int(deduped[idx][1]):
+                        deduped[idx] = entry
+                pspans = deduped
+                if len(pspans) < 2:
+                    continue
+                # Sweep events: (x, type, idx); type 0=end before 1=start at same x.
+                events: list[tuple] = []
+                for oi, (x0_i, x1_i, _ch, _vel, _orig_st) in enumerate(pspans):
+                    events.append((int(x0_i), 1, oi))
+                    events.append((int(x1_i), 0, oi))
+                events.sort()
+                active: set[int] = set()
+                prev_x: int | None = None
+                orow_idx = pitch_high - opitch
+                opx_y = roll_top_px + orow_idx * cell_h
+                for ox, etype, oidx in events:
+                    if prev_x is not None and len(active) >= 2 and ox > prev_x:
+                        opx_s = max(x_left, min(x_right, int(prev_x)))
+                        opx_e = max(x_left, min(x_right, int(ox)))
+                        ow = opx_e - opx_s
+                        if ow > 0:
+                            active_list = sorted(active)
+                            n = len(active_list)
+                            total_phases = n + 1
+                            # User-tuned overlap speed map (relative to current base):
+                            # slowest: 70%, 2-note: 90%, 3-note: 130%, 4+-note: 170%.
+                            # Note: overlap flash renders only when >=2 notes are active.
+                            if n >= 4:
+                                flash_mult = 1.70
+                            elif n == 3:
+                                flash_mult = 1.30
+                            elif n == 2:
+                                flash_mult = 0.90
+                            else:
+                                flash_mult = 0.70
+                            flash_hz = _FLASH_HZ * flash_mult
+                            phase_idx = int(flash_t * flash_hz) % total_phases
+                            if phase_idx < n:
+                                si = active_list[phase_idx]
+                                ach, avel = pspans[si][2], pspans[si][3]
+                                ach_idx = (int(ach) - 1) % 16
+                                ocolor = self._vel_lut[ach_idx][min(int(avel), 127)]
+                            else:
+                                ocolor = BG
+                            comp.rect(opx_s, opx_y, ow, cell_h, ocolor)
+                    if etype == 1:
+                        active.add(oidx)
+                    else:
+                        active.discard(oidx)
+                    prev_x = ox
         else:
             if columns and pitch_high is not None and pitch_low is not None:
                 for i, col_events in enumerate(columns):
@@ -762,10 +919,17 @@ class CompositorRenderer(TextRenderer):
                         if pitch > pitch_high or pitch < pitch_low:
                             continue
                         row_idx = pitch_high - pitch
-                        px_y = roll_top_px + row_idx * cell_h + 1
+                        px_y = roll_top_px + row_idx * cell_h
                         ch_idx = (int(channel) - 1) if channel is not None else 0
                         color = self._vel_lut[ch_idx % 16][min(int(velocity), 127)]
-                        comp.rect(px_x, px_y, cw - 1, cell_h - 2, color)
+                        bar_w = cw - 1
+                        bar_h = cell_h
+                        comp.rect(px_x, px_y, bar_w, bar_h, color)
+                        if bar_w > 2 * _BAR_INSET and bar_h > 2 * _BAR_INSET:
+                            comp.rect(px_x,                      px_y,             _BAR_INSET, bar_h, BG)
+                            comp.rect(px_x + bar_w - _BAR_INSET, px_y,             _BAR_INSET, bar_h, BG)
+                            comp.rect(px_x + _BAR_INSET,         px_y,             bar_w - 2 * _BAR_INSET, _BAR_INSET, BG)
+                            comp.rect(px_x + _BAR_INSET,         px_y + bar_h - _BAR_INSET, bar_w - 2 * _BAR_INSET, _BAR_INSET, BG)
             else:
                 # Fallback: dense grid rendering (legacy widget.cells)
                 for row_idx, row_cells in enumerate(widget.cells):
