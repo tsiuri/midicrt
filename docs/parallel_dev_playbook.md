@@ -41,6 +41,35 @@ Rules:
 - `<ticket>` should be a stable work item ID (`1234`, `MIDI-1234`, etc.).
 - `<slug>` should be short, lowercase, and hyphenated.
 
+
+## PR metadata validation gate
+
+CI enforces pull request metadata from `.github/pull_request_template.md` on every `pull_request`:
+
+- `Lane` must be present and one of: `platform`, `logic`, `qa-contract`, `observer`.
+- `Branch` must match: `agent/<lane>/<ticket>-<slug>`.
+  - Supported ticket examples: `1234`, `MIDI-1234`.
+  - Slug must be lowercase and hyphenated (example: `contract-refresh`).
+- `Ticket` must be non-empty.
+- The contract-impact declaration checkbox line must be present (checked or unchecked).
+
+### Allowed branch examples
+
+- `agent/platform/1234-contract-refresh`
+- `agent/logic/MIDI-1288-voice-monitor-thresholds`
+- `agent/qa-contract/1301-fixture-hardening`
+- `agent/observer/1310-websocket-metrics`
+
+### Failure examples (will fail CI)
+
+- Missing lane field in PR body.
+- `Lane: infra` (lane outside allowed set).
+- Branch like `feature/platform/1234-contract-refresh` (wrong prefix).
+- Branch like `agent/platform/contract-refresh` (missing ticket).
+- Branch like `agent/platform/1234-Contract-Refresh` (slug must be lowercase).
+- Missing `Ticket` field value in PR body.
+- Missing contract-impact declaration checkbox line.
+
 ## PR limits by lane
 
 Keep changes small and isolated. If limits are exceeded, split into dependent PRs and use the handoff protocol.

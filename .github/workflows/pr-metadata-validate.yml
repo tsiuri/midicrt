@@ -1,0 +1,63 @@
+name: PR Metadata Validate
+
+on:
+  pull_request:
+
+jobs:
+  validate-pr-metadata:
+    name: validate-pr-metadata
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    steps:
+      - name: Validate pull request metadata
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+
+          errors=()
+          allowed_lanes="platform logic qa-contract observer"
+
+          lane_line=$(printf '%s\n' "$PR_BODY" | sed -nE 's/^[[:space:]]*-[[:space:]]*Lane:[[:space:]]*(.*)$/\1/p' | head -n1)
+          lane_value=$(printf '%s' "$lane_line" | sed -E 's/<!--.*-->//g' | xargs)
+          if [ -z "$lane_value" ]; then
+            errors+=("Lane is required in the PR body (expected: '- Lane: platform|logic|qa-contract|observer').")
+          elif [[ ! " $allowed_lanes " =~ " $lane_value " ]]; then
+            errors+=("Lane '$lane_value' is invalid. Allowed values: platform, logic, qa-contract, observer.")
+          fi
+
+          ticket_line=$(printf '%s\n' "$PR_BODY" | sed -nE 's/^[[:space:]]*-[[:space:]]*Ticket:[[:space:]]*(.*)$/\1/p' | head -n1)
+          ticket_value=$(printf '%s' "$ticket_line" | sed -E 's/<!--.*-->//g' | xargs)
+          if [ -z "$ticket_value" ]; then
+            errors+=("Ticket is required in the PR body (expected: '- Ticket: <work-item-id>').")
+          fi
+
+          if ! printf '%s\n' "$PR_BODY" | grep -Eiq '^[[:space:]]*-[[:space:]]*\[( |x|X)\][[:space:]]+This PR changes a contract/interface consumed by another lane \(`?contract-impact`?\)\.'; then
+            errors+=("Contract-impact declaration line is missing. Include the checkbox line from the PR template under 'Contract impact'.")
+          fi
+
+          if [ -z "${PR_BRANCH:-}" ]; then
+            errors+=("Unable to read PR branch name from event payload.")
+          else
+            branch_regex='^agent/(platform|logic|qa-contract|observer)/([A-Za-z]+-)?[0-9]+-[a-z0-9]+(-[a-z0-9]+)*$'
+            if [[ ! "$PR_BRANCH" =~ $branch_regex ]]; then
+              errors+=("Branch '$PR_BRANCH' is invalid. Expected format: agent/<lane>/<ticket>-<slug> (example: agent/platform/1234-contract-refresh).")
+            else
+              branch_lane=$(printf '%s' "$PR_BRANCH" | cut -d/ -f2)
+              if [ -n "$lane_value" ] && [ "$lane_value" != "$branch_lane" ]; then
+                errors+=("Lane mismatch: PR body lane '$lane_value' must match branch lane '$branch_lane'.")
+              fi
+            fi
+          fi
+
+          if [ "${#errors[@]}" -gt 0 ]; then
+            printf 'PR metadata validation failed with %s issue(s):\n' "${#errors[@]}"
+            for err in "${errors[@]}"; do
+              printf ' - %s\n' "$err"
+            done
+            exit 1
+          fi
+
+          echo "PR metadata validation passed."
