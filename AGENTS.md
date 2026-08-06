@@ -177,6 +177,21 @@ Use a shared JSON config file for all tunables going forward:
 
 - midicrt.py sets the mido backend to rtmidi and uses aconnect for autoconnect
 
+## Network MIDI input (testing rig, 2026-08-06)
+
+MIDI can be sent from mothership (REAPER) over the LAN. Full cross-machine
+runbook lives on motherbase: `~/projects/pivisualizer/README.md`. Pi side:
+
+- `aseqnet` server as transient user unit (`systemd-run --user
+  --unit=aseqnet-server /usr/bin/aseqnet -p 40002 -n NetMIDI`) — does NOT
+  survive reboot.
+- `~/run_midicrt.sh` self-wires `NetMIDI:0` → the `GreenCRT Monitor` virtual
+  input via a background retry loop at launch (no-op when the bridge is down
+  or a hardware interface was opened instead).
+- Verify arrival without touching log.txt wholesale (it is ~2GB):
+  `tail -c 200000 log.txt | grep -a recent_hits` — the counter increments per
+  received event.
+
 ## Plugin hooks
 
 Plugins can implement:
