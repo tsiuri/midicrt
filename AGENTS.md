@@ -16,10 +16,13 @@ This file tracks launch, config, and development notes for midicrt.
 ## Startup profile policy (IMPORTANT)
 
 - Startup profiles:
-  - `run_tui` (default, blessed/ANSI, tty-safe)
-  - `run_pixel` (optional, pixel backend path)
-- **tty1 autostart must always target `run_tui`.**
-- Keep `run_tui` free of GUI/pixel imports so headless/TTY boot cannot fail.
+  - `run_compositor` (direct /dev/fb0 RGB565 rendering — the tty1 autostart profile)
+  - `run_tui` (code default, blessed/ANSI, tty-safe — the guaranteed-boot fallback)
+  - `run_pixel` (optional SDL/pygame path, gated behind `MIDICRT_ENABLE_PIXEL=1`)
+- **tty1 autostart targets `run_compositor`** (run_midicrt.sh passes `--profile run_compositor`).
+  This is boot-safe because midicrt.py automatically falls back to `run_tui` when the
+  compositor path is unavailable — tty1 boot can never hard-fail on pixel dependencies.
+- Keep `run_tui` free of GUI/pixel imports so the fallback path cannot fail.
 - Pixel dependencies must stay optional (`pip install '.[pixel]'`) and enabled at runtime via feature flags.
 - Startup self-check must log active profile/backend to `log.txt`.
 

@@ -96,7 +96,8 @@ Check these user-visible behaviors while sending MIDI:
 
 ### 6) Quick regression checklist before declaring success
 
-- No boot-time change to tty1 policy: `run_tui` remains default/autostart target.
+- tty1 autostart boots `run_compositor` and still degrades cleanly to `run_tui`
+  when the compositor is unavailable.
 - No required GUI dependency for default run path.
 - tmux co-observe flow still works (`tmux attach -t midicrt`).
 - Web observer remains read-only (monitoring only, no control API).
@@ -120,14 +121,16 @@ being quit — after quitting you land at a zsh prompt and can relaunch.
 
 midicrt now supports three startup profiles:
 
-- `run_tui` (default): terminal-safe Blessed/ANSI path used for tty1/autostart.
+- `run_tui` (code default): terminal-safe Blessed/ANSI path; guaranteed-boot fallback.
 - `run_pixel` (optional): pixel path behind runtime feature flags and optional deps.
-- `run_compositor` (optional): direct RGB565 framebuffer compositor path.
+- `run_compositor`: direct RGB565 framebuffer compositor path; the tty1
+  autostart profile (run_midicrt.sh passes `--profile run_compositor`).
 
 ### Operational policy
 
-- **tty1 autostart must always target `run_tui`**.
-- Keep `run_tui` free of GUI/pixel imports to avoid headless boot failures.
+- **tty1 autostart targets `run_compositor`.** This is boot-safe because startup
+  automatically falls back to `run_tui` when the compositor is unavailable.
+- Keep `run_tui` free of GUI/pixel imports so the fallback can never fail.
 - Use `run_pixel` only for explicitly provisioned environments.
 
 ### Commands
@@ -229,7 +232,7 @@ This keeps lag bounded for all clients and avoids unbounded memory growth.
   process; keep the service bound to loopback (`127.0.0.1`) by default.
 - For remote access, place the observer behind a hardened boundary such as SSH
   tunneling or a reverse proxy with auth + TLS.
-- Keep tty1 autostart unchanged: `run_tui` remains the only boot-time target.
+- tty1 autostart boots `run_compositor`, with `run_tui` as the automatic fallback.
 - tmux remains the primary operational interface; web observer is for passive
   monitoring only.
 
