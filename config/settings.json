@@ -1,133 +1,6 @@
 {
-  "instruments": {
-    "names": [
-      "Kawai XD5",
-      "Matrix-1k",
-      "BassStaRack",
-      "Mnilogue",
-      "Arp 2600",
-      "Yamaha 1",
-      "Yamaha 2",
-      "Yamaha 3",
-      "Akai S 1",
-      "Akai S 2",
-      "Akai S 3",
-      "Akai S 4",
-      "Akai CD1",
-      "Akai CD2",
-      "Akai CD3",
-      "Akai CD4"
-    ]
-  },
-  "voice_monitor": {
-    "poly_limit_global": 16,
-    "poly_limit_ch": 8,
-    "event_log_len": 8,
-    "per_channel_limits": [
-      8,
-      8,
-      8,
-      8,
-      8,
-      8,
-      8,
-      8,
-      8,
-      8,
-      8,
-      8,
-      8,
-      8,
-      8,
-      8
-    ],
-    "over_limit_beats": 2.0
-  },
-  "audiospectrum": {
-    "lowcut_hz": 160.0,
-    "hpf_on": true,
-    "display_scale": 0.4537994906177964,
-    "floor_db": -35.0,
-    "ceil_db": 30.0,
-    "freq_scale": "log",
-    "agg_mode": "max",
-    "auto_adapt": true,
-    "bins": 96,
-    "gain_db": 24.0,
-    "smoothing": 1.3877787807814457e-17
-  },
-  "stuck_notes": {
-    "warn_after": 2.0,
-    "crit_after": 10.0,
-    "hold_after": 15.0,
-    "max_list": 3,
-    "y_pos_offset": 4,
-    "suspend_when_sustain": true,
-    "panic_on_crit": true,
-    "panic_scope": "channel",
-    "panic_output_name": "GreenCRT Panic",
-    "panic_cooldown": 3.0,
-    "panic_autoconnect": true,
-    "panic_dst_hints": [
-      "USB MIDI Interface",
-      "USB MIDI",
-      "MIDI 1"
-    ]
-  },
-  "harmony": {
-    "recent_note_count": 24,
-    "recent_note_seconds": 0.0,
-    "min_unique_for_chord": 2,
-    "min_unique_for_scale": 3,
-    "chord_min_ratio": 0.6,
-    "scale_min_ratio": 0.7,
-    "key_history_len": 256,
-    "key_confidence_threshold": 0.72,
-    "key_hysteresis_margin": 0.06,
-    "key_update_every_notes": 2,
-    "key_alt_margin": 0.04,
-    "extras_interval_hz": 8.0,
-    "motif_interval_hz": 4.0,
-    "rhythm_on_chord_change": true
-  },
-  "tuner": {
-    "pitch_method": "yin",
-    "tolerance": 0.8,
-    "silence_db": -55.0,
-    "min_conf": 0.3,
-    "smoothing": 0.55
-  },
-  "screensaver": {
-    "idle_timeout": 60.0
-  },
-  "pagecycle": {
-    "enabled": true,
-    "cycle_pages": [
-      1,
-      6,
-      8,
-      9
-    ],
-    "interval": 300.0,
-    "user_pause": 1800.0
-  },
-  "pianoroll": {
-    "pitch_low_default": 36,
-    "pitch_high_default": 83,
-    "ticks_per_col": 6,
-    "left_margin": 10,
-    "max_visible_rows": 20,
-    "idle_scroll_bpm": 120.0,
-    "out_range_hold": 2.5,
-    "pixel_style": "text",
-    "projection_mode": "tempo_relative"
-  },
-  "eventlog": {
-    "max_log": 300,
-    "visible_rows_target": 200
-  },
   "core": {
-    "fps": 36.0,
+    "fps": 60.0,
     "header_scroll_speed": 4.0,
     "ipc": {
       "enabled": true,
@@ -137,30 +10,15 @@
     "module_scheduler": {
       "overload_cost_ms": 6.0,
       "modules": {
-        "plugins.zharmony": {
-          "enabled": true,
-          "policy": "event_driven",
-          "interval_hz": 12.0
-        },
-        "plugins.ztimesig": {
-          "enabled": true,
-          "policy": "clock_driven",
-          "interval_hz": 12.0
-        },
-        "plugins.ztimesig_exp": {
-          "enabled": true,
-          "policy": "interval_hz",
-          "interval_hz": 8.0
-        },
-        "plugins.zvoicemonitor": {
-          "enabled": true,
-          "policy": "event_driven",
-          "interval_hz": 10.0
-        },
         "legacy.event_shim": {
           "enabled": true,
           "policy": "event_driven",
           "interval_hz": 10.0
+        },
+        "plugins.zharmony": {
+          "enabled": true,
+          "policy": "event_driven",
+          "interval_hz": 60.0
         }
       }
     },
@@ -214,15 +72,84 @@
     "retry_interval": 1.0,
     "retry_interval_cap": 30.0
   },
-  "configui": {
-    "accel_step_int": 2,
-    "accel_step_float": 0.1,
-    "accel_window": 0.25,
-    "accel_max": 12
+  "capture": {
+    "bars_to_keep": 16,
+    "dump_bars": 4,
+    "output_dir": "captures",
+    "file_prefix": "capture",
+    "default_bpm": 120.0
+  },
+  "instruments": {
+    "names": [
+      "Channel 1",
+      "Channel 2",
+      "Channel 3",
+      "Channel 4",
+      "Channel 5",
+      "Channel 6",
+      "Channel 7",
+      "Channel 8",
+      "Channel 9",
+      "Channel 10",
+      "Channel 11",
+      "Channel 12",
+      "Channel 13",
+      "Channel 14",
+      "Channel 15",
+      "Channel 16"
+    ]
+  },
+  "pagecycle": {
+    "enabled": true,
+    "cycle_pages": [
+      1,
+      6,
+      8,
+      9
+    ],
+    "interval": 300.0,
+    "user_pause": 3600.0
+  },
+  "harmony": {
+    "recent_note_count": 24,
+    "recent_note_seconds": 0.0,
+    "min_unique_for_chord": 2,
+    "min_unique_for_scale": 3,
+    "chord_min_ratio": 0.6,
+    "scale_min_ratio": 0.7,
+    "key_history_len": 256,
+    "key_confidence_threshold": 0.72,
+    "key_hysteresis_margin": 0.06,
+    "key_update_every_notes": 2,
+    "key_alt_margin": 0.04,
+    "extras_interval_hz": 8.0,
+    "motif_interval_hz": 4.0,
+    "rhythm_on_chord_change": true
+  },
+  "screensaver": {
+    "idle_timeout": 60.0
+  },
+  "stuck_notes": {
+    "warn_after": 2.0,
+    "crit_after": 10.0,
+    "hold_after": 15.0,
+    "max_list": 3,
+    "y_pos_offset": 4,
+    "suspend_when_sustain": true,
+    "panic_on_crit": true,
+    "panic_scope": "channel",
+    "panic_output_name": "GreenCRT Panic",
+    "panic_cooldown": 3.0,
+    "panic_autoconnect": true,
+    "panic_dst_hints": [
+      "USB MIDI Interface",
+      "USB MIDI",
+      "MIDI 1"
+    ]
   },
   "timesig": {
-    "max_events": 128,
-    "min_events": 8,
+    "max_events": 256,
+    "min_events": 12,
     "sigma_ticks": 4.0,
     "tie_thresh": 0.02,
     "window_seconds": 20.0,
@@ -258,115 +185,57 @@
       "12/8": 1.0
     }
   },
-  "pixel_renderer": {
-    "backend": "sdl2",
-    "fullscreen": false,
-    "scale": 1,
-    "target_fps": 60,
-    "font_name": "DejaVu Sans Mono",
-    "font_size": 18,
-    "cell_width": 10,
-    "cell_height": 18,
-    "window_title": "midicrt pixel renderer",
-    "palette": {
-      "foreground": [
-        120,
-        255,
-        120
-      ],
-      "background": [
-        5,
-        16,
-        5
-      ],
-      "bold_boost": 1.25,
-      "crt_tint": [
-        30,
-        255,
-        100
-      ],
-      "crt_tint_strength": 0.08
-    }
+  "voice_monitor": {
+    "poly_limit_global": 16,
+    "poly_limit_ch": 8,
+    "event_log_len": 8,
+    "per_channel_limits": [
+      8,
+      8,
+      8,
+      8,
+      8,
+      8,
+      8,
+      8,
+      8,
+      8,
+      8,
+      8,
+      8,
+      8,
+      8,
+      8
+    ],
+    "over_limit_beats": 2.0
   },
-  "capture": {
-    "bars_to_keep": 16,
-    "dump_bars": 4,
-    "output_dir": "captures",
-    "file_prefix": "capture",
-    "default_bpm": 120.0
+  "eventlog": {
+    "max_log": 300,
+    "visible_rows_target": 200
   },
-  "deepresearch": {
-    "enabled": false,
-    "cadence": {
-      "policy": "throttled_hz",
-      "hz": 2.0,
-      "trigger_events": [
-        "program_change",
-        "sysex"
-      ]
-    },
-    "budget": {
-      "max_compute_ms": 30.0,
-      "timeout_ms": 45.0,
-      "on_budget_exceeded": "skip_cycle",
-      "module_budget_ms": 12.0,
-      "degradation_policy": "skip_low_priority",
-      "degradation_skip_cycles": 1,
-      "degradation_priority_threshold": 50,
-      "module_priorities": {
-        "deepresearch": 80,
-        "deep_research": 80
-      }
-    },
-    "feature_flags": {
-      "emit_views": true,
-      "include_diagnostics": true,
-      "allow_partial_findings": true,
-      "enable_module_execution": true,
-      "enable_payload_result": true,
-      "enable_payload_metadata": true,
-      "enable_contract_module_outputs": true,
-      "enable_contract_views": true,
-      "enable_ui_surface_module_outputs": true,
-      "enable_ui_surface_views": true,
-      "enable_ui_surface_deep_research": true
-    },
-    "logic": {
-      "motif_ngram_n": 3,
-      "motif_ngram_window": 8,
-      "clip_match_history_window": 16,
-      "clip_match_top_k": 3
-    }
+  "pianoroll": {
+    "pitch_low_default": 36,
+    "pitch_high_default": 83,
+    "ticks_per_col": 6,
+    "left_margin": 10,
+    "max_visible_rows": 20,
+    "idle_scroll_bpm": 120.0,
+    "out_range_hold": 2.5,
+    "pixel_style": "text",
+    "projection_mode": "beat"
   },
   "pianoroll_exp": {
     "memory_max_sessions": 32,
     "memory_export_dir": "captures/pianoroll_exp",
     "memory_library_dir": "",
     "cc_lane_max_ratio": 0.25,
-    "projection_mode": "tempo_relative"
+    "projection_mode": "beat"
   },
-  "pianoroll_perf": {
-    "enabled": true,
-    "frame_budget_ms": 16.67,
-    "ema_alpha": 0.12,
-    "hysteresis_up_frames": 5,
-    "hysteresis_down_frames": 24,
-    "tier1": {
-      "frame_ms": 15.5,
-      "miss_ratio": 0.12
-    },
-    "tier2": {
-      "frame_ms": 18.5,
-      "miss_ratio": 0.22
-    },
-    "tier3": {
-      "frame_ms": 24.0,
-      "miss_ratio": 0.4
-    },
-    "effects": {
-      "overlap_flash": true,
-      "row_fade": true,
-      "dotted_guides": true
-    }
+  "tuner": {
+    "pitch_method": "yin",
+    "tolerance": 0.8,
+    "silence_db": -55.0,
+    "min_conf": 0.3,
+    "smoothing": 0.55
   }
 }

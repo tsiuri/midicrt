@@ -4,6 +4,106 @@
       1,
       2
     ],
+    "created_ts": 1772357296.4831674,
+    "duration_seconds": 8.3125,
+    "duration_ticks": 399,
+    "event_count": 128,
+    "event_counts": {
+      "note_off": 64,
+      "note_on": 64
+    },
+    "id": "engine-memory-408d165beaa7",
+    "midi_path": "/home/billie/codex/midicrt/captures/pianoroll_exp/20260301-010158/engine-memory-20260301-012816-0001.mid",
+    "note_span_count": 64,
+    "op_summary": "",
+    "origin": "capture",
+    "parent_session_id": "",
+    "revision_id": "engine-memory-408d165beaa7",
+    "session_path": "/home/billie/codex/midicrt/captures/pianoroll_exp/sessions/engine-memory-408d165beaa7.json",
+    "source_kind": "capture",
+    "start_tick": 0,
+    "stop_tick": 399
+  },
+  {
+    "channel_usage": [
+      1,
+      2
+    ],
+    "created_ts": 1772354709.5066195,
+    "duration_seconds": 0.6041666666666666,
+    "duration_ticks": 29,
+    "event_count": 12,
+    "event_counts": {
+      "note_off": 6,
+      "note_on": 6
+    },
+    "id": "engine-memory-757265c28a34",
+    "midi_path": "/home/billie/codex/midicrt/captures/pianoroll_exp/20260301-004455/engine-memory-20260301-004509-0001.mid",
+    "note_span_count": 6,
+    "op_summary": "",
+    "origin": "capture",
+    "parent_session_id": "",
+    "revision_id": "engine-memory-757265c28a34",
+    "session_path": "/home/billie/codex/midicrt/captures/pianoroll_exp/sessions/engine-memory-757265c28a34.json",
+    "source_kind": "capture",
+    "start_tick": 0,
+    "stop_tick": 29
+  },
+  {
+    "channel_usage": [
+      1,
+      2
+    ],
+    "created_ts": 1772354675.3639464,
+    "duration_seconds": 1.2083333333333333,
+    "duration_ticks": 58,
+    "event_count": 20,
+    "event_counts": {
+      "note_off": 10,
+      "note_on": 10
+    },
+    "id": "engine-memory-be6577015002",
+    "midi_path": "/home/billie/codex/midicrt/captures/pianoroll_exp/20260301-002910/engine-memory-20260301-004435-0004.mid",
+    "note_span_count": 10,
+    "op_summary": "",
+    "origin": "capture",
+    "parent_session_id": "",
+    "revision_id": "engine-memory-be6577015002",
+    "session_path": "/home/billie/codex/midicrt/captures/pianoroll_exp/sessions/engine-memory-be6577015002.json",
+    "source_kind": "capture",
+    "start_tick": 0,
+    "stop_tick": 58
+  },
+  {
+    "channel_usage": [
+      1,
+      2
+    ],
+    "created_ts": 1772354670.423703,
+    "duration_seconds": 0.9166666666666666,
+    "duration_ticks": 44,
+    "event_count": 16,
+    "event_counts": {
+      "note_off": 8,
+      "note_on": 8
+    },
+    "id": "engine-memory-45f5b4e9cb5f",
+    "midi_path": "/home/billie/codex/midicrt/captures/pianoroll_exp/20260301-002910/engine-memory-20260301-004430-0003.mid",
+    "note_span_count": 8,
+    "op_summary": "",
+    "origin": "capture",
+    "parent_session_id": "",
+    "revision_id": "engine-memory-45f5b4e9cb5f",
+    "session_path": "/home/billie/codex/midicrt/captures/pianoroll_exp/sessions/engine-memory-45f5b4e9cb5f.json",
+    "source_kind": "capture",
+    "start_tick": 0,
+    "stop_tick": 44
+  },
+  {
+    "channel_usage": [
+      1,
+      2
+    ],
     "created_ts": 1772353791.0609002,
     "duration_seconds": 9.3125,
     "duration_ticks": 447,
