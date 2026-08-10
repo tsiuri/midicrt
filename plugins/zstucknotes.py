@@ -171,6 +171,18 @@ def handle(msg):
             _sustain[ch] = False
 
 
+def _draw_row(y, text):
+    # Emit via stdout so the compositor's overlay capture records this row.
+    # midicrt.draw_line writes straight into the framebuffer in compositor
+    # mode, invisible to the 10 Hz overlay capture — the warning would only
+    # land on capture frames and flash. In legacy TUI mode pad the row so a
+    # shorter/empty message still erases the previous one.
+    line = str(text)[:midicrt.SCREEN_COLS]
+    if getattr(midicrt, "_compositor", None) is None:
+        line = line.ljust(midicrt.SCREEN_COLS)
+    sys.stdout.write(midicrt.term.move_yx(y, 0) + line)
+
+
 def draw(state=None):
     global _last_message, _last_message_time, _last_message_level
     global _had_stuck, _last_stuck_snapshot
@@ -229,10 +241,10 @@ def draw(state=None):
 
         if _last_message and (now - _last_message_time) <= HOLD_AFTER:
             y = max(0, midicrt.SCREEN_ROWS - Y_POS_OFFSET)
-            midicrt.draw_line(y, _last_message)
+            _draw_row(y, _last_message)
         else:
             y = max(0, midicrt.SCREEN_ROWS - Y_POS_OFFSET)
-            midicrt.draw_line(y, "")
+            _draw_row(y, "")
         return
 
     stuck.sort(reverse=True)
@@ -250,7 +262,7 @@ def draw(state=None):
     text = f"STUCK {level}: " + " | ".join(parts)
 
     y = max(0, midicrt.SCREEN_ROWS - Y_POS_OFFSET)
-    midicrt.draw_line(y, text)
+    _draw_row(y, text)
     _last_message = text
     _last_message_time = now
     _last_message_level = level
