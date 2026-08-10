@@ -48,6 +48,31 @@ class SnapshotBridge:
         self._last_error_code = ""
         self._running = False
         self._thread: threading.Thread | None = None
+        # Demand-driven subscription: only hold the engine snapshot socket
+        # while dashboard viewers exist. A connected client makes the engine
+        # build+encode snapshots at publish_hz, which costs real CPU on the
+        # Pi, so an idle observer must not subscribe.
+        self._viewers = 0
+        self._last_viewer_gone_monotonic = 0.0
+        self._demand_grace_s = 10.0
+        self._demand_wake = threading.Event()
+
+    def viewer_added(self) -> None:
+        with self._lock:
+            self._viewers += 1
+        self._demand_wake.set()
+
+    def viewer_removed(self) -> None:
+        with self._lock:
+            self._viewers = max(0, self._viewers - 1)
+            if self._viewers == 0:
+                self._last_viewer_gone_monotonic = time.monotonic()
+
+    def _demand_active(self) -> bool:
+        with self._lock:
+            if self._viewers > 0:
+                return True
+            return (time.monotonic() - self._last_viewer_gone_monotonic) < self._demand_grace_s
 
     def start(self) -> None:
         if self._running:
@@ -77,6 +102,8 @@ class SnapshotBridge:
                 "last_error": self._last_error,
                 "last_error_code": self._last_error_code,
                 "last_update_age_ms": age_ms,
+                "viewers": self._viewers,
+                "demand_grace_s": self._demand_grace_s,
             }
             return self._seq, self._latest, meta
 
@@ -89,7 +116,12 @@ class SnapshotBridge:
 
     def _run_loop(self) -> None:
         while self._running:
+            if not self._demand_active():
+                self._demand_wake.wait(timeout=1.0)
+                self._demand_wake.clear()
+                continue
             saw_snapshot = False
+            idle_disconnect = False
             client = SnapshotClient(socket_path=self.socket_path, enabled=True, timeout_s=1.0)
             try:
                 _LOG.info("connecting to snapshot socket: %s", self.socket_path)
@@ -99,6 +131,10 @@ class SnapshotBridge:
                     self._last_error = ""
                     self._last_error_code = ""
                 while self._running:
+                    if not self._demand_active():
+                        idle_disconnect = True
+                        _LOG.info("no dashboard viewers; releasing snapshot socket")
+                        break
                     snapshot = client.recv_snapshot()
                     if snapshot is None:
                         with self._lock:
@@ -128,10 +164,12 @@ class SnapshotBridge:
                 with self._lock:
                     self._connected = False
                     self._connect_cycles += 1
-                    if self._running and not saw_snapshot:
+                    if self._running and not saw_snapshot and not idle_disconnect:
                         self._consecutive_failures += 1
                         self._total_failures += 1
                 client.close()
+            if idle_disconnect:
+                continue
             if self._running:
                 delay_s = min(
                     self.reconnect_backoff_max_s,
@@ -342,6 +380,7 @@ class DashboardServer:
         ws = web.WebSocketResponse(heartbeat=30.0)
         await ws.prepare(request)
         self.clients.add(ws)
+        self.bridge.viewer_added()
         queue: asyncio.Queue[tuple[int, str]] = asyncio.Queue(maxsize=self.client_queue_size)
         sender_task = asyncio.create_task(self._client_sender(ws, queue))
         self.client_queues[ws] = queue
@@ -389,7 +428,9 @@ class DashboardServer:
         queue.put_nowait((seq, payload))
 
     def _drop_client(self, ws: web.WebSocketResponse) -> None:
-        self.clients.discard(ws)
+        if ws in self.clients:
+            self.clients.discard(ws)
+            self.bridge.viewer_removed()
         self.client_queues.pop(ws, None)
         task = self.client_send_tasks.pop(ws, None)
         if task is not None:
