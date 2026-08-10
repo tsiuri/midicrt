@@ -55,5 +55,57 @@ class ForcedReleaseTest(unittest.TestCase):
         self.assertEqual(eng.get_active_notes().get(1), {70})
 
 
+class _BurstPort:
+    """Fake port: yields one oversized burst, then nothing."""
+
+    def __init__(self, messages):
+        self._bursts = [list(messages)]
+
+    def iter_pending(self):
+        if self._bursts:
+            return iter(self._bursts.pop(0))
+        return iter(())
+
+
+class BacklogShedTest(unittest.TestCase):
+    def test_backlog_burst_sheds_clocks_but_keeps_notes(self):
+        eng = MidiEngine()
+        burst = [mido.Message("clock")] * (MidiEngine.BACKLOG_SHED_THRESHOLD + 20)
+        burst.append(mido.Message("note_on", note=60, velocity=100, channel=2))
+        burst.append(mido.Message("note_off", note=60, velocity=0, channel=2))
+        burst.append(mido.Message("note_on", note=61, velocity=100, channel=2))
+        port = _BurstPort(burst)
+
+        calls = {"n": 0}
+
+        def stop_flag():
+            calls["n"] += 1
+            return calls["n"] > 2
+
+        eng.run_input_loop(port, stop_flag, sleep_s=0.0)
+
+        self.assertEqual(eng.get_active_notes().get(2), {61})
+        self.assertEqual(
+            eng._shed_events_total, MidiEngine.BACKLOG_SHED_THRESHOLD + 20
+        )
+
+    def test_small_backlog_processes_everything(self):
+        eng = MidiEngine()
+        burst = [mido.Message("clock")] * 10
+        burst.append(mido.Message("note_on", note=60, velocity=100, channel=0))
+        port = _BurstPort(burst)
+
+        calls = {"n": 0}
+
+        def stop_flag():
+            calls["n"] += 1
+            return calls["n"] > 2
+
+        eng.run_input_loop(port, stop_flag, sleep_s=0.0)
+
+        self.assertEqual(eng.get_active_notes().get(0), {60})
+        self.assertEqual(eng._shed_events_total, 0)
+
+
 if __name__ == "__main__":
     unittest.main()

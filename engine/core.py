@@ -45,6 +45,11 @@ class EngineState:
 class MidiEngine:
     """In-process MIDI engine for transport state + analysis module execution."""
 
+    # Input backlog beyond this many pending events triggers shedding of
+    # display-only event types (see run_input_loop).
+    BACKLOG_SHED_THRESHOLD = 64
+    SHEDDABLE_EVENT_TYPES = frozenset({"clock", "aftertouch", "polytouch"})
+
     def __init__(
         self,
         modules: list[EngineModule] | None = None,
@@ -67,6 +72,8 @@ class MidiEngine:
         self.publisher = publisher
         self._lock = threading.Lock()
         self._forced_releases: list[int] = []
+        self._shed_events_total = 0
+        self._last_shed_report = 0.0
         _tm_cfg = tempo_metrics if isinstance(tempo_metrics, dict) else {}
         self._tempo_map = TempoMap(
             interval_window=max(2, int(_tm_cfg.get("interval_window", 24))),
@@ -826,7 +833,23 @@ class MidiEngine:
         while not stop_flag():
             try:
                 self._drain_forced_releases()
-                for msg in current_port.iter_pending():
+                pending = list(current_port.iter_pending())
+                if len(pending) > self.BACKLOG_SHED_THRESHOLD:
+                    # Falling behind: shed display-only events rather than let
+                    # the input queue overflow and silently drop note_offs
+                    # (which strands phantom held notes). Notes, transport,
+                    # and CCs are always kept.
+                    kept = [m for m in pending if m.type not in self.SHEDDABLE_EVENT_TYPES]
+                    shed = len(pending) - len(kept)
+                    if shed:
+                        self._shed_events_total += shed
+                        now_shed = time.monotonic()
+                        if now_shed - self._last_shed_report >= 5.0:
+                            self._last_shed_report = now_shed
+                            print(f"[Engine] backlog {len(pending)} events; shed {shed} "
+                                  f"low-priority (total {self._shed_events_total})")
+                        pending = kept
+                for msg in pending:
                     self.ingest(msg)
                 time.sleep(sleep_s)
             except recoverable_errors as exc:
