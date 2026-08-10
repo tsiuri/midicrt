@@ -148,7 +148,7 @@
     ]
   },
   "timesig": {
-    "max_events": 256,
+    "max_events": 96,
     "min_events": 12,
     "sigma_ticks": 4.0,
     "tie_thresh": 0.02,
