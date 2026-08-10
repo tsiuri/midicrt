@@ -211,9 +211,21 @@ def draw(state=None):
                 if PANIC_ON_CRIT:
                     last_sent = _panic_last.get(ch, 0.0)
                     if (now - last_sent) >= PANIC_COOLDOWN:
-                        if _send_all_notes_off(channel=ch):
-                            _panic_last[ch] = now
+                        sent = _send_all_notes_off(channel=ch)
+                        if sent:
                             _log(f"PANIC all-notes-off sent (scope={PANIC_SCOPE}, ch={ch:02d})")
+                        # Also clear engine-tracked state directly: the MIDI
+                        # loopback can be lossy under exactly the overload
+                        # conditions that strand phantom notes, and the engine
+                        # ignores CC123 from before this fix existed.
+                        eng = getattr(midicrt, "ENGINE", None)
+                        if eng is not None and hasattr(eng, "request_release"):
+                            eng.request_release(ch - 1)
+                            if not sent:
+                                _log(f"PANIC engine-release only (no out port, ch={ch:02d})")
+                            sent = True
+                        if sent:
+                            _panic_last[ch] = now
             if level in ("warn", "crit") and prev == "none":
                 _stuck_counts_note[note] = _stuck_counts_note.get(note, 0) + 1
                 _stuck_counts_pc[note % 12] = _stuck_counts_pc.get(note % 12, 0) + 1

@@ -66,6 +66,7 @@ class MidiEngine:
         self.on_event = on_event
         self.publisher = publisher
         self._lock = threading.Lock()
+        self._forced_releases: list[int] = []
         _tm_cfg = tempo_metrics if isinstance(tempo_metrics, dict) else {}
         self._tempo_map = TempoMap(
             interval_window=max(2, int(_tm_cfg.get("interval_window", 24))),
@@ -398,6 +399,36 @@ class MidiEngine:
         """Cheap copy of active notes by channel for UI overlays."""
         with self._lock:
             return {int(ch): set(notes) for ch, notes in self.state.active_notes.items()}
+
+    def request_release(self, channel: int | None = None) -> None:
+        """Queue a forced release of tracked active notes (all if None).
+
+        Drained on the input-loop thread as synthetic note_off ingestion, so
+        every consumer (engine state, modules, pages, plugins) updates
+        consistently even when the real note_offs were lost — e.g. dropped by
+        ALSA queue overflow under heavy input, which otherwise leaves phantom
+        held notes inflating render and analysis cost indefinitely.
+        """
+        with self._lock:
+            self._forced_releases.append(-1 if channel is None else int(channel))
+
+    def _drain_forced_releases(self) -> None:
+        with self._lock:
+            if not self._forced_releases:
+                return
+            requests = self._forced_releases[:]
+            self._forced_releases.clear()
+            actives = {ch: sorted(notes) for ch, notes in self.state.active_notes.items() if notes}
+        release_all = any(r < 0 for r in requests)
+        wanted = {r for r in requests if r >= 0}
+        for ch, notes in actives.items():
+            if not release_all and ch not in wanted:
+                continue
+            for note in notes:
+                try:
+                    self.ingest(mido.Message("note_off", note=int(note), velocity=0, channel=int(ch) & 0x0F))
+                except Exception:
+                    continue
 
     def ingest(self, msg: mido.Message) -> dict[str, Any]:
         event = self._normalize_event(msg)
@@ -794,6 +825,7 @@ class MidiEngine:
 
         while not stop_flag():
             try:
+                self._drain_forced_releases()
                 for msg in current_port.iter_pending():
                     self.ingest(msg)
                 time.sleep(sleep_s)
@@ -900,6 +932,12 @@ class MidiEngine:
                 self.state.status_text = "running"
             elif kind == "stop":
                 self.state.status_text = "stopped"
+            elif kind == "control_change" and int(event.get("control", -1)) in (120, 123):
+                channel = int(event.get("channel", 0))
+                if self.state.active_notes.get(channel):
+                    # Already inside self._lock here — append directly rather
+                    # than via request_release() (non-reentrant lock).
+                    self._forced_releases.append(channel)
             elif kind in ("note_on", "note_off"):
                 channel = int(event.get("channel", 0))
                 note = int(event.get("note", -1))
