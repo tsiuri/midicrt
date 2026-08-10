@@ -5,7 +5,7 @@
     "ipc": {
       "enabled": true,
       "socket_path": "/tmp/midicrt.sock",
-      "publish_hz": 20.0
+      "publish_hz": 5.0
     },
     "module_scheduler": {
       "overload_cost_ms": 6.0,
