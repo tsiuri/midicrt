@@ -75,8 +75,37 @@ class PianoRollStateSamplingTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             trace_path = Path(tmpdir) / "trace.log"
             old_path = prs.TRACE_LOG_PATH
+            old_enabled = prs.TRACE_ENABLED
             try:
                 prs.TRACE_LOG_PATH = str(trace_path)
+                prs.TRACE_ENABLED = True
+                state.on_tick(
+                    tick=12,
+                    running=True,
+                    bpm=120.0,
+                    roll_cols=24,
+                    pitch_low=36,
+                    pitch_high=83,
+                    now=200.0,
+                )
+            finally:
+                prs.TRACE_LOG_PATH = old_path
+                prs.TRACE_ENABLED = old_enabled
+
+            line = trace_path.read_text(encoding="utf-8").strip()
+            self.assertIn("steps=2", line)
+            self.assertIn("active=0", line)
+            self.assertIn("recent_hits=0", line)
+            self.assertIn("loop_ms=", line)
+
+    def test_trace_disabled_by_default_writes_nothing(self):
+        state = prs.PianoRollState(ticks_per_col=6, idle_scroll_bpm=120.0, out_range_hold=2.5)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            trace_path = Path(tmpdir) / "trace.log"
+            old_path = prs.TRACE_LOG_PATH
+            try:
+                prs.TRACE_LOG_PATH = str(trace_path)
+                self.assertFalse(prs.TRACE_ENABLED)
                 state.on_tick(
                     tick=12,
                     running=True,
@@ -89,11 +118,7 @@ class PianoRollStateSamplingTest(unittest.TestCase):
             finally:
                 prs.TRACE_LOG_PATH = old_path
 
-            line = trace_path.read_text(encoding="utf-8").strip()
-            self.assertIn("steps=2", line)
-            self.assertIn("active=0", line)
-            self.assertIn("recent_hits=0", line)
-            self.assertIn("loop_ms=", line)
+            self.assertFalse(trace_path.exists())
 
 
 if __name__ == "__main__":

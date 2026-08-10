@@ -8,6 +8,8 @@ import os
 
 
 TRACE_LOG_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "log.txt")
+# Per-tick trace writes cost ~12% CPU on the Pi 3 and flood log.txt; opt in only.
+TRACE_ENABLED = os.environ.get("MIDICRT_PIANOROLL_TRACE", "") == "1"
 MAX_STEPS_PER_FRAME = 8
 
 
@@ -35,6 +37,8 @@ class PianoRollState:
         self.last_below: tuple[int, int, float] | None = None
 
     def _append_trace(self, now: float, *, steps: int, loop_ms: float) -> None:
+        if not TRACE_ENABLED:
+            return
         timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(now))
         line = (
             f"[{timestamp}] [pianoroll] steps={int(steps)} active={len(self.active)} "
