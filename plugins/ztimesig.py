@@ -29,6 +29,11 @@ TIE_THRESH = 0.02
 WINDOW_SECONDS = 20.0
 DECAY_SECONDS = 15.0
 EVAL_INTERVAL = 0.5
+# When no page displaying this estimate is visible, evaluate lazily —
+# the 9-candidate Gaussian scoring is expensive on the Pi 3 and the
+# result is invisible everywhere else.
+BG_EVAL_INTERVAL = 10.0
+CONSUMER_PAGES = {3}
 MIN_CONF = 0.35
 CHANGE_CONFIRM = 3
 COLLAPSE_SAME_TICK = True
@@ -187,7 +192,9 @@ def handle(msg):
             if WINDOW_SECONDS > 0:
                 while _events and (now - _events[0][1]) > WINDOW_SECONDS:
                     _events.popleft()
-        if now - _last_eval > EVAL_INTERVAL:
+        _eval_iv = (EVAL_INTERVAL if getattr(midicrt, "current_page", -1) in CONSUMER_PAGES
+                    else max(EVAL_INTERVAL, BG_EVAL_INTERVAL))
+        if now - _last_eval > _eval_iv:
             est = _estimate(now)
             _last_result = est
             if est is None:

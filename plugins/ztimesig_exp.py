@@ -32,6 +32,11 @@ WEIGHT_BEAT = 0.6
 WEIGHT_SUB = 0.3
 OFF_PENALTY = 0.25
 EVAL_INTERVAL = 0.5
+# When no page displaying this estimate is visible, evaluate lazily —
+# the 9-candidate Gaussian scoring is expensive on the Pi 3 and the
+# result is invisible everywhere else.
+BG_EVAL_INTERVAL = 10.0
+CONSUMER_PAGES = {15}
 MIN_CONF = 0.35
 CHANGE_CONFIRM = 3
 COLLAPSE_SAME_TICK = True
@@ -188,7 +193,9 @@ def handle(msg):
             while _events and _events[0][0] < min_tick:
                 _events.popleft()
         now = time.time()
-        if now - _last_eval > EVAL_INTERVAL:
+        _eval_iv = (EVAL_INTERVAL if getattr(midicrt, "current_page", -1) in CONSUMER_PAGES
+                    else max(EVAL_INTERVAL, BG_EVAL_INTERVAL))
+        if now - _last_eval > _eval_iv:
             est = _estimate()
             _last_result = est
             if est is None:
