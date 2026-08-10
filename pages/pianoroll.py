@@ -620,8 +620,10 @@ def build_widget(state):
     else:
         info = view["legend"]
 
-    footer = _merge_left_right(view["footer_left"], view["footer_right"], cols)
-    footer_line = Line.plain(footer)
+    footer_text = view["footer_left"]
+    if view["footer_right"]:
+        footer_text = f"{footer_text}  {view['footer_right']}"
+    footer_line = Line.plain(footer_text.rjust(cols))
 
     return Column(
         [
@@ -641,7 +643,6 @@ def build_widget(state):
                 style_mode=PIXEL_STYLE,
                 projection_mode=view.get("projection_mode", "beat"),
             ),
-            Spacer(rows=1),
             TextBlock(lines=[footer_line]),
         ]
     )
