@@ -209,7 +209,7 @@ def draw(state):
 
     # compute visible range
     top = y0 + 2
-    bottom = rows - 2
+    bottom = rows - 5  # keep clear of stuck-note row (55), timer/fps row (56)
     visible_rows = max(5, min(VISIBLE_ROWS_TARGET, bottom - top))
 
     if len(log_buffer) == 0:
@@ -282,7 +282,7 @@ def build_widget(state):
 
     y0 = state.get("y_offset", 3)
     top = y0 + 2
-    bottom = rows - 2
+    bottom = rows - 5  # keep clear of stuck-note row (55), timer/fps row (56)
     visible_rows = max(5, min(VISIBLE_ROWS_TARGET, bottom - top))
 
     if len(log_buffer) == 0:
