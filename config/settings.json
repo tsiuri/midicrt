@@ -273,5 +273,18 @@
     "accel_step_float": 0.1,
     "accel_window": 0.25,
     "accel_max": 10
+  },
+  "audiospectrum": {
+    "lowcut_hz": 30.0,
+    "hpf_on": true,
+    "display_scale": 0.75,
+    "floor_db": -115.0,
+    "ceil_db": 10.0,
+    "freq_scale": "log",
+    "agg_mode": "max",
+    "auto_adapt": true,
+    "bins": 96,
+    "gain_db": 0.0,
+    "smoothing": 0.5499999999999999
   }
 }
