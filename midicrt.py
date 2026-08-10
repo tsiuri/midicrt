@@ -965,6 +965,25 @@ def _ui_loop_body():
         else:
             draw_line(1, base)
 
+        if _page_locked:
+            # Reverse-video banner right of the beat indicator; drawn after
+            # the row so it wins over the autoconnect marquee text.
+            lock_msg = " KEYS LOCKED TO PAGE - UNLOCK WITH [`] "
+            lock_col = len(base) + 2
+            if _compositor is not None:
+                from fb.compositor import BLACK, GREEN_BRIGHT
+                _compositor.comp.text(
+                    lock_col * _compositor.comp.char_w,
+                    1 * _compositor.comp.char_h,
+                    lock_msg,
+                    fg=BLACK,
+                    bg=GREEN_BRIGHT,
+                )
+            else:
+                sys.stdout.write(
+                    term.move_yx(1, lock_col) + term.reverse(lock_msg) + term.normal
+                )
+
         _pt0 = _pt("header", _pt0)
         # --- STATUS (row 2): schema-backed footer payload
         _frame_now = time.monotonic()
