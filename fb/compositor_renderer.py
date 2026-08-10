@@ -549,7 +549,7 @@ class CompositorRenderer(TextRenderer):
         spec_h = 5 * ch
         roll_h = 6 * ch
         x = 800 - bw - 4
-        badge_y = 475 - bh - 4
+        badge_y = 475 - bh - 4 - (5 * ch)  # lifted 5 text rows clear of the bottom edge
         spec_y = badge_y - spec_h
         roll_y = spec_y - roll_h
         total_h = roll_h + spec_h + bh
