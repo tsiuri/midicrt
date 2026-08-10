@@ -79,6 +79,8 @@ def draw(state):
     )
     if fps:
         base_text = f"{base_text}  {fps}"
+    if getattr(midicrt, "_page_locked", False):
+        base_text = f"{base_text}  [PAGE-LOCK]"
     x = xmid - (len(base_text) // 2)
     sys.stdout.write(t.move_yx(y, x) + base_text.ljust(midicrt.SCREEN_COLS))
 

@@ -591,6 +591,7 @@ fps_status = ""         # rolling fps text displayed in footer
 footer_status_text = "" # latest transport/status text (moved to bottom footer area)
 _scheduler_health_status = ""
 runtime_budget_status = ""
+_page_locked = False    # backtick toggle: route ALL keys to the current page
 
 # ---------------------------------------------------------------------
 # UI loop
@@ -618,6 +619,19 @@ def switch_page(page):
         return False, page_id
     current_page = page_id
     return True, page_id
+
+
+def switch_page_relative(step):
+    """Cycle to the next (+1) or previous (-1) existing page id, wrapping."""
+    ids = sorted(PAGES)
+    if not ids:
+        return False, None
+    try:
+        idx = ids.index(current_page)
+        target = ids[(idx + step) % len(ids)]
+    except ValueError:
+        target = ids[0]
+    return switch_page(target)
 
 
 def _screensaver_module() -> ScreenSaverModule | None:
@@ -960,6 +974,8 @@ def _ui_loop_body():
         fps_status = f"fps:{1.0/_frame_dt:.1f}" if _frame_dt > 0 else "fps:--"
         footer_status_text = str(ui_snapshot.get("status_text", "") or "")
         footer_right_parts = [p for p in (fps_status, _scheduler_health_status, runtime_budget_status) if p]
+        if _page_locked:
+            footer_right_parts.insert(0, "PAGE-LOCK")
         if sysex_status and (time.time() - sysex_status_time) < 3.0:
             footer_right_parts.append(sysex_status)
         ui_snapshot["fps_status"] = fps_status
@@ -1742,7 +1758,7 @@ def trigger_capture_recent(trigger: str = "key", bars: int | None = None):
 
 #keyboard
 def keyboard_listener():
-    global exit_flag
+    global exit_flag, _page_locked
     # find plugins of interest once at startup
     _ss = _screensaver_module()
     _pc = _pagecycle_module()
@@ -1764,7 +1780,55 @@ def keyboard_listener():
             if _pc:
                 _pc.notify_keypress()
 
-            # 1) page gets first shot; if it handles, skip everything else
+            # Ctrl-C quits even while page-locked (emergency valve; some tty
+            # modes deliver it as a keypress instead of SIGINT).
+            if key == "\x03":
+                exit_flag = True
+                break
+
+            # Backtick toggles page-lock: locked routes ALL other keys to the
+            # current page so page-local bindings (digits, +/-, ...) work.
+            if key == "`":
+                _page_locked = not _page_locked
+                continue
+
+            # 1) global page navigation wins over page bindings (unless locked)
+            if not _page_locked:
+                if key in "0123456789":
+                    switch_page(key)
+                    continue
+                elif key == "!":
+                    switch_page(11)
+                    continue
+                elif key == "@":
+                    switch_page(12)
+                    continue
+                elif key == "#":
+                    switch_page(13)
+                    continue
+                elif key == "$":
+                    switch_page(14)
+                    continue
+                elif key == "%":
+                    switch_page(15)
+                    continue
+                elif key == "^":
+                    switch_page(16)
+                    continue
+                elif key == "&":
+                    switch_page(17)
+                    continue
+                elif key in ("=", "+"):
+                    switch_page_relative(1)
+                    continue
+                elif key in ("-", "_"):
+                    switch_page_relative(-1)
+                    continue
+                elif key.lower() == "t":
+                    switch_page(10)
+                    continue
+
+            # 2) page's shot; if it handles, skip the remaining globals
             page = PAGES.get(current_page)
             if page and hasattr(page, "keypress"):
                 try:
@@ -1774,42 +1838,13 @@ def keyboard_listener():
                 except Exception:
                     pass
 
-            # 2) global keys
+            if _page_locked:
+                continue
+
+            # 3) remaining global keys (page-first when unlocked)
             if key.is_sequence and key.name == "KEY_ESCAPE":
                 exit_flag = True
                 break
-            elif key == "\x03":
-                # In some tty modes Ctrl-C arrives as a literal keypress
-                # instead of SIGINT. Treat it as quit for reliable restarts.
-                exit_flag = True
-                break
-            elif key in "0123456789":
-                switch_page(key)
-                continue
-            elif key == "!":
-                switch_page(11)
-                continue
-            elif key == "@":
-                switch_page(12)
-                continue
-            elif key == "#":
-                switch_page(13)
-                continue
-            elif key == "$":
-                switch_page(14)
-                continue
-            elif key == "%":
-                switch_page(15)
-                continue
-            elif key == "^":
-                switch_page(16)
-                continue
-            elif key == "&":
-                switch_page(17)
-                continue
-            elif key.lower() == "t":
-                switch_page(10)
-                continue
             elif key == "C":
                 trigger_capture_recent(trigger="key")
                 continue
