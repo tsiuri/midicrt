@@ -154,7 +154,7 @@
     "tie_thresh": 0.02,
     "window_seconds": 20.0,
     "decay_seconds": 15.0,
-    "eval_interval": 0.5,
+    "eval_interval": 2.0,
     "min_conf": 0.35,
     "change_confirm": 3,
     "collapse_same_tick": true
@@ -169,7 +169,7 @@
     "weight_beat": 0.6,
     "weight_sub": 0.3,
     "off_penalty": 0.25,
-    "eval_interval": 0.5,
+    "eval_interval": 2.0,
     "min_conf": 0.35,
     "change_confirm": 3,
     "collapse_same_tick": true,

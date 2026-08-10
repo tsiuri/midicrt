@@ -8,6 +8,17 @@ import time
 from copy import deepcopy
 from typing import Any, Callable
 
+try:
+    # ~4x faster than stdlib json on the Pi 3; snapshots run tens of KB and
+    # encode on the engine thread, so this is a real framerate lever.
+    import orjson
+
+    def _encode_envelope(envelope: dict) -> bytes:
+        return orjson.dumps(envelope, option=orjson.OPT_NON_STR_KEYS)
+except ImportError:
+    def _encode_envelope(envelope: dict) -> bytes:
+        return json.dumps(envelope, separators=(",", ":")).encode("utf-8")
+
 PROTOCOL_VERSION = 1
 ENVELOPE_SNAPSHOT = "snapshot"
 ENVELOPE_COMMAND = "command"
@@ -124,7 +135,7 @@ class SnapshotPublisher:
         self._last_publish = time.monotonic()
 
         envelope = make_envelope(ENVELOPE_SNAPSHOT, _normalize_deep_research_metadata(snapshot))
-        payload = (json.dumps(envelope, separators=(",", ":")) + "\n").encode("utf-8")
+        payload = _encode_envelope(envelope) + b"\n"
         stale: list[socket.socket] = []
         with self._lock:
             for client in self._clients:
@@ -153,7 +164,7 @@ class SnapshotPublisher:
         return (time.monotonic() - self._last_publish) >= interval
 
     def _send(self, client: socket.socket, envelope: dict[str, Any]) -> None:
-        client.sendall((json.dumps(envelope, separators=(",", ":")) + "\n").encode("utf-8"))
+        client.sendall(_encode_envelope(envelope) + b"\n")
 
     def _handle_command(self, envelope: dict[str, Any]) -> dict[str, Any]:
         request_id = envelope.get("request_id")
