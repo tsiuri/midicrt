@@ -95,5 +95,55 @@ class CaptureTest(_Base):
         self.assertEqual(resp.status, 503)
 
 
+class RecordingsTest(_Base):
+    def _seed(self):
+        d = os.path.join(self.captures, "20260228-200249")
+        os.makedirs(d)
+        open(os.path.join(d, "capture.mid"), "wb").write(b"MThd" + b"\x00" * 20)
+        s = os.path.join(self.captures, "pianoroll_exp", "sessions")
+        os.makedirs(s)
+        open(os.path.join(s, "engine-memory-abc.json"), "w").write("{}")
+
+    async def test_list_download_note_rename_delete(self):
+        self._seed()
+        resp = await self.client.get("/api/manage/recordings")
+        body = await resp.json()
+        names = [e["path"] for e in body["entries"]]
+        self.assertIn("20260228-200249", names)
+        self.assertIn("pianoroll_exp/sessions/engine-memory-abc.json", names)
+
+        resp = await self.client.get(
+            "/api/manage/recordings/download",
+            params={"path": "20260228-200249/capture.mid"})
+        self.assertEqual(resp.status, 200)
+        self.assertTrue((await resp.read()).startswith(b"MThd"))
+
+        resp = await self.client.post("/api/manage/recordings/note",
+                                      json={"path": "20260228-200249", "note": "good take"})
+        self.assertTrue((await resp.json())["ok"])
+        resp = await self.client.get("/api/manage/recordings")
+        entry = [e for e in (await resp.json())["entries"]
+                 if e["path"] == "20260228-200249"][0]
+        self.assertEqual(entry["note"], "good take")
+
+        resp = await self.client.post("/api/manage/recordings/rename",
+                                      json={"path": "20260228-200249", "new_name": "good-take"})
+        self.assertTrue((await resp.json())["ok"])
+
+        resp = await self.client.post("/api/manage/recordings/delete",
+                                      json={"path": "good-take"})
+        self.assertTrue((await resp.json())["ok"])
+        resp = await self.client.get("/api/manage/recordings")
+        self.assertNotIn("good-take", [e["path"] for e in (await resp.json())["entries"]])
+
+    async def test_traversal_rejected(self):
+        resp = await self.client.get("/api/manage/recordings/download",
+                                     params={"path": "../settings.json"})
+        self.assertEqual(resp.status, 400)
+        resp = await self.client.post("/api/manage/recordings/delete",
+                                      json={"path": "../../etc"})
+        self.assertEqual(resp.status, 400)
+
+
 if __name__ == "__main__":
     unittest.main()
