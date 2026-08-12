@@ -23,6 +23,7 @@ from web.sysex_io import SysexLibrary, SysexSender, split_messages
 
 _MAX_NAME_LEN = 32
 _SAFE_SEGMENT = _re.compile(r"^[A-Za-z0-9._ -]+$")
+_MAX_SYSEX_UPLOAD = 4 * 1024 * 1024  # 4MB — vastly larger than any real dump
 
 
 def _resolve_capture_path(root: str, rel: str) -> str:
@@ -224,14 +225,21 @@ def register_manage_routes(app: web.Application, deps: ManageDeps) -> None:
 
     async def upload_sysex(request: web.Request) -> web.Response:
         reader = await request.multipart()
-        data = b""
+        chunks = bytearray()
         name = ""
         async for part in reader:
             if part.name == "file":
                 name = part.filename or "upload.syx"
-                data = await part.read(decode=False)
+                while True:
+                    chunk = await part.read_chunk()
+                    if not chunk:
+                        break
+                    chunks.extend(chunk)
+                    if len(chunks) > _MAX_SYSEX_UPLOAD:
+                        return _fail(413, "file too large (limit 4MB)")
             elif part.name == "name":
                 name = (await part.text()).strip() or name
+        data = bytes(chunks)
         if not data:
             return _fail(400, "no file uploaded")
         try:

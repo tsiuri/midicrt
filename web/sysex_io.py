@@ -43,6 +43,8 @@ class SysexLibrary:
     # -- name handling -------------------------------------------------
     def _resolve(self, name: str) -> str:
         rel = name[len("inbox/"):] if name.startswith("inbox/") else name
+        if len(rel) > 100:
+            raise ValueError("name too long")
         if not rel.endswith(".syx"):
             raise ValueError("name must end with .syx")
         if not _NAME_RE.match(rel) or rel.startswith("."):

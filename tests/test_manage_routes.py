@@ -237,6 +237,32 @@ class SysexRoutesTest(_Base):
             json={"name": "go.syx", "port": "Nope", "gap_ms": 0})
         self.assertEqual(resp.status, 400)
 
+    async def test_upload_rejects_oversized_file(self):
+        from aiohttp import FormData
+        big = b"\xf0" + b"\x00" * (4 * 1024 * 1024 + 10) + b"\xf7"
+        form = FormData()
+        form.add_field("file", big, filename="huge.syx",
+                       content_type="application/octet-stream")
+        resp = await self.client.post("/api/manage/sysex/upload", data=form)
+        self.assertEqual(resp.status, 413)
+
+    async def test_upload_rejects_long_filename(self):
+        from aiohttp import FormData
+        long_name = ("x" * 300) + ".syx"
+        form = FormData()
+        form.add_field("file", self.SYX, filename=long_name,
+                       content_type="application/octet-stream")
+        resp = await self.client.post("/api/manage/sysex/upload", data=form)
+        self.assertEqual(resp.status, 400)
+
+    async def test_rename_rejects_long_new_name(self):
+        self._deps.library.write("go.syx", self.SYX)
+        long_name = ("x" * 300) + ".syx"
+        resp = await self.client.post(
+            "/api/manage/sysex/rename",
+            json={"name": "go.syx", "new_name": long_name})
+        self.assertEqual(resp.status, 400)
+
 
 if __name__ == "__main__":
     unittest.main()
