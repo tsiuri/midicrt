@@ -28,6 +28,7 @@ from ui.model import (
     FooterStatusWidget,
     Frame,
     NotesWidget,
+    PageLinesWidget,
     PianoRollWidget,
     Spacer,
     TextBlock,
@@ -700,6 +701,13 @@ class CompositorRenderer(TextRenderer):
 
         if isinstance(widget, PianoRollWidget):
             return self._render_pianoroll(widget, frame, y_row)
+
+        if isinstance(widget, PageLinesWidget):
+            return self._render_widget(
+                TextBlock(lines=[self._line_plain(s) for s in widget.lines]),
+                frame,
+                y_row,
+            )
 
         # Unknown widget type — skip one row
         return y_row + 1
