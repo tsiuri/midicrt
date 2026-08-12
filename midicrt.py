@@ -763,6 +763,12 @@ def wake_screensaver() -> bool:
 
 def set_config_section(section: str, value: dict):
     save_section(section, value)
+    if section == "instruments" and isinstance(value.get("names"), list):
+        # Applied live: pages read INSTRUMENT_NAMES; mutate in place so
+        # every existing reference sees the new names immediately.
+        fresh = [str(n).strip() for n in value["names"] if str(n).strip()]
+        if fresh:
+            INSTRUMENT_NAMES[:] = fresh
 
 
 def _on_midi_activity(msg: mido.Message) -> None:

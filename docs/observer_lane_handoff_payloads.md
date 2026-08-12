@@ -70,10 +70,14 @@ Refresh cadence and bounds:
     }
   },
   "read_only": {
-    "mode": "strict-read-only",
-    "mutation_endpoints": [],
-    "command_execution_paths": [],
-    "allowed_http_methods": ["GET"],
+    "mode": "read-only-observer+management",
+    "mutation_endpoints": ["/api/manage/*"],
+    "command_execution_paths": [
+      "/api/manage/instruments -> ipc set_config",
+      "/api/manage/capture -> ipc capture_recent",
+      "/api/manage/sysex/execute -> midi out"
+    ],
+    "allowed_http_methods": ["GET", "POST (/api/manage/* only)"],
     "websocket_inbound_actions": ["ping"],
     "websocket_rejected_actions": ["*"],
     "bounded_stream_rate_hz": 20.0
@@ -98,10 +102,14 @@ Refresh cadence and bounds:
   "client_queue_size": 8,
   "telemetry": {"queue_dropped": 0, "queue_coalesced": 2},
   "read_only": {
-    "mode": "strict-read-only",
-    "mutation_endpoints": [],
-    "command_execution_paths": [],
-    "allowed_http_methods": ["GET"],
+    "mode": "read-only-observer+management",
+    "mutation_endpoints": ["/api/manage/*"],
+    "command_execution_paths": [
+      "/api/manage/instruments -> ipc set_config",
+      "/api/manage/capture -> ipc capture_recent",
+      "/api/manage/sysex/execute -> midi out"
+    ],
+    "allowed_http_methods": ["GET", "POST (/api/manage/* only)"],
     "websocket_inbound_actions": ["ping"],
     "websocket_rejected_actions": ["*"],
     "bounded_polling": {"max_broadcast_hz": 20.0, "client_queue_size": 8}
@@ -142,8 +150,8 @@ Use these snippets during incident triage to verify observer contract stability 
 {
   "error": "read-only observer: mutation methods are disabled",
   "read_only": {
-    "mode": "strict-read-only",
-    "allowed_http_methods": ["GET"]
+    "mode": "read-only-observer+management",
+    "allowed_http_methods": ["GET", "POST (/api/manage/* only)"]
   }
 }
 ```

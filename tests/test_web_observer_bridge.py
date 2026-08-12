@@ -213,10 +213,17 @@ class DashboardServerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(data["bridge"]["total_failures"], 2)
         self.assertIn("telemetry", data)
         self.assertIn("schema_health", data)
-        self.assertEqual(data["read_only"]["mutation_endpoints"], [])
-        self.assertEqual(data["read_only"]["command_execution_paths"], [])
-        self.assertEqual(data["read_only"]["mode"], "strict-read-only")
-        self.assertEqual(data["read_only"]["allowed_http_methods"], ["GET"])
+        self.assertEqual(data["read_only"]["mutation_endpoints"], ["/api/manage/*"])
+        self.assertEqual(
+            data["read_only"]["command_execution_paths"],
+            [
+                "/api/manage/instruments -> ipc set_config",
+                "/api/manage/capture -> ipc capture_recent",
+                "/api/manage/sysex/execute -> midi out",
+            ],
+        )
+        self.assertEqual(data["read_only"]["mode"], "read-only-observer+management")
+        self.assertEqual(data["read_only"]["allowed_http_methods"], ["GET", "POST (/api/manage/* only)"])
         self.assertEqual(data["read_only"]["bounded_polling"]["max_broadcast_hz"], 12.0)
 
     async def test_ws_initial_payload_includes_metrics(self):
@@ -238,8 +245,15 @@ class DashboardServerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["metrics"]["sequence_gap"], 0)
         self.assertEqual(payload["metrics"]["last_update_age_ms"], 15.5)
         self.assertEqual(payload["schema_health"]["latest_snapshot_version"], 4)
-        self.assertEqual(payload["read_only"]["mutation_endpoints"], [])
-        self.assertEqual(payload["read_only"]["command_execution_paths"], [])
+        self.assertEqual(payload["read_only"]["mutation_endpoints"], ["/api/manage/*"])
+        self.assertEqual(
+            payload["read_only"]["command_execution_paths"],
+            [
+                "/api/manage/instruments -> ipc set_config",
+                "/api/manage/capture -> ipc capture_recent",
+                "/api/manage/sysex/execute -> midi out",
+            ],
+        )
 
     async def test_broadcast_loop_evicts_stale_and_churned_websocket_clients(self):
         server = DashboardServer(socket_path="/tmp/test.sock", host="127.0.0.1", port=0, max_broadcast_hz=10)
@@ -342,18 +356,26 @@ class DashboardServerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(data["observer_views"]["motif"]["pattern"], "+4 -2")
         self.assertEqual(data["observer_views"]["capture_status"]["buffer_fill"], 14)
         self.assertEqual(data["read_only"]["bounded_stream_rate_hz"], 20.0)
-        self.assertEqual(data["read_only"]["mode"], "strict-read-only")
+        self.assertEqual(data["read_only"]["mode"], "read-only-observer+management")
         self.assertEqual(data["metrics"]["module_health"]["warnings"][0]["module"], "deepresearch")
         self.assertEqual(data["observer_views"]["module_health"]["warnings"][0]["over_budget_count"], 2)
 
     async def test_read_only_method_guard_rejects_mutation_methods(self):
         server = DashboardServer(socket_path="/tmp/test.sock", host="127.0.0.1", port=0)
-        request = types.SimpleNamespace(method="POST")
+        request = types.SimpleNamespace(method="POST", path="/healthz")
         response = await server._read_only_method_guard(request, mock.AsyncMock())
         payload = json.loads(response.text)
         self.assertEqual(response.status, 405)
         self.assertEqual(payload["error"], "read-only observer: mutation methods are disabled")
-        self.assertEqual(payload["read_only"]["allowed_http_methods"], ["GET"])
+        self.assertEqual(payload["read_only"]["allowed_http_methods"], ["GET", "POST (/api/manage/* only)"])
+
+    async def test_read_only_method_guard_allows_manage_api_mutations(self):
+        server = DashboardServer(socket_path="/tmp/test.sock", host="127.0.0.1", port=0)
+        request = types.SimpleNamespace(method="POST", path="/api/manage/instruments")
+        handler = mock.AsyncMock(return_value="handled")
+        response = await server._read_only_method_guard(request, handler)
+        handler.assert_awaited_once_with(request)
+        self.assertEqual(response, "handled")
 
     async def test_ws_rejects_non_ping_inbound_actions(self):
         server = DashboardServer(socket_path="/tmp/test.sock", host="127.0.0.1", port=0)
