@@ -106,7 +106,8 @@ def register_manage_routes(app: web.Application, deps: ManageDeps) -> None:
                          else path + ".note.txt")
             note = ""
             if os.path.isfile(note_path):
-                note = open(note_path, "r", encoding="utf-8").read().strip()
+                with open(note_path, "r", encoding="utf-8") as f:
+                    note = f.read().strip()
             if os.path.isdir(path):
                 files = sorted(os.listdir(path))
                 size = sum(os.path.getsize(os.path.join(path, f))
@@ -145,7 +146,10 @@ def register_manage_routes(app: web.Application, deps: ManageDeps) -> None:
         return web.FileResponse(path)
 
     async def delete_recording(request: web.Request) -> web.Response:
-        body = await request.json()
+        try:
+            body = await request.json()
+        except Exception:
+            return _fail(400, "invalid JSON body")
         try:
             path = _resolve_capture_path(deps.captures_root, str(body.get("path", "")))
         except ValueError as exc:
@@ -159,10 +163,15 @@ def register_manage_routes(app: web.Application, deps: ManageDeps) -> None:
         return _ok()
 
     async def rename_recording(request: web.Request) -> web.Response:
-        body = await request.json()
+        try:
+            body = await request.json()
+        except Exception:
+            return _fail(400, "invalid JSON body")
         new_name = str(body.get("new_name", ""))
         try:
             path = _resolve_capture_path(deps.captures_root, str(body.get("path", "")))
+            if new_name in (".", ".."):
+                raise ValueError("path escapes captures root")
             if not _SAFE_SEGMENT.match(new_name):
                 raise ValueError("invalid new_name")
             target = os.path.join(os.path.dirname(path), new_name)
@@ -176,7 +185,10 @@ def register_manage_routes(app: web.Application, deps: ManageDeps) -> None:
         return _ok()
 
     async def note_recording(request: web.Request) -> web.Response:
-        body = await request.json()
+        try:
+            body = await request.json()
+        except Exception:
+            return _fail(400, "invalid JSON body")
         try:
             path = _resolve_capture_path(deps.captures_root, str(body.get("path", "")))
         except ValueError as exc:

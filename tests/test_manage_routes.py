@@ -144,6 +144,17 @@ class RecordingsTest(_Base):
                                       json={"path": "../../etc"})
         self.assertEqual(resp.status, 400)
 
+    async def test_delete_rejects_malformed_json_body(self):
+        resp = await self.client.post("/api/manage/recordings/delete",
+                                      data="not json", headers={"Content-Type": "application/json"})
+        self.assertEqual(resp.status, 400)
+
+    async def test_rename_rejects_dotdot_new_name(self):
+        self._seed()
+        resp = await self.client.post("/api/manage/recordings/rename",
+                                      json={"path": "20260228-200249", "new_name": ".."})
+        self.assertEqual(resp.status, 400)
+
 
 if __name__ == "__main__":
     unittest.main()
