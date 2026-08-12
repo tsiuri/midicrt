@@ -185,6 +185,25 @@ class SysexReceiverTest(unittest.TestCase):
         backend.callbacks["USB2.0-MIDI 24:0"](mido.Message("sysex", data=[0x41]))
         self.assertEqual([e for e in lib.list() if e["inbox"]], [])
 
+    def test_stop_returns_promptly(self):
+        from web.sysex_io import SysexReceiver
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        lib = SysexLibrary(tmp.name)
+        backend = _FakeInBackend(["USB2.0-MIDI 24:0"])
+        rx = SysexReceiver(lib, patterns=["usb"], backend=backend, retry_s=5.0)
+        rx.start()
+        for _ in range(100):
+            if rx.open_ports:
+                break
+            time.sleep(0.02)
+        import time as time_module
+        start = time_module.time()
+        rx.stop()
+        elapsed = time_module.time() - start
+        self.assertLess(elapsed, 2.0, f"stop() took {elapsed:.2f}s, should be < 2.0s")
+        self.assertFalse(rx._thread.is_alive(), "thread should be dead after stop()")
+
 
 if __name__ == "__main__":
     unittest.main()

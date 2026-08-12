@@ -38,6 +38,7 @@ class SysexLibrary:
         os.makedirs(self.inbox_dir, exist_ok=True)
         self._last_inbox_file: str | None = None
         self._last_inbox_ts = 0.0
+        self._inbox_lock = threading.Lock()
 
     # -- name handling -------------------------------------------------
     def _resolve(self, name: str) -> str:
@@ -97,14 +98,15 @@ class SysexLibrary:
         os.rename(self._resolve(inbox_name), self._resolve(new_name))
 
     def inbox_write(self, data: bytes, now: float | None = None) -> str:
-        now = time.time() if now is None else now
-        if self._last_inbox_file is None or (now - self._last_inbox_ts) >= _INBOX_GAP_S:
-            stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime(now))
-            self._last_inbox_file = f"inbox/{stamp}.syx"
-        self._last_inbox_ts = now
-        with open(self._resolve(self._last_inbox_file), "ab") as f:
-            f.write(data)
-        return self._last_inbox_file
+        with self._inbox_lock:
+            now = time.time() if now is None else now
+            if self._last_inbox_file is None or (now - self._last_inbox_ts) >= _INBOX_GAP_S:
+                stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime(now))
+                self._last_inbox_file = f"inbox/{stamp}.syx"
+            self._last_inbox_ts = now
+            with open(self._resolve(self._last_inbox_file), "ab") as f:
+                f.write(data)
+            return self._last_inbox_file
 
 
 class SysexSender:
@@ -161,12 +163,14 @@ class SysexReceiver:
         self._patterns = [p.lower() for p in patterns if p]
         self._retry_s = retry_s
         self._ports: dict[str, object] = {}
+        self._ports_lock = threading.Lock()
         self._running = False
         self._thread: threading.Thread | None = None
 
     @property
     def open_ports(self) -> list[str]:
-        return sorted(self._ports)
+        with self._ports_lock:
+            return sorted(self._ports)
 
     def start(self) -> None:
         if self._running:
@@ -179,13 +183,14 @@ class SysexReceiver:
     def stop(self) -> None:
         self._running = False
         if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=1.0)
-        for port in self._ports.values():
-            try:
-                port.close()
-            except Exception:  # noqa: BLE001 — best-effort close
-                pass
-        self._ports.clear()
+            self._thread.join()
+        with self._ports_lock:
+            for port in self._ports.values():
+                try:
+                    port.close()
+                except Exception:  # noqa: BLE001 — best-effort close
+                    pass
+            self._ports.clear()
 
     def _matches(self, name: str) -> bool:
         low = name.lower()
@@ -206,20 +211,26 @@ class SysexReceiver:
         while self._running:
             try:
                 names = [n for n in self._backend.get_input_names() if self._matches(n)]
-                for name in names:
-                    if name in self._ports:
-                        continue
-                    try:
-                        self._ports[name] = self._backend.open_input(
-                            name, callback=self._on_message)
-                    except Exception:  # noqa: BLE001 — retried next scan
-                        pass
-                for name in list(self._ports):
-                    if name not in names:
+                with self._ports_lock:
+                    for name in names:
+                        if name in self._ports:
+                            continue
                         try:
-                            self._ports.pop(name).close()
-                        except Exception:  # noqa: BLE001
+                            self._ports[name] = self._backend.open_input(
+                                name, callback=self._on_message)
+                        except Exception:  # noqa: BLE001 — retried next scan
                             pass
+                    for name in list(self._ports):
+                        if name not in names:
+                            try:
+                                self._ports.pop(name).close()
+                            except Exception:  # noqa: BLE001
+                                pass
             except Exception:  # noqa: BLE001 — scan must never kill the thread
                 pass
-            time.sleep(self._retry_s)
+            # Sleep in short intervals so stop() can return promptly
+            remaining = self._retry_s
+            while remaining > 0 and self._running:
+                sleep_time = min(0.1, remaining)
+                time.sleep(sleep_time)
+                remaining -= sleep_time
