@@ -56,6 +56,13 @@ class _NullBackend:
         raise ValueError("no ports")
 
 
+class ManagePageTest(_Base):
+    async def test_manage_page_serves_html(self):
+        resp = await self.client.get("/manage")
+        self.assertEqual(resp.status, 200)
+        self.assertIn("text/html", resp.headers.get("Content-Type", ""))
+
+
 class InstrumentsTest(_Base):
     async def test_get_names(self):
         resp = await self.client.get("/api/manage/instruments")

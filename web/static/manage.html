@@ -1,0 +1,488 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>midicrt manage</title>
+  <style>
+    body { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; margin: 1rem; background:#0a0f0a; color:#d6ffd6; }
+    a { color:#b7ffb7; }
+    h1,h2 { margin:.2rem 0 .6rem; }
+    .muted { opacity:.8; font-size:.9rem; }
+    section.card { border:1px solid #2f5f2f; border-radius:8px; padding:.75rem; background:#101910; margin-bottom:1rem; }
+    .row { display:flex; flex-wrap:wrap; gap:.4rem; align-items:center; margin:.3rem 0; }
+    input[type=text], input[type=number], select {
+      background:#0a0f0a; color:#d6ffd6; border:1px solid #2f5f2f; border-radius:4px;
+      padding:.25rem .4rem; font-family: inherit; font-size:.9rem;
+    }
+    input[type=file] { color:#d6ffd6; font-family: inherit; font-size:.9rem; }
+    button {
+      background:#152315; color:#d6ffd6; border:1px solid #3e8f3e; border-radius:4px;
+      padding:.3rem .6rem; font-family: inherit; font-size:.85rem; cursor:pointer;
+    }
+    button:hover { background:#1e321e; }
+    table { border-collapse: collapse; width:100%; margin-top:.5rem; font-size:.85rem; }
+    th, td { border-bottom:1px solid #2f5f2f; padding:.35rem .5rem; text-align:left; vertical-align:top; }
+    th { color:#b7ffb7; }
+    .status-line { margin:.4rem 0; min-height:1.2em; font-size:.85rem; }
+    .status-line.ok { color:#b7ffb7; }
+    .status-line.err { color:#ffb3b3; }
+    .actions { display:flex; flex-wrap:wrap; gap:.3rem; align-items:center; }
+    .filelinks { display:flex; flex-direction:column; gap:.1rem; }
+  </style>
+</head>
+<body>
+  <h1>midicrt management</h1>
+  <div class="muted">Instruments, recordings, and sysex librarian. <a href="/">Back to observer</a></div>
+
+  <section class="card">
+    <h2>Instruments</h2>
+    <div id="instrumentsList"></div>
+    <div class="row">
+      <button id="instrumentsSave">Save</button>
+    </div>
+    <div id="instrumentsStatus" class="status-line"></div>
+  </section>
+
+  <section class="card">
+    <h2>Recordings</h2>
+    <div class="row">
+      <button id="captureNow">Capture now</button>
+    </div>
+    <div id="recordingsStatus" class="status-line"></div>
+    <table id="recordingsTable">
+      <thead>
+        <tr><th>Name</th><th>Kind</th><th>Size (KB)</th><th>Date</th><th>Note</th><th>Actions</th></tr>
+      </thead>
+      <tbody id="recordingsBody"></tbody>
+    </table>
+  </section>
+
+  <section class="card">
+    <h2>Sysex</h2>
+    <div class="row">
+      <input type="file" id="sysexFile" />
+      <button id="sysexUpload">Upload</button>
+    </div>
+    <div id="sysexStatus" class="status-line"></div>
+
+    <h3>Library</h3>
+    <table id="sysexLibraryTable">
+      <thead>
+        <tr><th>Name</th><th>Bytes</th><th>Messages</th><th>Date</th><th>Actions</th></tr>
+      </thead>
+      <tbody id="sysexLibraryBody"></tbody>
+    </table>
+
+    <h3>Inbox</h3>
+    <table id="sysexInboxTable">
+      <thead>
+        <tr><th>Name</th><th>Bytes</th><th>Messages</th><th>Date</th><th>Actions</th></tr>
+      </thead>
+      <tbody id="sysexInboxBody"></tbody>
+    </table>
+  </section>
+
+<script>
+'use strict';
+
+async function callApi(url, opts) {
+  let resp;
+  try {
+    resp = await fetch(url, opts);
+  } catch (e) {
+    throw new Error('network error: ' + e.message);
+  }
+  let body = null;
+  try {
+    body = await resp.json();
+  } catch (e) {
+    body = null;
+  }
+  if (!resp.ok || !body || body.ok === false) {
+    const msg = (body && body.error) ? body.error : `request failed (${resp.status})`;
+    throw new Error(msg);
+  }
+  return body;
+}
+
+function setStatus(el, message, isError) {
+  el.textContent = message || '';
+  el.classList.remove('ok', 'err');
+  if (message) el.classList.add(isError ? 'err' : 'ok');
+}
+
+function fmtDate(mtime) {
+  if (!mtime && mtime !== 0) return '--';
+  return new Date(mtime * 1000).toLocaleString();
+}
+
+function fmtKB(bytes) {
+  return (Number(bytes || 0) / 1024).toFixed(1);
+}
+
+// ---------- Instruments ----------
+
+const instrumentsListEl = document.getElementById('instrumentsList');
+const instrumentsStatusEl = document.getElementById('instrumentsStatus');
+const instrumentsSaveBtn = document.getElementById('instrumentsSave');
+
+async function loadInstruments() {
+  try {
+    const body = await callApi('/api/manage/instruments');
+    instrumentsListEl.innerHTML = '';
+    (body.names || []).forEach((name) => {
+      const row = document.createElement('div');
+      row.className = 'row';
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.value = name;
+      input.className = 'instrument-input';
+      row.appendChild(input);
+      instrumentsListEl.appendChild(row);
+    });
+    setStatus(instrumentsStatusEl, '', false);
+  } catch (e) {
+    setStatus(instrumentsStatusEl, e.message, true);
+  }
+}
+
+instrumentsSaveBtn.addEventListener('click', async () => {
+  const inputs = Array.from(instrumentsListEl.querySelectorAll('.instrument-input'));
+  const names = inputs.map((i) => i.value.trim()).filter((v) => v.length > 0);
+  try {
+    await callApi('/api/manage/instruments', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ names }),
+    });
+    setStatus(instrumentsStatusEl, 'Saved.', false);
+    await loadInstruments();
+  } catch (e) {
+    setStatus(instrumentsStatusEl, e.message, true);
+  }
+});
+
+// ---------- Recordings ----------
+
+const recordingsBodyEl = document.getElementById('recordingsBody');
+const recordingsStatusEl = document.getElementById('recordingsStatus');
+const captureNowBtn = document.getElementById('captureNow');
+
+function downloadUrl(base, path) {
+  return `${base}?path=${encodeURIComponent(path)}`;
+}
+
+async function loadRecordings() {
+  try {
+    const body = await callApi('/api/manage/recordings');
+    recordingsBodyEl.innerHTML = '';
+    (body.entries || []).forEach((entry) => {
+      const tr = document.createElement('tr');
+
+      const nameTd = document.createElement('td');
+      nameTd.textContent = entry.path;
+      tr.appendChild(nameTd);
+
+      const kindTd = document.createElement('td');
+      kindTd.textContent = entry.kind;
+      tr.appendChild(kindTd);
+
+      const sizeTd = document.createElement('td');
+      sizeTd.textContent = fmtKB(entry.bytes);
+      tr.appendChild(sizeTd);
+
+      const dateTd = document.createElement('td');
+      dateTd.textContent = fmtDate(entry.mtime);
+      tr.appendChild(dateTd);
+
+      const noteTd = document.createElement('td');
+      noteTd.textContent = entry.note || '';
+      tr.appendChild(noteTd);
+
+      const actionsTd = document.createElement('td');
+      actionsTd.className = 'actions';
+
+      if (entry.kind === 'dir') {
+        const linksWrap = document.createElement('div');
+        linksWrap.className = 'filelinks';
+        (entry.files || []).forEach((fn) => {
+          const a = document.createElement('a');
+          a.href = downloadUrl('/api/manage/recordings/download', `${entry.path}/${fn}`);
+          a.textContent = fn;
+          linksWrap.appendChild(a);
+        });
+        actionsTd.appendChild(linksWrap);
+      } else {
+        const a = document.createElement('a');
+        a.href = downloadUrl('/api/manage/recordings/download', entry.path);
+        a.textContent = 'Download';
+        actionsTd.appendChild(a);
+      }
+
+      const renameBtn = document.createElement('button');
+      renameBtn.textContent = 'Rename';
+      renameBtn.addEventListener('click', async () => {
+        const base = entry.path.split('/').pop();
+        const newName = window.prompt('New name:', base);
+        if (!newName) return;
+        try {
+          await callApi('/api/manage/recordings/rename', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: entry.path, new_name: newName }),
+          });
+          setStatus(recordingsStatusEl, 'Renamed.', false);
+        } catch (e) {
+          setStatus(recordingsStatusEl, e.message, true);
+        }
+        await loadRecordings();
+      });
+      actionsTd.appendChild(renameBtn);
+
+      const noteBtn = document.createElement('button');
+      noteBtn.textContent = 'Note';
+      noteBtn.addEventListener('click', async () => {
+        const note = window.prompt('Note:', entry.note || '');
+        if (note === null) return;
+        try {
+          await callApi('/api/manage/recordings/note', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: entry.path, note }),
+          });
+          setStatus(recordingsStatusEl, 'Note saved.', false);
+        } catch (e) {
+          setStatus(recordingsStatusEl, e.message, true);
+        }
+        await loadRecordings();
+      });
+      actionsTd.appendChild(noteBtn);
+
+      const deleteBtn = document.createElement('button');
+      deleteBtn.textContent = 'Delete';
+      deleteBtn.addEventListener('click', async () => {
+        if (!window.confirm(`Delete ${entry.path}?`)) return;
+        try {
+          await callApi('/api/manage/recordings/delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: entry.path }),
+          });
+          setStatus(recordingsStatusEl, 'Deleted.', false);
+        } catch (e) {
+          setStatus(recordingsStatusEl, e.message, true);
+        }
+        await loadRecordings();
+      });
+      actionsTd.appendChild(deleteBtn);
+
+      tr.appendChild(actionsTd);
+      recordingsBodyEl.appendChild(tr);
+    });
+  } catch (e) {
+    setStatus(recordingsStatusEl, e.message, true);
+  }
+}
+
+captureNowBtn.addEventListener('click', async () => {
+  try {
+    const body = await callApi('/api/manage/capture', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    setStatus(recordingsStatusEl, `Captured: ${body.path || '(no path returned)'}`, false);
+  } catch (e) {
+    setStatus(recordingsStatusEl, e.message, true);
+  }
+  await loadRecordings();
+});
+
+// ---------- Sysex ----------
+
+const sysexStatusEl = document.getElementById('sysexStatus');
+const sysexLibraryBodyEl = document.getElementById('sysexLibraryBody');
+const sysexInboxBodyEl = document.getElementById('sysexInboxBody');
+const sysexFileInput = document.getElementById('sysexFile');
+const sysexUploadBtn = document.getElementById('sysexUpload');
+
+function buildPortSelect(ports, selected) {
+  const select = document.createElement('select');
+  (ports || []).forEach((p) => {
+    const opt = document.createElement('option');
+    opt.value = p;
+    opt.textContent = p;
+    if (p === selected) opt.selected = true;
+    select.appendChild(opt);
+  });
+  return select;
+}
+
+function buildSysexRow(entry, ports, defaults, isInbox) {
+  const tr = document.createElement('tr');
+
+  const nameTd = document.createElement('td');
+  nameTd.textContent = entry.name;
+  tr.appendChild(nameTd);
+
+  const bytesTd = document.createElement('td');
+  bytesTd.textContent = entry.bytes;
+  tr.appendChild(bytesTd);
+
+  const messagesTd = document.createElement('td');
+  messagesTd.textContent = entry.messages;
+  tr.appendChild(messagesTd);
+
+  const dateTd = document.createElement('td');
+  dateTd.textContent = fmtDate(entry.mtime);
+  tr.appendChild(dateTd);
+
+  const actionsTd = document.createElement('td');
+  actionsTd.className = 'actions';
+
+  const portSelect = buildPortSelect(ports, defaults.default_output);
+  actionsTd.appendChild(portSelect);
+
+  const gapInput = document.createElement('input');
+  gapInput.type = 'number';
+  gapInput.min = '0';
+  gapInput.max = '2000';
+  gapInput.style.width = '5em';
+  gapInput.value = defaults.send_gap_ms != null ? defaults.send_gap_ms : 20;
+  actionsTd.appendChild(gapInput);
+
+  const executeBtn = document.createElement('button');
+  executeBtn.textContent = 'Execute';
+  executeBtn.addEventListener('click', async () => {
+    try {
+      const body = await callApi('/api/manage/sysex/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: entry.name,
+          port: portSelect.value,
+          gap_ms: Number(gapInput.value),
+        }),
+      });
+      setStatus(sysexStatusEl, `Sent ${body.messages} message(s).`, false);
+    } catch (e) {
+      setStatus(sysexStatusEl, e.message, true);
+    }
+    await loadSysex();
+  });
+  actionsTd.appendChild(executeBtn);
+
+  const downloadA = document.createElement('a');
+  downloadA.href = `/api/manage/sysex/download?name=${encodeURIComponent(entry.name)}`;
+  downloadA.textContent = 'Download';
+  actionsTd.appendChild(downloadA);
+
+  const renameBtn = document.createElement('button');
+  renameBtn.textContent = 'Rename';
+  renameBtn.addEventListener('click', async () => {
+    const newName = window.prompt('New name:', entry.name.replace(/^inbox\//, ''));
+    if (!newName) return;
+    try {
+      await callApi('/api/manage/sysex/rename', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: entry.name, new_name: newName }),
+      });
+      setStatus(sysexStatusEl, 'Renamed.', false);
+    } catch (e) {
+      setStatus(sysexStatusEl, e.message, true);
+    }
+    await loadSysex();
+  });
+  actionsTd.appendChild(renameBtn);
+
+  const deleteBtn = document.createElement('button');
+  deleteBtn.textContent = 'Delete';
+  deleteBtn.addEventListener('click', async () => {
+    if (!window.confirm(`Delete ${entry.name}?`)) return;
+    try {
+      await callApi('/api/manage/sysex/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: entry.name }),
+      });
+      setStatus(sysexStatusEl, 'Deleted.', false);
+    } catch (e) {
+      setStatus(sysexStatusEl, e.message, true);
+    }
+    await loadSysex();
+  });
+  actionsTd.appendChild(deleteBtn);
+
+  if (isInbox) {
+    const promoteBtn = document.createElement('button');
+    promoteBtn.textContent = 'Promote';
+    promoteBtn.addEventListener('click', async () => {
+      const newName = window.prompt('Promote to library as:', entry.name.replace(/^inbox\//, ''));
+      if (!newName) return;
+      try {
+        await callApi('/api/manage/sysex/promote', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: entry.name, new_name: newName }),
+        });
+        setStatus(sysexStatusEl, 'Promoted.', false);
+      } catch (e) {
+        setStatus(sysexStatusEl, e.message, true);
+      }
+      await loadSysex();
+    });
+    actionsTd.appendChild(promoteBtn);
+  }
+
+  tr.appendChild(actionsTd);
+  return tr;
+}
+
+async function loadSysex() {
+  try {
+    const body = await callApi('/api/manage/sysex');
+    const ports = body.ports || [];
+    const defaults = body.defaults || {};
+
+    sysexLibraryBodyEl.innerHTML = '';
+    (body.library || []).forEach((entry) => {
+      sysexLibraryBodyEl.appendChild(buildSysexRow(entry, ports, defaults, false));
+    });
+
+    sysexInboxBodyEl.innerHTML = '';
+    (body.inbox || []).forEach((entry) => {
+      sysexInboxBodyEl.appendChild(buildSysexRow(entry, ports, defaults, true));
+    });
+  } catch (e) {
+    setStatus(sysexStatusEl, e.message, true);
+  }
+}
+
+sysexUploadBtn.addEventListener('click', async () => {
+  const file = sysexFileInput.files && sysexFileInput.files[0];
+  if (!file) {
+    setStatus(sysexStatusEl, 'Choose a file first.', true);
+    return;
+  }
+  const form = new FormData();
+  form.append('file', file, file.name);
+  try {
+    await callApi('/api/manage/sysex/upload', { method: 'POST', body: form });
+    setStatus(sysexStatusEl, 'Uploaded.', false);
+    sysexFileInput.value = '';
+  } catch (e) {
+    setStatus(sysexStatusEl, e.message, true);
+  }
+  await loadSysex();
+});
+
+// ---------- Init ----------
+
+loadInstruments();
+loadRecordings();
+loadSysex();
+</script>
+</body>
+</html>

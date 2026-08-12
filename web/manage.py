@@ -65,6 +65,12 @@ def _ipc_response(ok: bool, data: dict) -> web.Response:
 
 
 def register_manage_routes(app: web.Application, deps: ManageDeps) -> None:
+    async def manage_page(request: web.Request) -> web.Response:
+        page = os.path.join(os.path.dirname(__file__), "static", "manage.html")
+        return web.FileResponse(page)
+
+    app.router.add_get("/manage", manage_page)
+
     async def get_instruments(request: web.Request) -> web.Response:
         try:
             with open(deps.settings_path, "r", encoding="utf-8") as f:
