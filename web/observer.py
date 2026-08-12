@@ -213,16 +213,18 @@ class DashboardServer:
         self._queue_dropped = 0
         self._queue_coalesced = 0
         self.static_dir = Path(__file__).with_name("static")
+        self._sysex_receiver: Any | None = None
 
     @staticmethod
     def _read_only_contract() -> dict[str, Any]:
         return {
-            "mode": "strict-read-only",
+            "mode": "read-only-observer+management",
             "mutation_endpoints": [],
             "command_execution_paths": [],
             "allowed_http_methods": ["GET"],
             "websocket_inbound_actions": ["ping"],
             "websocket_rejected_actions": ["*"],
+            "management_surface": "/api/manage/* (POST mutations; LAN-trusted, no auth)",
         }
 
     def _telemetry(self) -> dict[str, int]:
@@ -475,10 +477,13 @@ class DashboardServer:
             with contextlib.suppress(asyncio.CancelledError):
                 await task
         self.bridge.stop()
+        receiver = getattr(self, "_sysex_receiver", None)
+        if receiver is not None:
+            receiver.stop()
 
     @web.middleware
     async def _read_only_method_guard(self, request: web.Request, handler: Any) -> web.StreamResponse:
-        if request.method != "GET":
+        if request.method != "GET" and not request.path.startswith("/api/manage/"):
             return web.json_response(
                 {
                     "error": "read-only observer: mutation methods are disabled",
@@ -493,6 +498,28 @@ class DashboardServer:
         app.router.add_get("/", self._index)
         app.router.add_get("/healthz", self._healthz)
         app.router.add_get("/ws", self._ws)
+
+        from web.manage import ManageDeps, register_manage_routes
+        from web.sysex_io import SysexLibrary, SysexReceiver, SysexSender
+
+        repo_root = Path(__file__).resolve().parents[1]
+        library = SysexLibrary(str(repo_root / "sysex_library"))
+        deps = ManageDeps(
+            settings_path=str(repo_root / "config" / "settings.json"),
+            captures_root=str(repo_root / "captures"),
+            library=library,
+            sender=SysexSender(),
+            defaults_path=str(repo_root / "sysex_library" / "manage-defaults.json"),
+        )
+        register_manage_routes(app, deps)
+        try:
+            import json as _json
+            patterns = _json.load(open(deps.defaults_path)).get("receive_patterns", ["usb"])
+        except Exception:
+            patterns = ["usb"]
+        self._sysex_receiver = SysexReceiver(library, patterns=patterns)
+        self._sysex_receiver.start()
+
         app.on_startup.append(self._on_startup)
         app.on_cleanup.append(self._on_cleanup)
         return app
