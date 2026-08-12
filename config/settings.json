@@ -277,9 +277,9 @@
   "audiospectrum": {
     "lowcut_hz": 30.0,
     "hpf_on": true,
-    "display_scale": 0.75,
+    "display_scale": 0.9917515139074456,
     "floor_db": -115.0,
-    "ceil_db": 10.0,
+    "ceil_db": 15.0,
     "freq_scale": "log",
     "agg_mode": "max",
     "auto_adapt": true,
