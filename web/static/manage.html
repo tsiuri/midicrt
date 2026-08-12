@@ -381,8 +381,15 @@ function buildSysexRow(entry, ports, defaults, isInbox) {
   const renameBtn = document.createElement('button');
   renameBtn.textContent = 'Rename';
   renameBtn.addEventListener('click', async () => {
-    const newName = window.prompt('New name:', entry.name.replace(/^inbox\//, ''));
+    // Pre-fill with the full name (including "inbox/" for inbox rows) so
+    // accepting the default is a true in-place rename. Promote, not Rename,
+    // is the explicit way to move a file out of the inbox.
+    let newName = window.prompt('New name:', entry.name);
     if (!newName) return;
+    newName = newName.trim();
+    if (isInbox && !newName.startsWith('inbox/')) {
+      newName = `inbox/${newName}`;
+    }
     try {
       await callApi('/api/manage/sysex/rename', {
         method: 'POST',
