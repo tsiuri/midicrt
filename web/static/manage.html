@@ -131,9 +131,15 @@ async function loadInstruments() {
   try {
     const body = await callApi('/api/manage/instruments');
     instrumentsListEl.innerHTML = '';
-    (body.names || []).forEach((name) => {
+    (body.names || []).forEach((name, idx) => {
       const row = document.createElement('div');
       row.className = 'row';
+      const label = document.createElement('span');
+      label.className = 'muted';
+      label.style.minWidth = '3.5em';
+      label.style.display = 'inline-block';
+      label.textContent = `CH ${idx + 1}`;
+      row.appendChild(label);
       const input = document.createElement('input');
       input.type = 'text';
       input.value = name;
@@ -149,7 +155,13 @@ async function loadInstruments() {
 
 instrumentsSaveBtn.addEventListener('click', async () => {
   const inputs = Array.from(instrumentsListEl.querySelectorAll('.instrument-input'));
-  const names = inputs.map((i) => i.value.trim()).filter((v) => v.length > 0);
+  for (let i = 0; i < inputs.length; i++) {
+    if (inputs[i].value.trim().length === 0) {
+      setStatus(instrumentsStatusEl, `channel ${i + 1} is empty`, true);
+      return;
+    }
+  }
+  const names = inputs.map((i) => i.value.trim());
   try {
     await callApi('/api/manage/instruments', {
       method: 'POST',

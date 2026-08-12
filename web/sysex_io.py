@@ -102,7 +102,12 @@ class SysexLibrary:
     def inbox_write(self, data: bytes, now: float | None = None) -> str:
         with self._inbox_lock:
             now = time.time() if now is None else now
-            if self._last_inbox_file is None or (now - self._last_inbox_ts) >= _INBOX_GAP_S:
+            needs_new = (
+                self._last_inbox_file is None
+                or (now - self._last_inbox_ts) >= _INBOX_GAP_S
+                or not os.path.exists(self._resolve(self._last_inbox_file))
+            )
+            if needs_new:
                 stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime(now))
                 self._last_inbox_file = f"inbox/{stamp}.syx"
             self._last_inbox_ts = now

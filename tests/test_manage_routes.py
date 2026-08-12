@@ -86,6 +86,23 @@ class InstrumentsTest(_Base):
             self.assertEqual(resp.status, 400)
         self.assertEqual(self.ipc.calls, [])
 
+    async def test_corrupt_settings_returns_500(self):
+        with open(self.settings_path, "w", encoding="utf-8") as f:
+            f.write("{not valid json")
+        resp = await self.client.get("/api/manage/instruments")
+        self.assertEqual(resp.status, 500)
+        body = await resp.json()
+        self.assertFalse(body["ok"])
+        self.assertIn("settings.json unreadable", body["error"])
+
+    async def test_missing_settings_file_returns_empty_names(self):
+        os.remove(self.settings_path)
+        resp = await self.client.get("/api/manage/instruments")
+        self.assertEqual(resp.status, 200)
+        body = await resp.json()
+        self.assertTrue(body["ok"])
+        self.assertEqual(body["names"], [])
+
 
 class CaptureTest(_Base):
     async def test_capture_forwards_to_ipc(self):
@@ -161,6 +178,33 @@ class RecordingsTest(_Base):
         resp = await self.client.post("/api/manage/recordings/rename",
                                       json={"path": "20260228-200249", "new_name": ".."})
         self.assertEqual(resp.status, 400)
+
+    async def test_rename_file_kind_moves_note_sidecar(self):
+        open(os.path.join(self.captures, "solo.mid"), "wb").write(b"MThd")
+        open(os.path.join(self.captures, "solo.mid.note.txt"), "w").write("nice take")
+
+        resp = await self.client.post("/api/manage/recordings/rename",
+                                      json={"path": "solo.mid", "new_name": "solo2.mid"})
+        self.assertTrue((await resp.json())["ok"])
+
+        self.assertFalse(os.path.exists(os.path.join(self.captures, "solo.mid.note.txt")))
+        self.assertTrue(os.path.exists(os.path.join(self.captures, "solo2.mid.note.txt")))
+
+        resp = await self.client.get("/api/manage/recordings")
+        entries = {e["path"]: e for e in (await resp.json())["entries"]}
+        self.assertNotIn("solo.mid", entries)
+        self.assertEqual(entries["solo2.mid"]["note"], "nice take")
+
+    async def test_delete_file_kind_removes_note_sidecar(self):
+        open(os.path.join(self.captures, "solo.mid"), "wb").write(b"MThd")
+        open(os.path.join(self.captures, "solo.mid.note.txt"), "w").write("nice take")
+
+        resp = await self.client.post("/api/manage/recordings/delete",
+                                      json={"path": "solo.mid"})
+        self.assertTrue((await resp.json())["ok"])
+
+        self.assertFalse(os.path.exists(os.path.join(self.captures, "solo.mid")))
+        self.assertFalse(os.path.exists(os.path.join(self.captures, "solo.mid.note.txt")))
 
 
 class _RecordingSendBackend(_NullBackend):
@@ -269,6 +313,23 @@ class SysexRoutesTest(_Base):
             "/api/manage/sysex/rename",
             json={"name": "go.syx", "new_name": long_name})
         self.assertEqual(resp.status, 400)
+
+    async def test_execute_rejects_non_integer_gap_ms(self):
+        self._deps.library.write("go.syx", self.SYX)
+        for bad in (None, [1], {"a": 1}):
+            resp = await self.client.post(
+                "/api/manage/sysex/execute",
+                json={"name": "go.syx", "port": "Synth A 20:0", "gap_ms": bad})
+            self.assertEqual(resp.status, 400, f"gap_ms={bad!r}")
+            body = await resp.json()
+            self.assertFalse(body["ok"])
+
+    async def test_upload_rejects_non_multipart_body(self):
+        resp = await self.client.post("/api/manage/sysex/upload",
+                                      json={"name": "not", "multipart": "form"})
+        self.assertEqual(resp.status, 400)
+        body = await resp.json()
+        self.assertFalse(body["ok"])
 
 
 if __name__ == "__main__":

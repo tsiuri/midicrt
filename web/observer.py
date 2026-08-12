@@ -219,9 +219,13 @@ class DashboardServer:
     def _read_only_contract() -> dict[str, Any]:
         return {
             "mode": "read-only-observer+management",
-            "mutation_endpoints": [],
-            "command_execution_paths": [],
-            "allowed_http_methods": ["GET"],
+            "mutation_endpoints": ["/api/manage/*"],
+            "command_execution_paths": [
+                "/api/manage/instruments -> ipc set_config",
+                "/api/manage/capture -> ipc capture_recent",
+                "/api/manage/sysex/execute -> midi out",
+            ],
+            "allowed_http_methods": ["GET", "POST (/api/manage/* only)"],
             "websocket_inbound_actions": ["ping"],
             "websocket_rejected_actions": ["*"],
             "management_surface": "/api/manage/* (POST mutations; LAN-trusted, no auth)",
@@ -513,8 +517,8 @@ class DashboardServer:
         )
         register_manage_routes(app, deps)
         try:
-            import json as _json
-            patterns = _json.load(open(deps.defaults_path)).get("receive_patterns", ["usb"])
+            with open(deps.defaults_path) as f:
+                patterns = json.load(f).get("receive_patterns", ["usb"])
         except Exception:
             patterns = ["usb"]
         self._sysex_receiver = SysexReceiver(library, patterns=patterns)

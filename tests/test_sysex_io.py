@@ -75,6 +75,18 @@ class SysexLibraryTest(unittest.TestCase):
         self.assertIn("kept.syx", names)
         self.assertNotIn(f1, names)
 
+    def test_inbox_write_after_promote_within_gap_creates_new_file(self):
+        f1 = self.lib.inbox_write(self.msg, now=1000.0)
+        self.lib.promote(f1, "promoted.syx")
+        # Within the 2s coalescing window — without the fix this would
+        # recreate f1 (the promoted-away name) via "ab" instead of starting
+        # a fresh inbox file.
+        f2 = self.lib.inbox_write(self.msg, now=1001.0)
+        self.assertNotEqual(f1, f2)
+        self.assertFalse(os.path.exists(self.lib._resolve(f1)))
+        inbox_names = [e["name"] for e in self.lib.list() if e["inbox"]]
+        self.assertEqual(inbox_names, [f2])
+
 
 class _FakeMidoBackend:
     def __init__(self):

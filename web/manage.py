@@ -72,12 +72,15 @@ def register_manage_routes(app: web.Application, deps: ManageDeps) -> None:
     app.router.add_get("/manage", manage_page)
 
     async def get_instruments(request: web.Request) -> web.Response:
+        if not os.path.exists(deps.settings_path):
+            return _ok(names=[])
         try:
             with open(deps.settings_path, "r", encoding="utf-8") as f:
                 cfg = json.load(f)
-            names = cfg.get("instruments", {}).get("names", [])
-        except Exception:
-            names = []
+        except Exception as exc:
+            return _fail(500, f"settings.json unreadable: {exc}")
+        instruments = cfg.get("instruments", {}) if isinstance(cfg, dict) else {}
+        names = instruments.get("names", []) if isinstance(instruments, dict) else []
         return _ok(names=[str(n) for n in names])
 
     async def post_instruments(request: web.Request) -> web.Response:
@@ -167,6 +170,9 @@ def register_manage_routes(app: web.Application, deps: ManageDeps) -> None:
             os.remove(path)
         else:
             return _fail(404, "no such recording")
+        note_path = path + ".note.txt"
+        if os.path.isfile(note_path):
+            os.remove(note_path)
         return _ok()
 
     async def rename_recording(request: web.Request) -> web.Response:
@@ -188,7 +194,11 @@ def register_manage_routes(app: web.Application, deps: ManageDeps) -> None:
             return _fail(404, "no such recording")
         if os.path.exists(target):
             return _fail(400, "target already exists")
+        note_path = path + ".note.txt"
+        target_note = target + ".note.txt"
         os.rename(path, target)
+        if os.path.isfile(note_path):
+            os.rename(note_path, target_note)
         return _ok()
 
     async def note_recording(request: web.Request) -> web.Response:
@@ -230,7 +240,10 @@ def register_manage_routes(app: web.Application, deps: ManageDeps) -> None:
         )
 
     async def upload_sysex(request: web.Request) -> web.Response:
-        reader = await request.multipart()
+        try:
+            reader = await request.multipart()
+        except Exception:
+            return _fail(400, "multipart form upload required")
         chunks = bytearray()
         name = ""
         async for part in reader:
@@ -299,16 +312,20 @@ def register_manage_routes(app: web.Application, deps: ManageDeps) -> None:
         port = str(body.get("port", ""))
         gap_ms = body.get("gap_ms", _load_defaults().get("send_gap_ms", 20))
         try:
+            gap_ms = int(gap_ms)
+        except (TypeError, ValueError):
+            return _fail(400, "gap_ms must be an integer")
+        try:
             data = deps.library.read(name)
         except (ValueError, FileNotFoundError):
             return _fail(404, "no such file")
         try:
-            result = await asyncio.to_thread(deps.sender.send, port, data, int(gap_ms))
+            result = await asyncio.to_thread(deps.sender.send, port, data, gap_ms)
         except ValueError as exc:
             return _fail(400, str(exc))
         defaults = _load_defaults()
         defaults["default_output"] = port
-        defaults["send_gap_ms"] = int(gap_ms)
+        defaults["send_gap_ms"] = gap_ms
         _save_defaults(defaults)
         return _ok(**result)
 
