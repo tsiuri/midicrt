@@ -21,3 +21,8 @@ vars.txt
 
 # Duplicate / lowercase alias
 agents.md
+
+sysex_library/**
+!sysex_library/.gitkeep
+!sysex_library/inbox/
+!sysex_library/inbox/.gitkeep
