@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import socket
+import time
 import uuid
 
 
@@ -24,13 +25,17 @@ def send_command(command: str, payload: dict | None = None,
         "payload": payload if isinstance(payload, dict) else {},
         "request_id": request_id,
     }
+    deadline = time.monotonic() + timeout_s
     try:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
-            sock.settimeout(timeout_s)
             sock.connect(socket_path)
             sock.sendall((json.dumps(envelope) + "\n").encode("utf-8"))
             with sock.makefile("r", encoding="utf-8", newline="\n") as reader:
                 while True:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        return False, {"error": "timeout waiting for reply"}
+                    sock.settimeout(remaining)
                     line = reader.readline()
                     if not line:
                         return False, {"error": "connection closed before reply"}
@@ -49,5 +54,5 @@ def send_command(command: str, payload: dict | None = None,
                         return True, body
                     message = body.get("message") or body.get("code") or "command failed"
                     return False, {"error": str(message)}
-    except (OSError, socket.timeout) as exc:
+    except OSError as exc:
         return False, {"error": f"midicrt app unreachable: {exc}"}
