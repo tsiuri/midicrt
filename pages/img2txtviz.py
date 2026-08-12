@@ -494,41 +494,45 @@ def draw(state):
     force_full = layout != _last_layout
     dirty = False
 
-    if force_full or title_line != _last_title_line:
-        draw_line(y0, title_line)
-        _last_title_line = title_line
-        dirty = True
-    if force_full or info_line1 != _last_info_line1:
-        draw_line(y0 + 1, info_line1)
-        _last_info_line1 = info_line1
-        dirty = True
-    if force_full or info_line2 != _last_info_line2:
-        draw_line(y0 + 2, info_line2)
-        _last_info_line2 = info_line2
+    # Always emit every row: in compositor mode each frame is captured from a
+    # cleared buffer, so any row skipped by change-diffing simply vanishes for
+    # that frame (the header used to flash because of exactly that). The
+    # comparisons below survive only as change tracking for the flush hint.
+    if force_full:
         dirty = True
 
-    # Row-diff render: update only changed body rows.
+    draw_line(y0, title_line)
+    if title_line != _last_title_line:
+        dirty = True
+    _last_title_line = title_line
+
+    draw_line(y0 + 1, info_line1)
+    if info_line1 != _last_info_line1:
+        dirty = True
+    _last_info_line1 = info_line1
+
+    draw_line(y0 + 2, info_line2)
+    if info_line2 != _last_info_line2:
+        dirty = True
+    _last_info_line2 = info_line2
+
     if force_full and _last_layout is not None:
         old_top = int(_last_layout[3])
         old_h = int(_last_layout[4])
         for y in range(old_top, old_top + old_h):
             draw_line(y, " " * cols)
+    if len(_last_ascii_rows) != len(ascii_rows):
         dirty = True
-    if force_full or len(_last_ascii_rows) != len(ascii_rows):
-        for i, row in enumerate(ascii_rows):
-            draw_line(top + i, (pad + row)[:cols])
-        dirty = True
-    else:
-        for i, row in enumerate(ascii_rows):
-            if row != _last_ascii_rows[i]:
-                draw_line(top + i, (pad + row)[:cols])
-                dirty = True
+    for i, row in enumerate(ascii_rows):
+        draw_line(top + i, (pad + row)[:cols])
+        if i >= len(_last_ascii_rows) or row != _last_ascii_rows[i]:
+            dirty = True
     _last_ascii_rows = list(ascii_rows)
 
-    if force_full or footer_line != _last_footer_line:
-        draw_line(rows - 4, footer_line)
-        _last_footer_line = footer_line
+    draw_line(rows - 4, footer_line)
+    if footer_line != _last_footer_line:
         dirty = True
+    _last_footer_line = footer_line
 
     _last_layout = layout
     _flush_dirty = dirty
