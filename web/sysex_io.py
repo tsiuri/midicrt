@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import re
+import threading
 import time
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9._ -]+$")
@@ -137,3 +138,88 @@ class SysexSender:
                 if i < len(messages) - 1 and gap_s > 0:
                     sleep(gap_s)
         return {"messages": len(messages), "bytes": len(data)}
+
+
+class SysexReceiver:
+    """Always-on listener that saves incoming sysex dumps to the inbox.
+
+    Put a synth in dump mode and the dump lands in `sysex_library/inbox/`
+    (multi-part dumps coalesce via SysexLibrary.inbox_write's 2s window).
+    Port names matching any of `patterns` (case-insensitive substring) are
+    opened with a callback; a scan thread retries failures every retry_s
+    and never lets an exception escape.
+    """
+
+    _MIN_BYTES = 8
+
+    def __init__(self, library: SysexLibrary, patterns: list[str],
+                 backend=None, retry_s: float = 5.0):
+        if backend is None:
+            import mido as backend
+        self._backend = backend
+        self._library = library
+        self._patterns = [p.lower() for p in patterns if p]
+        self._retry_s = retry_s
+        self._ports: dict[str, object] = {}
+        self._running = False
+        self._thread: threading.Thread | None = None
+
+    @property
+    def open_ports(self) -> list[str]:
+        return sorted(self._ports)
+
+    def start(self) -> None:
+        if self._running:
+            return
+        self._running = True
+        self._thread = threading.Thread(target=self._scan_loop, daemon=True,
+                                        name="sysex-receiver")
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._running = False
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=1.0)
+        for port in self._ports.values():
+            try:
+                port.close()
+            except Exception:  # noqa: BLE001 — best-effort close
+                pass
+        self._ports.clear()
+
+    def _matches(self, name: str) -> bool:
+        low = name.lower()
+        return any(p in low for p in self._patterns)
+
+    def _on_message(self, msg) -> None:
+        try:
+            if msg.type != "sysex":
+                return
+            raw = bytes(msg.bytes())
+            if len(raw) < self._MIN_BYTES:
+                return
+            self._library.inbox_write(raw)
+        except Exception:  # noqa: BLE001 — callback must never raise into rtmidi
+            pass
+
+    def _scan_loop(self) -> None:
+        while self._running:
+            try:
+                names = [n for n in self._backend.get_input_names() if self._matches(n)]
+                for name in names:
+                    if name in self._ports:
+                        continue
+                    try:
+                        self._ports[name] = self._backend.open_input(
+                            name, callback=self._on_message)
+                    except Exception:  # noqa: BLE001 — retried next scan
+                        pass
+                for name in list(self._ports):
+                    if name not in names:
+                        try:
+                            self._ports.pop(name).close()
+                        except Exception:  # noqa: BLE001
+                            pass
+            except Exception:  # noqa: BLE001 — scan must never kill the thread
+                pass
+            time.sleep(self._retry_s)

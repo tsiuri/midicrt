@@ -1,5 +1,6 @@
 import os
 import tempfile
+import time
 import unittest
 
 from web.sysex_io import SysexLibrary, split_messages
@@ -125,6 +126,64 @@ class SysexSenderTest(unittest.TestCase):
     def test_invalid_data_rejected(self):
         with self.assertRaises(ValueError):
             self.sender.send("Synth A 20:0", b"\x00\x01", gap_ms=0)
+
+
+class _FakeInBackend:
+    def __init__(self, names):
+        self.names = names
+        self.callbacks = {}
+
+    def get_input_names(self):
+        return list(self.names)
+
+    def open_input(self, name, callback):
+        self.callbacks[name] = callback
+
+        class _In:
+            def close(self):
+                pass
+
+        return _In()
+
+
+class SysexReceiverTest(unittest.TestCase):
+    def test_saves_incoming_sysex_to_inbox(self):
+        import mido
+        from web.sysex_io import SysexReceiver
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        lib = SysexLibrary(tmp.name)
+        backend = _FakeInBackend(["USB2.0-MIDI 24:0", "Midi Through 14:0"])
+        rx = SysexReceiver(lib, patterns=["usb"], backend=backend, retry_s=0.05)
+        rx.start()
+        self.addCleanup(rx.stop)
+        for _ in range(100):
+            if rx.open_ports:
+                break
+            time.sleep(0.02)
+        self.assertEqual(rx.open_ports, ["USB2.0-MIDI 24:0"])
+        msg = mido.Message("sysex", data=[0x41, 0x10, 0x42, 0x12, 0x40, 0x00, 0x7F])
+        backend.callbacks["USB2.0-MIDI 24:0"](msg)
+        inbox = [e for e in lib.list() if e["inbox"]]
+        self.assertEqual(len(inbox), 1)
+        self.assertEqual(inbox[0]["messages"], 1)
+
+    def test_short_sysex_ignored(self):
+        import mido
+        from web.sysex_io import SysexReceiver
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        lib = SysexLibrary(tmp.name)
+        backend = _FakeInBackend(["USB2.0-MIDI 24:0"])
+        rx = SysexReceiver(lib, patterns=["usb"], backend=backend, retry_s=0.05)
+        rx.start()
+        self.addCleanup(rx.stop)
+        for _ in range(100):
+            if rx.open_ports:
+                break
+            time.sleep(0.02)
+        backend.callbacks["USB2.0-MIDI 24:0"](mido.Message("sysex", data=[0x41]))
+        self.assertEqual([e for e in lib.list() if e["inbox"]], [])
 
 
 if __name__ == "__main__":
