@@ -592,6 +592,9 @@ footer_status_text = "" # latest transport/status text (moved to bottom footer a
 _scheduler_health_status = ""
 runtime_budget_status = ""
 _page_locked = False    # backtick toggle: route ALL keys to the current page
+_menu_open = False      # escape menu overlay (see _draw_escape_menu)
+_menu_sel = 0
+_menu_scroll = 0
 
 # ---------------------------------------------------------------------
 # UI loop
@@ -632,6 +635,107 @@ def switch_page_relative(step):
     except ValueError:
         target = ids[0]
     return switch_page(target)
+
+
+# ---------------------------------------------------------------------
+# Escape menu — game-style page navigator overlaid on the running page
+# ---------------------------------------------------------------------
+_menu_cfg = load_section("escape_menu") or {}
+MENU_VISIBLE_ROWS = max(3, int(_menu_cfg.get("visible_rows", 10)))
+try:
+    save_section("escape_menu", {"visible_rows": int(MENU_VISIBLE_ROWS)})
+except Exception:
+    pass
+
+
+def _menu_entries():
+    return [(pid, str(getattr(PAGES[pid], "PAGE_NAME", f"page {pid}"))) for pid in sorted(PAGES)]
+
+
+def _menu_open_now():
+    global _menu_open, _menu_sel, _menu_scroll
+    ids = sorted(PAGES)
+    try:
+        _menu_sel = ids.index(current_page)
+    except ValueError:
+        _menu_sel = 0
+    _menu_scroll = 0
+    _menu_open = True
+
+
+def _menu_close():
+    global _menu_open
+    _menu_open = False
+
+
+def _menu_move(step):
+    global _menu_sel
+    n = len(PAGES)
+    if n:
+        _menu_sel = (_menu_sel + int(step)) % n
+
+
+def _menu_activate():
+    ids = sorted(PAGES)
+    if ids:
+        switch_page(ids[_menu_sel % len(ids)])
+    _menu_close()
+
+
+def _draw_escape_menu(cr):
+    """Centered opaque panel listing pages; scrolls when the list exceeds
+    MENU_VISIBLE_ROWS (settings: escape_menu.visible_rows)."""
+    global _menu_scroll
+    from fb.compositor import BLACK, GREEN_BRIGHT, GREEN_DIM, GREEN_MID
+
+    comp = cr.comp
+    cw, ch = comp.char_w, comp.char_h
+    entries = _menu_entries()
+    n = len(entries)
+    if not n:
+        return
+    vis = min(MENU_VISIBLE_ROWS, n)
+    sel = _menu_sel % n
+    if sel < _menu_scroll:
+        _menu_scroll = sel
+    elif sel >= _menu_scroll + vis:
+        _menu_scroll = sel - vis + 1
+    _menu_scroll = max(0, min(_menu_scroll, n - vis))
+
+    hint = "Enter:go  Esc:close"
+    inner_w = max([len(f"{pid:2d}  {name}") for pid, name in entries] + [len(hint), 22]) + 2
+    panel_w_px = (inner_w + 2) * cw
+    panel_h_px = (vis + 4) * ch
+    fb_h, fb_w = comp._buf.shape
+    x0 = max(0, (fb_w - panel_w_px) // 2)
+    y0 = max(0, (fb_h - panel_h_px) // 2)
+
+    comp.rect(x0, y0, panel_w_px, panel_h_px, BLACK)
+    border = 2
+    comp.rect(x0, y0, panel_w_px, border, GREEN_MID)
+    comp.rect(x0, y0 + panel_h_px - border, panel_w_px, border, GREEN_MID)
+    comp.rect(x0, y0, border, panel_h_px, GREEN_MID)
+    comp.rect(x0 + panel_w_px - border, y0, border, panel_h_px, GREEN_MID)
+
+    title = " PAGES "
+    comp.text(x0 + (panel_w_px - len(title) * cw) // 2, y0 + ch // 2, title, fg=BLACK, bg=GREEN_BRIGHT)
+
+    list_y = y0 + 2 * ch
+    for i in range(vis):
+        idx = _menu_scroll + i
+        pid, name = entries[idx]
+        line = f" {pid:2d}  {name}".ljust(inner_w)[:inner_w]
+        if idx == sel:
+            comp.text(x0 + cw, list_y + i * ch, line, fg=BLACK, bg=GREEN_BRIGHT)
+        else:
+            comp.text(x0 + cw, list_y + i * ch, line, fg=GREEN_BRIGHT)
+
+    if _menu_scroll > 0:
+        comp.text(x0 + panel_w_px - 3 * cw, list_y, "^", fg=GREEN_BRIGHT)
+    if _menu_scroll + vis < n:
+        comp.text(x0 + panel_w_px - 3 * cw, list_y + (vis - 1) * ch, "v", fg=GREEN_BRIGHT)
+
+    comp.text(x0 + (panel_w_px - len(hint) * cw) // 2, y0 + panel_h_px - ch - ch // 2, hint, fg=GREEN_DIM)
 
 
 def _screensaver_module() -> ScreenSaverModule | None:
@@ -1138,6 +1242,19 @@ def _ui_loop_body():
                     draw_line(row_idx, row_text)
 
         _pt0 = _pt("plugins", _pt0)
+        if _compositor is not None:
+            # Current page name, reverse-video, left end of the footer/timer
+            # row. Drawn direct-to-compositor: the overlay capture keeps only
+            # plain text, so reverse attributes can't ride the plugin path.
+            from fb.compositor import BLACK, GREEN_BRIGHT
+            _pname = getattr(PAGES.get(current_page), "PAGE_NAME", None) or f"PAGE {current_page}"
+            _compositor.comp.text(
+                0,
+                (SCREEN_ROWS - 3) * _compositor.comp.char_h,
+                f" {_pname} ",
+                fg=BLACK,
+                bg=GREEN_BRIGHT,
+            )
         if _compositor is not None and current_page == 1 and not _used_notes_page_cache:
             try:
                 y0_px = 3 * _compositor.comp.char_h
@@ -1223,6 +1340,16 @@ def _ui_loop_body():
                             _do_flush = False
                 except Exception:
                     _do_flush = True
+            if _menu_open:
+                # Menu draws over everything and must reach the screen even
+                # when the page's flush hint says "clean"; same on the frame
+                # after closing so the restored page repaints.
+                _draw_escape_menu(_compositor)
+                _do_flush = True
+                ui_loop._menu_was_open = True
+            elif getattr(ui_loop, "_menu_was_open", False):
+                ui_loop._menu_was_open = False
+                _do_flush = True
             if _do_flush:
                 _compositor.frame_flush()
                 ui_loop._compositor_last_flush_t = time.monotonic()
@@ -1811,6 +1938,22 @@ def keyboard_listener():
                 _page_locked = not _page_locked
                 continue
 
+            # Escape-menu modal: while open it consumes every key.
+            if _menu_open:
+                kname = key.name if key.is_sequence else ""
+                if kname == "KEY_ESCAPE" or key.lower() == "q":
+                    _menu_close()
+                elif kname == "KEY_UP" or key.lower() == "k":
+                    _menu_move(-1)
+                elif kname == "KEY_DOWN" or key.lower() == "j":
+                    _menu_move(1)
+                elif kname == "KEY_ENTER" or key in ("\r", "\n"):
+                    _menu_activate()
+                elif key in "0123456789":
+                    switch_page(key)
+                    _menu_close()
+                continue
+
             # 1) global page navigation wins over page bindings (unless locked)
             if not _page_locked:
                 if key in "0123456789":
@@ -1862,8 +2005,13 @@ def keyboard_listener():
 
             # 3) remaining global keys (page-first when unlocked)
             if key.is_sequence and key.name == "KEY_ESCAPE":
-                exit_flag = True
-                break
+                # ESC opens the page menu in compositor mode; legacy TUI keeps
+                # the historical ESC-quit (the menu isn't rendered there).
+                if _compositor is None:
+                    exit_flag = True
+                    break
+                _menu_open_now()
+                continue
             elif key == "C":
                 trigger_capture_recent(trigger="key")
                 continue
