@@ -156,5 +156,87 @@ class RecordingsTest(_Base):
         self.assertEqual(resp.status, 400)
 
 
+class _RecordingSendBackend(_NullBackend):
+    def __init__(self):
+        self.sent = []
+
+    def get_output_names(self):
+        return ["Synth A 20:0"]
+
+    def open_output(self, name):
+        backend = self
+
+        class _Out:
+            def send(self, msg):
+                backend.sent.append(bytes(msg.bytes()))
+
+            def close(self):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                self.close()
+                return False
+
+        return _Out()
+
+
+class SysexRoutesTest(_Base):
+    SYX = bytes([0xF0, 0x41, 0x10, 0xF7])
+
+    async def get_application(self):
+        app = await super().get_application()
+        # swap in a recording backend for execute tests
+        self.send_backend = _RecordingSendBackend()
+        self._deps.sender = SysexSender(backend=self.send_backend)
+        return app
+
+    async def test_upload_list_download_roundtrip(self):
+        from aiohttp import FormData
+        form = FormData()
+        form.add_field("file", self.SYX, filename="patch.syx",
+                       content_type="application/octet-stream")
+        resp = await self.client.post("/api/manage/sysex/upload", data=form)
+        self.assertTrue((await resp.json())["ok"])
+
+        resp = await self.client.get("/api/manage/sysex")
+        body = await resp.json()
+        self.assertEqual([e["name"] for e in body["library"]], ["patch.syx"])
+        self.assertEqual(body["ports"], ["Synth A 20:0"])
+
+        resp = await self.client.get("/api/manage/sysex/download",
+                                     params={"name": "patch.syx"})
+        self.assertEqual(await resp.read(), self.SYX)
+
+    async def test_upload_rejects_invalid_sysex(self):
+        from aiohttp import FormData
+        form = FormData()
+        form.add_field("file", b"\x00\x01", filename="bad.syx",
+                       content_type="application/octet-stream")
+        resp = await self.client.post("/api/manage/sysex/upload", data=form)
+        self.assertEqual(resp.status, 400)
+
+    async def test_execute_sends_and_remembers_defaults(self):
+        self._deps.library.write("go.syx", self.SYX)
+        resp = await self.client.post(
+            "/api/manage/sysex/execute",
+            json={"name": "go.syx", "port": "Synth A 20:0", "gap_ms": 0})
+        body = await resp.json()
+        self.assertTrue(body["ok"])
+        self.assertEqual(body["messages"], 1)
+        self.assertEqual(self.send_backend.sent, [self.SYX])
+        defaults = json.load(open(self._deps.defaults_path))
+        self.assertEqual(defaults["default_output"], "Synth A 20:0")
+
+    async def test_execute_unknown_port_400(self):
+        self._deps.library.write("go.syx", self.SYX)
+        resp = await self.client.post(
+            "/api/manage/sysex/execute",
+            json={"name": "go.syx", "port": "Nope", "gap_ms": 0})
+        self.assertEqual(resp.status, 400)
+
+
 if __name__ == "__main__":
     unittest.main()

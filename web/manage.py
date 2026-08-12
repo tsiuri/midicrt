@@ -201,6 +201,111 @@ def register_manage_routes(app: web.Application, deps: ManageDeps) -> None:
             f.write(str(body.get("note", "")))
         return _ok()
 
+    def _load_defaults() -> dict:
+        try:
+            with open(deps.defaults_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {"default_output": "", "send_gap_ms": 20,
+                    "receive_patterns": ["usb"]}
+
+    def _save_defaults(d: dict) -> None:
+        with open(deps.defaults_path, "w", encoding="utf-8") as f:
+            json.dump(d, f, indent=2)
+
+    async def get_sysex(request: web.Request) -> web.Response:
+        entries = deps.library.list()
+        return _ok(
+            library=[e for e in entries if not e["inbox"]],
+            inbox=[e for e in entries if e["inbox"]],
+            ports=deps.sender.list_outputs(),
+            defaults=_load_defaults(),
+        )
+
+    async def upload_sysex(request: web.Request) -> web.Response:
+        reader = await request.multipart()
+        data = b""
+        name = ""
+        async for part in reader:
+            if part.name == "file":
+                name = part.filename or "upload.syx"
+                data = await part.read(decode=False)
+            elif part.name == "name":
+                name = (await part.text()).strip() or name
+        if not data:
+            return _fail(400, "no file uploaded")
+        try:
+            split_messages(data)
+            if not name.endswith(".syx"):
+                name += ".syx"
+            deps.library.write(name, data)
+        except ValueError as exc:
+            return _fail(400, str(exc))
+        return _ok(name=name)
+
+    async def download_sysex(request: web.Request) -> web.Response:
+        name = request.query.get("name", "")
+        try:
+            data = deps.library.read(name)
+        except ValueError as exc:
+            return _fail(400, str(exc))
+        except FileNotFoundError:
+            return _fail(404, "no such file")
+        return web.Response(body=data, content_type="application/octet-stream",
+                            headers={"Content-Disposition":
+                                     f'attachment; filename="{os.path.basename(name)}"'})
+
+    def _library_op(op):
+        async def handler(request: web.Request) -> web.Response:
+            try:
+                body = await request.json()
+            except Exception:
+                return _fail(400, "invalid JSON body")
+            try:
+                op(body)
+            except ValueError as exc:
+                return _fail(400, str(exc))
+            except FileNotFoundError:
+                return _fail(404, "no such file")
+            return _ok()
+        return handler
+
+    rename_sysex = _library_op(
+        lambda b: deps.library.rename(str(b.get("name", "")), str(b.get("new_name", ""))))
+    delete_sysex = _library_op(lambda b: deps.library.delete(str(b.get("name", ""))))
+    promote_sysex = _library_op(
+        lambda b: deps.library.promote(str(b.get("name", "")), str(b.get("new_name", ""))))
+
+    async def execute_sysex(request: web.Request) -> web.Response:
+        try:
+            body = await request.json()
+        except Exception:
+            return _fail(400, "invalid JSON body")
+        name = str(body.get("name", ""))
+        port = str(body.get("port", ""))
+        gap_ms = body.get("gap_ms", _load_defaults().get("send_gap_ms", 20))
+        try:
+            data = deps.library.read(name)
+        except (ValueError, FileNotFoundError):
+            return _fail(404, "no such file")
+        try:
+            result = await asyncio.to_thread(deps.sender.send, port, data, int(gap_ms))
+        except ValueError as exc:
+            return _fail(400, str(exc))
+        defaults = _load_defaults()
+        defaults["default_output"] = port
+        defaults["send_gap_ms"] = int(gap_ms)
+        _save_defaults(defaults)
+        return _ok(**result)
+
+    app.router.add_get("/api/manage/sysex", get_sysex)
+    app.router.add_post("/api/manage/sysex/upload", upload_sysex)
+    app.router.add_get("/api/manage/sysex/download", download_sysex)
+    app.router.add_post("/api/manage/sysex/rename", rename_sysex)
+    app.router.add_post("/api/manage/sysex/delete", delete_sysex)
+    app.router.add_post("/api/manage/sysex/promote", promote_sysex)
+    app.router.add_post("/api/manage/sysex/execute", execute_sysex)
+
     app.router.add_get("/api/manage/instruments", get_instruments)
     app.router.add_post("/api/manage/instruments", post_instruments)
     app.router.add_post("/api/manage/capture", post_capture)
