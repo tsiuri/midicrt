@@ -286,5 +286,8 @@
     "bins": 96,
     "gain_db": 0.0,
     "smoothing": 0.5499999999999999
+  },
+  "escape_menu": {
+    "visible_rows": 10
   }
 }
