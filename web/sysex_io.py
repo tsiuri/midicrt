@@ -104,3 +104,36 @@ class SysexLibrary:
         with open(self._resolve(self._last_inbox_file), "ab") as f:
             f.write(data)
         return self._last_inbox_file
+
+
+class SysexSender:
+    """Send .syx blobs out a chosen MIDI output, paced between messages.
+
+    Old synths overrun when multi-message dumps are blasted back-to-back;
+    `gap_ms` (clamped 0..2000, default chosen by the caller) sleeps between
+    messages. Blocking — callers on an event loop use asyncio.to_thread.
+    """
+
+    def __init__(self, backend=None):
+        if backend is None:
+            import mido as backend
+        self._backend = backend
+
+    def list_outputs(self) -> list[str]:
+        return list(self._backend.get_output_names())
+
+    def send(self, port_name: str, data: bytes, gap_ms: int, _sleep=None) -> dict:
+        import mido
+        if port_name not in self.list_outputs():
+            raise ValueError(f"unknown output port: {port_name}")
+        messages = split_messages(data)   # raises ValueError on bad data
+        if not messages:
+            raise ValueError("no sysex messages in file")
+        gap_s = max(0, min(2000, int(gap_ms))) / 1000.0
+        sleep = _sleep if _sleep is not None else time.sleep
+        with self._backend.open_output(port_name) as out:
+            for i, raw in enumerate(messages):
+                out.send(mido.Message.from_bytes(raw))
+                if i < len(messages) - 1 and gap_s > 0:
+                    sleep(gap_s)
+        return {"messages": len(messages), "bytes": len(data)}

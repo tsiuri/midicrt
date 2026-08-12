@@ -75,5 +75,57 @@ class SysexLibraryTest(unittest.TestCase):
         self.assertNotIn(f1, names)
 
 
+class _FakeMidoBackend:
+    def __init__(self):
+        self.sent = []
+        self.sleeps = []
+
+    def get_output_names(self):
+        return ["Synth A 20:0", "Synth B 24:0"]
+
+    def open_output(self, name):
+        backend = self
+
+        class _Out:
+            def send(self, msg):
+                backend.sent.append(bytes(msg.bytes()))
+
+            def close(self):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                self.close()
+                return False
+
+        return _Out()
+
+
+class SysexSenderTest(unittest.TestCase):
+    def setUp(self):
+        from web.sysex_io import SysexSender
+        self.backend = _FakeMidoBackend()
+        self.sender = SysexSender(backend=self.backend)
+        self.two = bytes([0xF0, 0x41, 0xF7, 0xF0, 0x42, 0xF7])
+
+    def test_sends_each_message_with_gaps(self):
+        slept = []
+        result = self.sender.send("Synth A 20:0", self.two, gap_ms=50, _sleep=slept.append)
+        self.assertEqual(result, {"messages": 2, "bytes": 6})
+        self.assertEqual(self.backend.sent,
+                         [bytes([0xF0, 0x41, 0xF7]), bytes([0xF0, 0x42, 0xF7])])
+        self.assertEqual(slept, [0.05])  # between messages only
+
+    def test_unknown_port_rejected(self):
+        with self.assertRaises(ValueError):
+            self.sender.send("Nope 1:0", self.two, gap_ms=0)
+
+    def test_invalid_data_rejected(self):
+        with self.assertRaises(ValueError):
+            self.sender.send("Synth A 20:0", b"\x00\x01", gap_ms=0)
+
+
 if __name__ == "__main__":
     unittest.main()
