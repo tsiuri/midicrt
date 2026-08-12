@@ -1986,9 +1986,6 @@ def keyboard_listener():
                 elif key in ("-", "_"):
                     switch_page_relative(-1)
                     continue
-                elif key.lower() == "t":
-                    switch_page(10)
-                    continue
 
             # 2) page's shot; if it handles, skip the remaining globals
             page = PAGES.get(current_page)
