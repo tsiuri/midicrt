@@ -10,7 +10,7 @@ from configutil import load_settings, save_settings, config_path
 from ui.model import PageLinesWidget
 
 _ROOT = {}
-_PATH = []  # list of keys/indices
+_EXPANDED: set[tuple] = set()  # tree paths currently expanded inline
 _SELECTED = 0
 _SCROLL = 0
 _EDIT_MODE = False
@@ -124,13 +124,24 @@ def _entries(node):
     return []
 
 
-def _path_label():
-    if not _PATH:
-        return "/"
-    parts = []
-    for p in _PATH:
-        parts.append(str(p))
-    return "/" + "/".join(parts)
+def _tree_rows():
+    """Flatten the config tree into the visible row list.
+
+    Each row is (path_tuple, key, value, depth). A dict/list row whose
+    path is in _EXPANDED contributes its children directly beneath it at
+    depth + 1 — sections expand in place instead of navigating away.
+    """
+    rows = []
+
+    def walk(node, path, depth):
+        for key, val in _entries(node):
+            p = path + (key,)
+            rows.append((p, key, val, depth))
+            if isinstance(val, (dict, list)) and p in _EXPANDED:
+                walk(val, p, depth + 1)
+
+    walk(_ROOT, (), 0)
+    return rows
 
 
 def _value_preview(val):
@@ -237,9 +248,10 @@ def keypress(ch):
             return True
         return True
 
-    node = _node_at(_PATH)
-    items = _entries(node)
-    total = len(items)
+    rows = _tree_rows()
+    total = len(rows)
+    if total:
+        _SELECTED = max(0, min(total - 1, _SELECTED))
     if s in ("j", "J") or (ch.is_sequence and ch.name == "KEY_DOWN"):
         if total:
             _SELECTED = min(total - 1, _SELECTED + 1)
@@ -250,48 +262,59 @@ def keypress(ch):
         return True
     if s in ("\n", "\r") or (ch.is_sequence and ch.name == "KEY_RIGHT"):
         if total:
-            key, val = items[_SELECTED]
+            path, key, val, _depth = rows[_SELECTED]
             if isinstance(val, (dict, list)):
-                _PATH.append(key)
-                _SELECTED = 0
-                _SCROLL = 0
+                # Toggle in place; rows above the selection are unaffected,
+                # so the selected row keeps pointing at this section.
+                if path in _EXPANDED:
+                    _EXPANDED.discard(path)
+                else:
+                    _EXPANDED.add(path)
             else:
-                _begin_edit(val, _PATH + [key])
+                _begin_edit(val, list(path))
         return True
     if ch.is_sequence and ch.name in ("KEY_LEFT", "KEY_BACKSPACE"):
-        if _PATH:
-            _PATH.pop()
-            _SELECTED = 0
-            _SCROLL = 0
+        if total:
+            path, key, val, _depth = rows[_SELECTED]
+            if isinstance(val, (dict, list)) and path in _EXPANDED:
+                _EXPANDED.discard(path)
+            elif len(path) > 1:
+                # Collapse the parent branch and land the selection on it.
+                parent = path[:-1]
+                _EXPANDED.discard(parent)
+                for i, row in enumerate(_tree_rows()):
+                    if row[0] == parent:
+                        _SELECTED = i
+                        break
         return True
     if s in ("+", "="):
         if total:
-            key, val = items[_SELECTED]
+            path, key, val, _depth = rows[_SELECTED]
             if isinstance(val, (int, float)) and not isinstance(val, bool):
                 step = _adjust_step(val, 1, "+")
-                _set_at(_PATH + [key], _adjust_number(val, step))
+                _set_at(list(path), _adjust_number(val, step))
                 _DIRTY = True
         return True
     if s == "-":
         if total:
-            key, val = items[_SELECTED]
+            path, key, val, _depth = rows[_SELECTED]
             if isinstance(val, (int, float)) and not isinstance(val, bool):
                 step = _adjust_step(val, -1, "-")
-                _set_at(_PATH + [key], _adjust_number(val, step))
+                _set_at(list(path), _adjust_number(val, step))
                 _DIRTY = True
         return True
     if s == " ":
         if total:
-            key, val = items[_SELECTED]
+            path, key, val, _depth = rows[_SELECTED]
             if isinstance(val, bool):
-                _set_at(_PATH + [key], not val)
+                _set_at(list(path), not val)
                 _DIRTY = True
         return True
     if s.lower() == "e":
         if total:
-            key, val = items[_SELECTED]
+            path, key, val, _depth = rows[_SELECTED]
             if not isinstance(val, (dict, list)):
-                _begin_edit(val, _PATH + [key])
+                _begin_edit(val, list(path))
         return True
     if s.lower() == "r":
         _load_if_changed(force=True)
@@ -303,50 +326,14 @@ def keypress(ch):
     return False
 
 
-def draw(state):
-    global _SCROLL
-    cols = state["cols"]
-    rows = state["rows"]
-    y0 = state.get("y_offset", 3)
-
-    _load_if_changed()
-    _save_if_dirty()
-
-    draw_line(y0, f"--- {PAGE_NAME} ---".ljust(cols))
-    draw_line(y0 + 1, f"Path: {_path_label()}"[:cols])
-    help1 = "Up/Down select  Enter/Right open  Left back"
-    help2 = "+/- adjust  space toggle  e edit  r reload"
-    draw_line(y0 + 2, help1[:cols])
-    draw_line(y0 + 3, help2[:cols])
-
-    node = _node_at(_PATH)
-    items = _entries(node)
-    total = len(items)
-
-    list_start = y0 + 4
-    list_height = max(1, rows - list_start - 4)
-
-    if _SELECTED < _SCROLL:
-        _SCROLL = _SELECTED
-    if _SELECTED >= _SCROLL + list_height:
-        _SCROLL = _SELECTED - list_height + 1
-
-    for i in range(list_height):
-        idx = _SCROLL + i
-        y = list_start + i
-        if idx >= total:
-            draw_line(y, "".ljust(cols))
-            continue
-        key, val = items[idx]
-        prefix = ">" if idx == _SELECTED else " "
-        k = str(key)
-        v = _value_preview(val)
-        line = f"{prefix} {k}: {v}"
-        draw_line(y, line[:cols])
-
-    if _EDIT_MODE:
-        edit_line = f"Edit: {_EDIT_BUFFER}"
-        draw_line(2, edit_line[:cols])
+def _row_text(path, key, val, depth, selected):
+    sel = ">" if selected else " "
+    indent = "  " * depth
+    if isinstance(val, (dict, list)):
+        if path in _EXPANDED:
+            return f"{sel} {indent}- {key}:"
+        return f"{sel} {indent}+ {key}: {_value_preview(val)}"
+    return f"{sel} {indent}  {key}: {_value_preview(val)}"
 
 
 def _build_widget_lines(state):
@@ -355,26 +342,46 @@ def _build_widget_lines(state):
     rows = int(state.get("rows", 30))
     _load_if_changed()
     _save_if_dirty()
-    lines = [f"--- {PAGE_NAME} ---", f"Path: {_path_label()}", "Up/Down select  Enter/Right open  Left back", "+/- adjust  space toggle  e edit  r reload"]
-    node = _node_at(_PATH)
-    items = _entries(node)
-    total = len(items)
+    lines = [
+        f"--- {PAGE_NAME} ---",
+        f"File: {config_path()}",
+        "Up/Down select  Enter/Right expand or edit  Left collapse",
+        "+/- adjust  space toggle  e edit  r reload",
+    ]
+    tree = _tree_rows()
+    total = len(tree)
     list_height = max(1, rows - 8)
     if _SELECTED < _SCROLL:
         _SCROLL = _SELECTED
     if _SELECTED >= _SCROLL + list_height:
         _SCROLL = _SELECTED - list_height + 1
+    _SCROLL = max(0, min(_SCROLL, max(0, total - list_height)))
     for i in range(list_height):
         idx = _SCROLL + i
         if idx >= total:
             lines.append("")
             continue
-        key, val = items[idx]
-        prefix = ">" if idx == _SELECTED else " "
-        lines.append(f"{prefix} {key}: {_value_preview(val)}"[:cols])
+        path, key, val, depth = tree[idx]
+        lines.append(_row_text(path, key, val, depth, idx == _SELECTED)[:cols])
     if _EDIT_MODE:
         lines.insert(0, f"Edit: {_EDIT_BUFFER}")
     return lines
+
+
+def draw(state):
+    cols = state["cols"]
+    rows = state["rows"]
+    y0 = state.get("y_offset", 3)
+    lines = _build_widget_lines(state)
+    y = y0
+    for line in lines:
+        if y >= rows - 4:
+            break
+        draw_line(y, line[:cols].ljust(cols))
+        y += 1
+    while y < rows - 4:
+        draw_line(y, " " * cols)
+        y += 1
 
 
 def build_widget(state):
