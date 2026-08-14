@@ -14,8 +14,8 @@ Updated: 2026-02-27 (WB-004 closed, WB-000 completed)
 |---|---|---|---|---|
 | WB-000 Upstream sync with latest `origin/master` | Repo Admin | 2026-03-01 | ✅ Complete | Canonical baseline SHA: `6218588ec031ce6993dea01597db5d9ec22a1531`. Baseline sync merge timestamp: `2026-02-27T07:20:00Z`. Evidence artifact: `docs/baseline_sync_evidence_2026-02-27.md`. |
 | WB-001 Ownership guard (`CODEOWNERS` + required review path) | Platform / Repo Admin | 2026-03-02 | 🔴 Not started | Missing `.github/CODEOWNERS`. |
-| WB-002 Contract-version governance check | Platform + QA-Contract | 2026-03-03 | 🟢 Active | Required CI gate added via `.github/workflows/contract-version-governance.yml`; policy/examples documented in `docs/parallel_readiness_checklist.md` (Contract governance policy details). |
-| WB-003 PR metadata validator (lane + branch policy) | DevEx / QA-Contract | 2026-03-01 | 🔴 Not started | PR template exists; enforcement check missing. |
+| WB-002 Contract-version governance check | Platform + QA-Contract | 2026-03-03 | 🔴 Not started | Required contract-version CI gate not present. |
+| WB-003 PR metadata validator (lane + branch policy) | DevEx / QA-Contract | 2026-03-01 | 🟢 Done | `pr-metadata-validate.yml` enforces lane/branch/ticket/contract-impact metadata on `pull_request`. |
 | WB-004 Fixture dependency map + validation | QA-Contract | 2026-03-04 | 🟡 In progress | Need committed dependency map artifact. |
 | WB-005 Real 1-week pilot execution (2–3 contributors) | Lane Leads | 2026-03-08 | 🟡 Ready to execute | Ready when WB-000..WB-004 are green and required pilot artifacts are pre-created (`docs/pilot_incident_log_template.md`, `docs/parallel_pilot_evidence_index.md`, `artifacts/pilot/*.json`). |
 
