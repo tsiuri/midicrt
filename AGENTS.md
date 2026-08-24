@@ -576,3 +576,20 @@ Examples:
   current page (`on_knob_delta`), notes forward to the rack out on the page's
   `note_target_channel`. Config section `knobctl` in settings.json.
 - Protocol reverse-engineering notes: `docs/lxp1-protocol.md`.
+
+## Matrix-1000 controller page (page 19, key `(`) + shared devices/ + web/Android surface
+
+- `devices/` — pure device definitions (param tables + MIDI builders), shared by
+  CRT pages, the web touch surface, and ports. `matrix1000.py` was generated
+  from the JUCE VST's Matrix1000Definition.h; `lxp1.py` is the LXP-1 authority.
+- `pages/matrix1000.py` — page 19: `[`/`]` switch groups (12 + Mod Matrix),
+  NRPN edits (param 21 raw, others +64), mod-matrix sysex, `b`/`p` bank(+unlock)
+  and program, `W` store, `E` request edit buffer, same knob/entry/learn
+  contract as lxp1.
+- **Web touch surface**: `http://pivisualizer.internal:8765/control` (served by
+  midicrt-web-observer). Schema-driven: `web/control.py` + `static/control.html`;
+  mutations POST under `/api/manage/control/*`. Sends MIDI on its own UX16 out —
+  CRT pages and web do NOT share shadow state yet.
+- **Android**: `mothership:~/projects/synth-controllers-android` — WebView shell
+  APK (yt-remote-android no-Gradle pattern) → the /control URL. Built APK also
+  at `\\192.168.0.187\samba_writeable\synth-controllers-debug.apk`.
