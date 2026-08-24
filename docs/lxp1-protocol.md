@@ -91,3 +91,20 @@ patch sources (4), patch dests (4), scale factors (4).
   — needed for a future "pull state into the page" feature and for the sysex librarian.
 - Dynamic-MIDI patch rows (48-63) behavior when written over MIDI.
 - Front-panel knob transmit (packed class `2n`) — could be used for bidirectional sync.
+
+## Empirical findings against the real unit (2026-08-24)
+
+- **Writing Program ID (param 65) does NOT load a program.** The MIDI LED
+  flashes (message received) but nothing changes. Program/setup loading works
+  only via: standard **MIDI Program Change** (loads register 0-127, manual
+  3-3) or **setup select param 64** (128+n = factory preset n).
+- **No OMNI mode.** The unit listens on exactly one channel. Channel is set
+  physically: hold the front-panel MIDI button while any complete channel
+  message arrives (a note then pitch-bend defeats running status; manual 3-2).
+  Storing a register via Program Change while the button is held also re-pins
+  the unit to the sender's channel.
+- Factory preset order 0-15 assumed = manual program-table order (Small 1/2,
+  Medium 1/2, Large 1/2, Hall D/B, Plate D/B, Inverse, Gate, Chorus 1/2,
+  Delay 1/2) — encoded in `pages/lxp1.py` `PRESETS`; verify by ear.
+- Front-panel MIDI LED blinks continuously when knob positions don't match the
+  loaded program — useful as visual confirmation that a remote load happened.

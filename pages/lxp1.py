@@ -10,7 +10,9 @@
 #   Left/Right         nudge field one step (transmits)
 #   Shift-Left/Right   coarse nudge (~5% of range)
 #   Enter              typed entry in display units; Enter commits, Esc cancels
-#   g / G              next / previous algorithm (sends Program ID, param 65)
+#   g / G              next / previous factory preset (setup select, param 64)
+#   c                  channel-set burst: hold the unit's MIDI button while
+#                      this arrives to lock the LXP-1 to the page's channel
 #   S / R              store register / recall setup (typed number; R: 0-127
 #                      registers, 128-144 factory presets 0-15)
 #   , / .              MIDI channel down / up
@@ -123,8 +125,20 @@ ALGORITHMS = {
 
 _INPUT_LEVEL = P(10, "Input Level", False, 256, 0, 100, "%")
 
+# The 16 factory presets in front-panel program-table order (manual ch.2) with
+# the algorithm each runs.  Preset numbering 0-15 = this order is the manual's
+# program-table order — believed to match setup numbers 128-144; verify by ear.
+PRESETS = [
+    ("Small 1", 1), ("Small 2", 1), ("Medium 1", 1), ("Medium 2", 1),
+    ("Large 1", 1), ("Large 2", 1), ("Hall D", 1), ("Hall B", 1),
+    ("Plate D", 2), ("Plate B", 2), ("Inverse", 6), ("Gate", 7),
+    ("Chorus 1", 3), ("Chorus 2", 5), ("Delay 1", 8), ("Delay 2", 4),
+]
+
+# NOTE: writing Program ID (param 65) does NOT load a program — verified dead
+# on the real unit 2026-08-24.  Loading happens via standard MIDI Program
+# Change (registers 0-127) or Setup select param 64 (128+n = factory presets).
 PARAM_SETUP = 64
-PARAM_PROGRAM = 65
 EVENT_STORE_REGISTER = 0x70
 
 # ---------------------------------------------------------------------------
@@ -139,6 +153,7 @@ except Exception:
 
 channel = int(_cfg.get("channel", 1))            # 1-16
 program = int(_cfg.get("program", 1))            # algorithm 1-8
+preset = int(_cfg.get("preset", 0))              # factory preset 0-15
 # values[str(pgm)][str(param_num)] = last-sent step (device state is write-only
 # from our side for now, so unknown fields show "--")
 values = _cfg.get("values", {}) if isinstance(_cfg.get("values"), dict) else {}
@@ -176,6 +191,7 @@ def _flush_save():
             save_section("lxp1", {
                 "channel": channel,
                 "program": program,
+                "preset": preset,
                 "values": values,
                 "output_hints": output_hints,
             })
@@ -363,21 +379,59 @@ def _entry_commit():
             _status(f"stored edit state to register {reg}")
     elif mode == "recall":
         setup = max(0, min(144, int(num)))
-        if _send_param(PARAM_SETUP, setup):
+        if setup < 128:
+            ok = _send_program_change(setup)   # documented register load
+            label = f"register {setup} (via Program Change)"
+        else:
+            ok = _send_param(PARAM_SETUP, setup)
+            label = f"factory preset {setup-128}"
+        if ok:
             values.pop(str(program), None)   # device state changed under us
             _mark_save()
-            label = f"register {setup}" if setup < 128 else f"factory preset {setup-128}"
             _status(f"recalled {label} (params now unknown)")
 
 
-def _set_program(pgm):
-    global program, cursor
-    pgm = ((pgm - 1) % 8) + 1
-    program = pgm
+def _set_preset(idx):
+    global preset, program, cursor
+    preset = idx % 16
+    program = PRESETS[preset][1]
     cursor = 0
+    values.pop(str(program), None)   # preset load resets device params
     _mark_save()
-    if _send_param(PARAM_PROGRAM, pgm):
-        _status(f"program {pgm}: {ALGORITHMS[pgm][0]}")
+    if _send_param(PARAM_SETUP, 128 + preset):
+        _status(f"preset {preset}: {PRESETS[preset][0]} ({ALGORITHMS[program][0]})")
+
+
+def _send_program_change(pp):
+    if not _ensure_out():
+        _status(f"TX FAILED: {out_err}")
+        return False
+    global last_tx
+    try:
+        out_port.send(mido.Message("program_change", program=pp & 0x7F,
+                                   channel=(channel - 1) & 0x0F))
+        last_tx = f"PC {pp} ch{channel}"
+        return True
+    except Exception as exc:
+        _status(f"TX FAILED: {exc}")
+        return False
+
+
+def _channel_set_burst():
+    """Hold the LXP-1's front-panel MIDI button while this arrives and the
+    unit locks itself to our channel (manual 3-2: any complete channel
+    message; a note then pitch-bend breaks any running status)."""
+    if not _ensure_out():
+        _status(f"TX FAILED: {out_err}")
+        return
+    ch = (channel - 1) & 0x0F
+    try:
+        out_port.send(mido.Message("note_on", note=60, velocity=1, channel=ch))
+        out_port.send(mido.Message("note_off", note=60, velocity=0, channel=ch))
+        out_port.send(mido.Message("pitchwheel", pitch=0, channel=ch))
+        _status(f"channel-set burst sent on ch{channel} (hold the MIDI button!)")
+    except Exception as exc:
+        _status(f"TX FAILED: {exc}")
 
 
 def _arm_learn():
@@ -444,10 +498,13 @@ def keypress(key):
         return True
 
     if s == "g":
-        _set_program(program + 1)
+        _set_preset(preset + 1)
         return True
     if s == "G":
-        _set_program(program - 1)
+        _set_preset(preset - 1)
+        return True
+    if s == "c":
+        _channel_set_burst()
         return True
     if s == "S":
         _entry_begin("store")
@@ -488,7 +545,7 @@ def _build_lines(cols):
     cur = min(cursor, len(flds) - 1)
     pgm_name = ALGORITHMS[program][0]
     lines = [
-        f"--- LXP-1  ch{channel:02d}  pgm {program}: {pgm_name} ---",
+        f"--- LXP-1  ch{channel:02d}  preset {preset}: {PRESETS[preset][0]}  alg: {pgm_name} ---",
         f"out: {'ok' if out_port else out_err or '(closed)'}   knob: {_knob_status()}",
         "",
     ]
@@ -512,7 +569,7 @@ def _build_lines(cols):
     elif status_msg and time.time() - status_time < 6.0:
         lines.append(f" {status_msg}")
     else:
-        lines.append(" arrows:move/nudge  Enter:type  g:pgm  S/R:store/recall  L:learn  ,/.:ch")
+        lines.append(" arrows:nudge Enter:type g:preset S/R:store/recall L:learn ,/.:ch c:set-unit-ch")
     if last_tx:
         lines.append(f" tx: {last_tx}"[: max(20, cols - 1)])
     return lines
