@@ -1989,6 +1989,9 @@ def keyboard_listener():
                 elif key == "*":
                     switch_page(18)
                     continue
+                elif key == "(":
+                    switch_page(19)
+                    continue
                 elif key in ("=", "+"):
                     switch_page_relative(1)
                     continue

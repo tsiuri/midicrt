@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>midicrt controllers</title>
+<style>
+  :root { --bg:#020b03; --panel:#04140699; --green:#4ade80; --dim:#15803d;
+          --bright:#bbf7d0; --amber:#fbbf24; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  body { margin:0; background:var(--bg); color:var(--green);
+         font-family:"IBM Plex Mono","Courier New",monospace; font-size:15px; }
+  header { position:sticky; top:0; z-index:5; background:var(--bg);
+           border-bottom:1px solid var(--dim); padding:8px 10px; }
+  h1 { font-size:15px; margin:0 0 6px; color:var(--bright);
+       letter-spacing:2px; text-transform:uppercase; }
+  .tabs { display:flex; gap:6px; }
+  .tabs button { flex:1; padding:10px 4px; background:transparent; color:var(--green);
+        border:1px solid var(--dim); border-radius:6px; font:inherit; }
+  .tabs button.on { background:var(--dim); color:var(--bright); font-weight:bold; }
+  #hdr { color:var(--amber); font-size:12px; padding:6px 2px 0; min-height:1.2em; }
+  #status { color:var(--dim); font-size:11px; padding:2px; min-height:1.1em; }
+  main { padding:8px; max-width:760px; margin:0 auto; }
+  details { border:1px solid var(--dim); border-radius:8px; margin:8px 0;
+            background:var(--panel); overflow:hidden; }
+  summary { padding:10px 12px; color:var(--bright); cursor:pointer;
+            letter-spacing:1px; user-select:none; }
+  .field { display:grid; grid-template-columns:minmax(110px,1.1fr) 2fr auto;
+           gap:8px; align-items:center; padding:7px 12px;
+           border-top:1px solid #0b3d1c; }
+  .field label { font-size:12px; overflow:hidden; text-overflow:ellipsis;
+                 white-space:nowrap; }
+  input[type=range] { width:100%; height:34px; accent-color:var(--green);
+                      background:transparent; touch-action:none; }
+  select, input[type=number] { background:#03210c; color:var(--bright);
+      border:1px solid var(--dim); border-radius:6px; font:inherit;
+      padding:8px 6px; max-width:170px; }
+  .val { min-width:74px; text-align:right; color:var(--bright); font-size:12px; }
+  .actions { display:flex; flex-wrap:wrap; gap:8px; padding:10px 12px; }
+  .action { display:flex; align-items:center; gap:6px; }
+  .action span { font-size:11px; }
+  button.act { background:#03210c; color:var(--bright); border:1px solid var(--dim);
+               border-radius:6px; font:inherit; padding:9px 10px; }
+  button.act:active { background:var(--dim); }
+  .err { color:#f87171; }
+</style>
+</head>
+<body>
+<header>
+  <h1>midicrt controllers</h1>
+  <div class="tabs" id="tabs"></div>
+  <div id="hdr"></div>
+  <div id="status"></div>
+</header>
+<main id="main"></main>
+<script>
+"use strict";
+let SCHEMA = null, current = null;
+const $ = (s, el) => (el || document).querySelector(s);
+const statusEl = () => $("#status");
+
+function say(msg, err) {
+  statusEl().textContent = msg;
+  statusEl().className = err ? "err" : "";
+}
+
+async function api(path, body) {
+  const opts = body
+    ? { method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(body) }
+    : {};
+  const r = await fetch(path, opts);
+  const j = await r.json().catch(() => ({ok: false, error: "bad response"}));
+  if (!j.ok) throw new Error(j.error || ("HTTP " + r.status));
+  return j;
+}
+
+// rate-limit slider spam: one in-flight POST per field, latest value wins
+const pending = new Map();
+function setField(dev, key, value) {
+  pending.set(key, value);
+  if (pending.get(key + "!inflight")) return;
+  pending.set(key + "!inflight", true);
+  (async function pump() {
+    while (pending.has(key)) {
+      const v = pending.get(key);
+      pending.delete(key);
+      try {
+        await api("/api/manage/control/set", { device: dev, key, value: v });
+        say(key + " = " + v);
+      } catch (e) { say("set " + key + ": " + e.message, true); }
+    }
+    pending.delete(key + "!inflight");
+  })();
+}
+
+function stepDisplay(f, v) {
+  if (v === null || v === undefined) return "--";
+  if (f.dmin === undefined) return String(v);
+  const frac = f.max > 0 ? v / f.max : 0;
+  const dv = f.dmin + frac * (f.dmax - f.dmin);
+  const num = Math.abs(f.dmax - f.dmin) >= 50 ? dv.toFixed(0) : dv.toFixed(2);
+  return num + (f.unit || "");
+}
+
+function fieldRow(dev, f) {
+  const row = document.createElement("div");
+  row.className = "field";
+  const lab = document.createElement("label");
+  lab.textContent = f.label;
+  row.appendChild(lab);
+  if (f.type === "choice") {
+    const sel = document.createElement("select");
+    f.choices.forEach((c, i) => {
+      const o = document.createElement("option");
+      o.value = f.min + i; o.textContent = c;
+      sel.appendChild(o);
+    });
+    sel.value = f.value ?? f.min;
+    sel.onchange = () => setField(dev, f.key, parseInt(sel.value, 10));
+    row.appendChild(sel);
+    row.appendChild(document.createElement("span"));
+  } else {
+    const r = document.createElement("input");
+    r.type = "range"; r.min = f.min; r.max = f.max;
+    r.value = (f.value === null || f.value === undefined)
+      ? Math.round((f.min + f.max) / 2) : f.value;
+    const val = document.createElement("span");
+    val.className = "val";
+    const show = () => {
+      const v = parseInt(r.value, 10);
+      val.textContent = f.type === "step" ? stepDisplay(f, v) : String(v);
+    };
+    if (f.value === null || f.value === undefined) val.textContent = "--";
+    else show();
+    r.oninput = () => { show(); setField(dev, f.key, parseInt(r.value, 10)); };
+    row.appendChild(r);
+    row.appendChild(val);
+  }
+  return row;
+}
+
+function actionBar(dev, actions) {
+  const bar = document.createElement("div");
+  bar.className = "actions";
+  actions.forEach(a => {
+    const wrap = document.createElement("div");
+    wrap.className = "action";
+    if (a.type === "button") {
+      const b = document.createElement("button");
+      b.className = "act"; b.textContent = a.label;
+      b.onclick = () => api("/api/manage/control/action", {device: dev, key: a.key})
+        .then(() => say(a.label + " sent"))
+        .catch(e => say(a.label + ": " + e.message, true));
+      wrap.appendChild(b);
+    } else if (a.type === "select") {
+      const s = document.createElement("span"); s.textContent = a.label;
+      const sel = document.createElement("select");
+      a.options.forEach((o, i) => {
+        const op = document.createElement("option");
+        op.value = i; op.textContent = o;
+        sel.appendChild(op);
+      });
+      if (a.value !== undefined) sel.value = a.value;
+      sel.onchange = () => api("/api/manage/control/action",
+          {device: dev, key: a.key, arg: parseInt(sel.value, 10)})
+        .then(() => load(dev))
+        .catch(e => say(a.key + ": " + e.message, true));
+      wrap.appendChild(s); wrap.appendChild(sel);
+    } else {
+      const s = document.createElement("span"); s.textContent = a.label;
+      const n = document.createElement("input");
+      n.type = "number"; n.min = a.min; n.max = a.max;
+      if (a.value !== undefined) n.value = a.value;
+      const b = document.createElement("button");
+      b.className = "act"; b.textContent = "go";
+      b.onclick = () => api("/api/manage/control/action",
+          {device: dev, key: a.key, arg: parseInt(n.value || "0", 10)})
+        .then(() => { say(a.label + " -> " + n.value); load(dev); })
+        .catch(e => say(a.key + ": " + e.message, true));
+      wrap.appendChild(s); wrap.appendChild(n); wrap.appendChild(b);
+    }
+    bar.appendChild(wrap);
+  });
+  return bar;
+}
+
+function render() {
+  const dev = SCHEMA.devices.find(d => d.id === current) || SCHEMA.devices[0];
+  current = dev.id;
+  const tabs = $("#tabs");
+  tabs.innerHTML = "";
+  SCHEMA.devices.forEach(d => {
+    const b = document.createElement("button");
+    b.textContent = d.name.split(" ")[0];
+    b.className = d.id === current ? "on" : "";
+    b.onclick = () => { current = d.id; render(); };
+    tabs.appendChild(b);
+  });
+  $("#hdr").textContent = "ch" + String(dev.channel).padStart(2, "0") + "  " + dev.header;
+  const main = $("#main");
+  main.innerHTML = "";
+  const actions = document.createElement("details");
+  actions.open = true;
+  const asum = document.createElement("summary");
+  asum.textContent = "program / actions";
+  actions.appendChild(asum);
+  actions.appendChild(actionBar(dev.id, dev.actions));
+  main.appendChild(actions);
+  dev.groups.forEach((g, gi) => {
+    const d = document.createElement("details");
+    if (gi === 0) d.open = true;
+    const s = document.createElement("summary");
+    s.textContent = g.name;
+    d.appendChild(s);
+    g.fields.forEach(f => d.appendChild(fieldRow(dev.id, f)));
+    main.appendChild(d);
+  });
+}
+
+async function load(keepDev) {
+  try {
+    SCHEMA = await api("/api/control/schema");
+    if (keepDev) current = keepDev;
+    render();
+    say("ready");
+  } catch (e) { say("schema: " + e.message, true); }
+}
+load();
+</script>
+</body>
+</html>
