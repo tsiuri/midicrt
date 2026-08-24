@@ -97,11 +97,14 @@ fi
 mac=$(echo "$found" | awk '{print $2}')
 echo "found: $(echo "$found" | cut -d' ' -f3-) ($mac)"
 
-# If a stale half-paired entry exists (Paired: no but known), clear it first —
-# leftover state is what causes the connect/disconnect flap.
-if bluetoothctl info "$mac" | grep -q "Paired: no"; then
+# The full flow is run when things are broken, and a device freshly put in
+# pairing mode has NEW keys — any kept Pi-side bond is stale by definition
+# (symptom: "Connected: yes" but bluetoothd logs "MIDI I/O: notifications
+# not enabled" and the keyboard LED keeps blinking). Always start clean.
+if bluetoothctl devices | grep -qi "$mac"; then
+    echo "     removing existing bond first (pairing-mode keys are always new)"
     bluetoothctl -- remove "$mac" >/dev/null 2>&1
-    sleep 2
+    sleep 3
 fi
 
 echo "[2/3] pairing with NoInputNoOutput agent (auto-confirm)"
