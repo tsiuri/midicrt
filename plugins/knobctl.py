@@ -42,6 +42,10 @@ _in_port = None
 _in_name = ""
 _out_port = None
 _learn_armed = False
+_learn_armed_at = 0.0
+LEARN_TIMEOUT_S = 20.0   # a stale armed learn must never silently grab a
+                         # surprise CC minutes later (e.g. the SMK's CC7
+                         # volume blip on BLE reconnect)
 _last_knob_val = None
 _last_seen = 0.0
 _lock = threading.Lock()
@@ -66,9 +70,10 @@ def _save_cfg():
 
 
 def arm_learn():
-    global _learn_armed
+    global _learn_armed, _learn_armed_at
     with _lock:
         _learn_armed = True
+        _learn_armed_at = time.time()
 
 
 def knob_status():
@@ -144,7 +149,9 @@ def _handle(msg):
     global _learn_armed, knob_cc, _last_knob_val
     if msg.type == "control_change":
         with _lock:
-            if _learn_armed:
+            if _learn_armed and time.time() - _learn_armed_at > LEARN_TIMEOUT_S:
+                _learn_armed = False   # expired un-consumed; ignore
+            elif _learn_armed:
                 _learn_armed = False
                 knob_cc = msg.control
                 _last_knob_val = None
