@@ -30,6 +30,7 @@ def _build_widget_lines(_state):
         "* - LXP-1 Controller (arrows nudge, Enter type, L knob-learn)",
         "( - Matrix-1000 Controller ([/] groups, b/p bank/prog, W store)",
         ") - TG77 Controller (s:slot f:fltbank x/v/X:panel)",
+        "(menu) Bass Station Rack Controller - filter/env CCs, p:program",
         "(Page 16) h - toggle memory mode (paged capture)",
         "(Page 17) MIDI + spectrum reactive ascii image translation",
         "(Page 8) y - Piano roll style toggle",

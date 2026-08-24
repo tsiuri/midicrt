@@ -21,6 +21,7 @@ from typing import Any
 from devices import lxp1 as LXP1
 from devices import matrix1000 as M1K
 from devices import tg77 as TG77
+from devices import bassstation as BSR
 
 _OUT_HINTS = ["UX16", "USB MIDI", "MIDI 1"]
 
@@ -377,6 +378,53 @@ class Tg77Session:
             raise ValueError(f"unknown action {key}")
 
 
+class BassStationSession:
+    def __init__(self, out: MidiOut, settings_path: str):
+        cfg = _settings_section(settings_path, "bassstation")
+        self.out = out
+        self.channel = int(cfg.get("channel", BSR.DEFAULT_CHANNEL))
+        self.program = int(cfg.get("program", 0))
+        self.values: dict[str, int] = {}
+
+    def schema(self) -> dict:
+        groups = []
+        for g in BSR.groups():
+            groups.append({"name": g, "fields": [
+                {"key": pid, "label": label, "type": "int",
+                 "min": 0, "max": 127,
+                 "value": self.values.get(pid), "choices": None}
+                for _, pid, label, cc in BSR.params_in_group(g)]})
+        return {
+            "id": "bassstation", "name": "BassStation (Novation rack)",
+            "channel": self.channel,
+            "header": f"program {self.program:02d}: {BSR.program_name(self.program)}"
+                      "  (filter+env only — the hardware's full CC surface)",
+            "groups": groups,
+            "actions": [
+                {"key": "program", "label": "Program 0-99", "type": "number",
+                 "min": 0, "max": 99, "value": self.program},
+                {"key": "channel", "label": "MIDI channel", "type": "number",
+                 "min": 1, "max": 16, "value": self.channel},
+            ],
+        }
+
+    def set_field(self, key: str, value: int):
+        cc = BSR.cc_for(key)
+        v = max(0, min(127, int(value)))
+        self.values[key] = v
+        self.out.cc(self.channel, cc, v)
+        return v
+
+    def action(self, key: str, arg: Any):
+        if key == "program":
+            self.program = max(0, min(99, int(arg)))
+            self.out.program_change(self.channel, self.program)
+        elif key == "channel":
+            self.channel = max(1, min(16, int(arg)))
+        else:
+            raise ValueError(f"unknown action {key}")
+
+
 def register_control_routes(app, settings_path: str) -> None:
     from aiohttp import web
 
@@ -385,6 +433,7 @@ def register_control_routes(app, settings_path: str) -> None:
         "lxp1": Lxp1Session(out, settings_path),
         "matrix1000": Matrix1000Session(out, settings_path),
         "tg77": Tg77Session(out, settings_path),
+        "bassstation": BassStationSession(out, settings_path),
     }
 
     async def control_page(request):
