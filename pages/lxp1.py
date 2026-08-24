@@ -158,6 +158,9 @@ preset = int(_cfg.get("preset", 0))              # factory preset 0-15
 # from our side for now, so unknown fields show "--")
 values = _cfg.get("values", {}) if isinstance(_cfg.get("values"), dict) else {}
 output_hints = _cfg.get("output_hints", ["UX16", "USB MIDI", "MIDI 1"])
+# sysex parameter-adjust class: "packed" (0x2n, the format the PC1600 template
+# provably used on real units) or "nibble" (0x5n, manual-documented)
+param_class = str(_cfg.get("param_class", "packed"))
 
 # expose for plugins/knobctl.py: notes from the little keyboard follow the page
 note_target_channel = channel
@@ -172,6 +175,17 @@ last_tx = ""
 out_port = None
 out_err = ""
 _save_pending = 0.0
+
+# probe mode: sweep channel x format combos pumping Effects Level max/min so
+# the right combo is found by ear (the LXP-1 sends no acknowledgements and its
+# MIDI jack is factory-jumpered as THRU, so listening is the only feedback)
+probe_on = False
+_probe_idx = 0
+_probe_t0 = 0.0
+_probe_pumps_sent = 0
+PROBE_COMBOS = [(ch, k) for ch in range(1, 17) for k in ("packed", "nibble")]
+PROBE_COMBO_SECS = 3.5
+PROBE_PUMP_SECS = 0.7
 
 
 def _fields():
@@ -192,6 +206,7 @@ def _flush_save():
                 "channel": channel,
                 "program": program,
                 "preset": preset,
+                "param_class": param_class,
                 "values": values,
                 "output_hints": output_hints,
             })
@@ -248,14 +263,24 @@ def _send_sysex(payload):
         return False
 
 
-def _send_param(param_num, value16):
-    n = (channel - 1) & 0x0F
+def _send_param(param_num, value16, klass=None, ch=None):
+    n = ((channel if ch is None else ch) - 1) & 0x0F
     value16 = max(0, min(0xFFFF, int(value16)))
-    payload = (
-        0x06, 0x02, 0x50 | n, param_num & 0x7F,
-        (value16 >> 12) & 0x0F, (value16 >> 8) & 0x0F,
-        (value16 >> 4) & 0x0F, value16 & 0x0F,
-    )
+    k = param_class if klass is None else klass
+    if k == "packed":
+        # class 0x2n, 8/7-packed 16-bit: msb-collect byte, then LSB7, then MSB7
+        a = value16 & 0xFF          # least significant byte
+        b = (value16 >> 8) & 0xFF   # most significant byte
+        payload = (
+            0x06, 0x02, 0x20 | n, param_num & 0x7F,
+            ((b >> 7) << 1) | (a >> 7), a & 0x7F, b & 0x7F,
+        )
+    else:
+        payload = (
+            0x06, 0x02, 0x50 | n, param_num & 0x7F,
+            (value16 >> 12) & 0x0F, (value16 >> 8) & 0x0F,
+            (value16 >> 4) & 0x0F, value16 & 0x0F,
+        )
     return _send_sysex(payload)
 
 
@@ -465,6 +490,40 @@ def _knob_status():
     return knob.knob_status() if knob else "knobctl off"
 
 
+def _probe_toggle():
+    global probe_on, _probe_idx, _probe_t0, _probe_pumps_sent, channel, param_class
+    if not probe_on:
+        probe_on = True
+        _probe_idx = 0
+        _probe_t0 = time.time()
+        _probe_pumps_sent = 0
+        _status("PROBE started: press T the moment you hear the wet level pumping")
+        return
+    probe_on = False
+    ch, k = PROBE_COMBOS[_probe_idx % len(PROBE_COMBOS)]
+    channel = ch
+    param_class = k
+    _mark_save()
+    _status(f"PROBE locked: channel {ch}, {k} sysex class")
+
+
+def _probe_tick():
+    """Called from draw(); pumps Effects Level (param 2) max/min on the
+    current combo, advancing combos every PROBE_COMBO_SECS."""
+    global _probe_idx, _probe_t0, _probe_pumps_sent
+    now = time.time()
+    if now - _probe_t0 >= PROBE_COMBO_SECS:
+        _probe_idx = (_probe_idx + 1) % len(PROBE_COMBOS)
+        _probe_t0 = now
+        _probe_pumps_sent = 0
+    due = int((now - _probe_t0) / PROBE_PUMP_SECS) + 1
+    if _probe_pumps_sent < due:
+        ch, k = PROBE_COMBOS[_probe_idx % len(PROBE_COMBOS)]
+        value = 0xBFFF if (_probe_pumps_sent % 2 == 0) else 0x8000
+        _send_param(2, value, klass=k, ch=ch)
+        _probe_pumps_sent += 1
+
+
 # ---------------------------------------------------------------------------
 # Key handling
 # ---------------------------------------------------------------------------
@@ -540,6 +599,9 @@ def keypress(key):
     if s == "L":
         _arm_learn()
         return True
+    if s == "T":
+        _probe_toggle()
+        return True
     return False
 
 
@@ -560,7 +622,7 @@ def _build_lines(cols):
     cur = min(cursor, len(flds) - 1)
     pgm_name = ALGORITHMS[program][0]
     lines = [
-        f"--- LXP-1  ch{channel:02d}  preset {preset}: {PRESETS[preset][0]}  alg: {pgm_name} ---",
+        f"--- LXP-1  ch{channel:02d} {param_class}  preset {preset}: {PRESETS[preset][0]}  alg: {pgm_name} ---",
         f"out: {'ok' if out_port else out_err or '(closed)'}   knob: {_knob_status()}",
         "",
     ]
@@ -574,6 +636,9 @@ def _build_lines(cols):
             f"{'  (bi)' if param['bipolar'] else ''}"
         )
     lines.append("")
+    if probe_on:
+        pch, pk = PROBE_COMBOS[_probe_idx % len(PROBE_COMBOS)]
+        lines.append(f" ### PROBE ch{pch:02d} {pk.upper()} — pumping FX Level; press T when you HEAR it ###")
     if entry_mode == "value":
         param = flds[cur]
         lines.append(f" ENTER {param['name']} ({param['dmin']:g}..{param['dmax']:g}{param['unit']}): {entry_buf}_")
@@ -584,13 +649,16 @@ def _build_lines(cols):
     elif status_msg and time.time() - status_time < 6.0:
         lines.append(f" {status_msg}")
     else:
-        lines.append(" arrows:nudge Enter:type g:preset S/R:store/recall L:learn ,/.:ch c:set-unit-ch")
+        lines.append(" arrows:nudge Enter:type g:preset S/R:st/rcl L:learn ,/.:ch c:unit-ch T:probe")
     if last_tx:
         lines.append(f" tx: {last_tx}"[: max(20, cols - 1)])
     return lines
 
 
 def draw(state):
+    if probe_on:
+        _probe_tick()
+    _flush_save()
     cols = state["cols"]
     y0 = state.get("y_offset", 3)
     for idx, line in enumerate(_build_lines(cols)):
