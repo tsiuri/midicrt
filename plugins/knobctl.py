@@ -188,19 +188,38 @@ def _handle(msg):
         pass
 
 
+# If the BLE keyboard drops and reconnects, bluetoothd recreates its seq
+# client and our subscription dies SILENTLY — reads keep succeeding with no
+# data, no exception.  So: if nothing has arrived for IDLE_REOPEN_SECS,
+# quietly close and reopen (rescanning hints fresh, which also upgrades us
+# from the Midi Through fallback back to the real SMK port when it returns).
+IDLE_REOPEN_SECS = 20.0
+
+
 def _worker():
     global _in_port, _in_name, _last_seen
+    last_reopen = time.time()
     while True:
         if _in_port is None:
             if not _open_input():
                 time.sleep(3.0)
                 continue
+            last_reopen = time.time()
         try:
             got = False
             for msg in _in_port.iter_pending():
                 got = True
                 _last_seen = time.time()
                 _handle(msg)
+            now = time.time()
+            if not got and now - max(_last_seen, last_reopen) > IDLE_REOPEN_SECS:
+                try:
+                    _in_port.close()
+                except Exception:
+                    pass
+                _in_port = None
+                _in_name = ""
+                continue
             time.sleep(0.005 if got else 0.02)
         except Exception:
             # BLE dropped or backend hiccup: close and rescan
