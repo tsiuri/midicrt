@@ -564,3 +564,15 @@ Examples:
 - Send SysEx (auto-wraps `F0`/`F7` if omitted):
   - `./midisend sysex 7D 6D 63 41 01 08`
   - `./midisend sysex F0 7D 6D 63 40 10 F7`
+
+## LXP-1 controller page (page 18, key `*`)
+
+- `pages/lxp1.py` — Lexicon LXP-1 reverb controller. Per-algorithm parameter
+  tables from the owner's manual; sends Nibblized Parameter Adjust sysex.
+  Arrows move/nudge, Enter = typed entry (auto page-lock), g/G program,
+  S/R store/recall, `,`/`.` MIDI channel, L = knob learn.
+- `plugins/knobctl.py` — M-VAVE SMK-25 mini router: opens its own MIDI input
+  (hints "SMK"/"M-VAVE"), learned knob CC nudges the focused field of the
+  current page (`on_knob_delta`), notes forward to the rack out on the page's
+  `note_target_channel`. Config section `knobctl` in settings.json.
+- Protocol reverse-engineering notes: `docs/lxp1-protocol.md`.

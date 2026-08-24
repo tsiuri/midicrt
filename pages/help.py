@@ -27,6 +27,7 @@ def _build_widget_lines(_state):
         "% - TimeSig Exp",
         "^ - Piano Roll Exp",
         "& - MIDI IMG2TXT",
+        "* - LXP-1 Controller (arrows nudge, Enter type, L knob-learn)",
         "(Page 16) h - toggle memory mode (paged capture)",
         "(Page 17) MIDI + spectrum reactive ascii image translation",
         "(Page 8) y - Piano roll style toggle",
