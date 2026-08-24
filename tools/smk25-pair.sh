@@ -49,10 +49,12 @@ status() {
 }
 
 do_link() {
-    # BLE device's midi OUTPUT port in the pw graph
-    src=$(pw-link -o 2>/dev/null | grep -iE "$NAME_PAT" | head -1)
+    # BLE device's midi OUTPUT port in the pw graph.  pw-link decorates its
+    # listings with " (capture)"/" (playback)" suffixes that are not part of
+    # the port name — strip them or the link call can't resolve the port.
+    src=$(pw-link -o 2>/dev/null | grep -iE "$NAME_PAT" | head -1 | sed 's/ (capture)$//;s/ (playback)$//')
     # ALSA bridge node for Midi Through Port-0, playback side
-    dst=$(pw-link -i 2>/dev/null | grep -i "through" | grep -i "port-0" | head -1)
+    dst=$(pw-link -i 2>/dev/null | grep -i "through" | grep -i "port-0" | head -1 | sed 's/ (capture)$//;s/ (playback)$//')
     if [ -z "$src" ]; then
         echo "NO PipeWire output node matching /$NAME_PAT/ — is the keyboard connected?"
         echo "All pw midi outputs:"; pw-link -o | sed 's/^/  /'
