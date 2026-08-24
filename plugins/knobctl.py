@@ -29,7 +29,9 @@ try:
 except Exception:
     _cfg = {}
 
-input_hints = _cfg.get("input_hints", ["SMK", "M-VAVE", "MVAVE", "SMK25"])
+# "Midi Through Port-0" is the PipeWire->ALSA landing zone for the BLE
+# keyboard (see tools/smk25-pair.sh); Port-1 belongs to netmidi — never add it.
+input_hints = _cfg.get("input_hints", ["SMK", "M-VAVE", "MVAVE", "SMK25", "Midi Through Port-0"])
 output_hints = _cfg.get("output_hints", ["UX16", "USB MIDI", "MIDI 1"])
 knob_cc = _cfg.get("knob_cc")            # int or None (unlearned)
 knob_mode = _cfg.get("knob_mode", "abs")  # "abs" | "rel2" (2's-complement relative)
