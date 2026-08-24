@@ -151,9 +151,18 @@ def _handle(msg):
                 _save_cfg()
                 return
         if knob_cc is not None and msg.control == knob_cc:
+            page = _current_page()
+            # absolute-position contract preferred: CC 0..127 = full range of
+            # the focused field (right for pot-style knobs like the SMK-25)
+            fn_abs = getattr(page, "on_knob_value", None)
+            if fn_abs is not None and knob_mode != "rel2":
+                try:
+                    fn_abs(msg.value)
+                except Exception:
+                    pass
+                return
             delta = _knob_delta(msg.value)
             if delta:
-                page = _current_page()
                 fn = getattr(page, "on_knob_delta", None)
                 if fn:
                     try:

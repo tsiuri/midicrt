@@ -329,8 +329,23 @@ def _nudge(delta):
 
 
 def on_knob_delta(delta):
-    """Called by plugins/knobctl.py when the learned knob turns."""
+    """Fallback for endless-encoder knobs (see knobctl)."""
     _nudge(int(delta))
+
+
+def on_knob_value(value):
+    """Absolute knob position from knobctl: CC 0..127 spans the focused
+    field's entire range."""
+    flds = _fields()
+    if not flds:
+        return
+    param = flds[min(cursor, len(flds) - 1)]
+    frac = max(0, min(127, int(value))) / 127.0
+    step = round(frac * (param["steps"] - 1))
+    if step == _get_step(param):
+        return
+    step = _set_step(param, step)
+    _status(f"{param['name']} -> step {step}/{param['steps']-1} = {_display_value(param, step)}")
 
 
 # ---------------------------------------------------------------------------
