@@ -28,6 +28,8 @@ def _build_widget_lines(_state):
         "^ - Piano Roll Exp",
         "& - MIDI IMG2TXT",
         "* - LXP-1 Controller (arrows nudge, Enter type, L knob-learn)",
+        "( - Matrix-1000 Controller ([/] groups, b/p bank/prog, W store)",
+        ") - TG77 Controller (s:slot f:fltbank x/v/X:panel)",
         "(Page 16) h - toggle memory mode (paged capture)",
         "(Page 17) MIDI + spectrum reactive ascii image translation",
         "(Page 8) y - Piano roll style toggle",

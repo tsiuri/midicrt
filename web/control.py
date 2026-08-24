@@ -20,6 +20,7 @@ from typing import Any
 
 from devices import lxp1 as LXP1
 from devices import matrix1000 as M1K
+from devices import tg77 as TG77
 
 _OUT_HINTS = ["UX16", "USB MIDI", "MIDI 1"]
 
@@ -259,6 +260,123 @@ class Matrix1000Session:
             raise ValueError(f"unknown action {key}")
 
 
+class Tg77Session:
+    _SIGN = ["+", "-"]
+
+    def __init__(self, out: MidiOut, settings_path: str):
+        cfg = _settings_section(settings_path, "tg77")
+        self.out = out
+        self.channel = int(cfg.get("channel", TG77.DEFAULT_CHANNEL))
+        self.device_number = int(cfg.get("device_number", TG77.DEFAULT_DEVICE_NUMBER))
+        self.element_slot = int(cfg.get("element_slot", 0))
+        self.filter_select = int(cfg.get("filter_select", 0))
+        self.values: dict[str, int] = {}
+        self._specs = {}
+        for spec in (list(TG77.OPERATOR_SPECS) + list(TG77.GLOBAL_SPECS)
+                     + list(TG77.FILTER_BANK_SPECS) + list(TG77.FILTER_COMMON_SPECS)
+                     + list(TG77.SETUP_SPECS) + list(TG77.AWM_SPECS)):
+            self._specs[spec[0]] = spec
+
+    def _families(self):
+        fam = {}
+        for s in TG77.OPERATOR_SPECS:
+            fam[s[0]] = "op"
+        for s in TG77.FILTER_BANK_SPECS:
+            fam[s[0]] = "flt"
+        return fam
+
+    def _skey(self, sid, op=None):
+        fam = self._families().get(sid, "g")
+        if fam == "op":
+            return f"o{op}.{sid}"
+        if fam == "flt":
+            return f"f{self.filter_select}.{sid}"
+        return f"g.{sid}"
+
+    def _get(self, sid, op=None):
+        return int(self.values.get(self._skey(sid, op), self._specs[sid][4]))
+
+    def _spec_field(self, spec, key):
+        sid, label, mn, mx, dflt, choices = spec
+        if choices is None and sid.lower().endswith("sign"):
+            choices = self._SIGN
+        return {"key": key, "label": label,
+                "type": "choice" if choices else "int",
+                "min": mn, "max": mx,
+                "value": self.values.get(key, dflt),
+                "choices": list(choices) if choices else None}
+
+    def schema(self) -> dict:
+        groups = []
+        for op in range(6):
+            groups.append({"name": f"OP{op+1}", "fields": [
+                self._spec_field(s, f"o{op}.{s[0]}") for s in TG77.OPERATOR_SPECS]})
+        groups.append({"name": "Global", "fields": [
+            self._spec_field(s, f"g.{s[0]}") for s in TG77.GLOBAL_SPECS]})
+        groups.append({"name": f"Filter (bank {self.filter_select+1})", "fields":
+            [self._spec_field(s, f"f{self.filter_select}.{s[0]}") for s in TG77.FILTER_BANK_SPECS]
+            + [self._spec_field(s, f"g.{s[0]}") for s in TG77.FILTER_COMMON_SPECS]})
+        groups.append({"name": "Setup", "fields": [
+            self._spec_field(s, f"g.{s[0]}") for s in TG77.SETUP_SPECS]})
+        groups.append({"name": "AWM", "fields": [
+            self._spec_field(s, f"g.{s[0]}") for s in TG77.AWM_SPECS]})
+        return {
+            "id": "tg77", "name": "TG77 (Yamaha)",
+            "channel": self.channel,
+            "header": f"dev {self.device_number}  slot {self.element_slot+1}"
+                      f"  filter bank {self.filter_select+1}",
+            "groups": groups,
+            "actions": [
+                {"key": "slot", "label": "Element slot 1-4", "type": "number",
+                 "min": 1, "max": 4, "value": self.element_slot + 1},
+                {"key": "filter_select", "label": "Filter bank 1-2", "type": "number",
+                 "min": 1, "max": 2, "value": self.filter_select + 1},
+                {"key": "device_number", "label": "Device number 0-15", "type": "number",
+                 "min": 0, "max": 15, "value": self.device_number},
+                {"key": "cancel", "label": "Panel Cancel", "type": "button"},
+                {"key": "exit", "label": "Panel Exit", "type": "button"},
+                {"key": "channel", "label": "MIDI channel", "type": "number",
+                 "min": 1, "max": 16, "value": self.channel},
+            ],
+        }
+
+    def set_field(self, key: str, value: int):
+        if "." not in key:
+            raise ValueError(f"bad key {key}")
+        scope, sid = key.split(".", 1)
+        if sid not in self._specs:
+            raise ValueError(f"unknown spec {sid}")
+        op = int(scope[1:]) if scope.startswith("o") else None
+        mn, mx = self._specs[sid][2], self._specs[sid][3]
+        v = max(mn, min(mx, int(value)))
+        self.values[key] = v
+        msgs = TG77.build_messages(
+            sid, lambda s: self._get(s, op),
+            op=op, element_slot=self.element_slot,
+            filter_select=self.filter_select, device_number=self.device_number)
+        for m in msgs:
+            self.out.sysex(m)
+        return v
+
+    def action(self, key: str, arg: Any):
+        if key == "slot":
+            self.element_slot = max(0, min(3, int(arg) - 1))
+        elif key == "filter_select":
+            self.filter_select = max(0, min(1, int(arg) - 1))
+        elif key == "device_number":
+            self.device_number = max(0, min(15, int(arg)))
+        elif key == "cancel":
+            for m in TG77.panel_cancel(self.device_number):
+                self.out.sysex(m)
+        elif key == "exit":
+            for m in TG77.panel_exit(self.device_number):
+                self.out.sysex(m)
+        elif key == "channel":
+            self.channel = max(1, min(16, int(arg)))
+        else:
+            raise ValueError(f"unknown action {key}")
+
+
 def register_control_routes(app, settings_path: str) -> None:
     from aiohttp import web
 
@@ -266,6 +384,7 @@ def register_control_routes(app, settings_path: str) -> None:
     sessions = {
         "lxp1": Lxp1Session(out, settings_path),
         "matrix1000": Matrix1000Session(out, settings_path),
+        "tg77": Tg77Session(out, settings_path),
     }
 
     async def control_page(request):
