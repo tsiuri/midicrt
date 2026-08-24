@@ -80,6 +80,10 @@ esac
 
 bluetoothctl -- power on >/dev/null
 
+# Pause the reconnect watcher so it can't re-grab the stale bond mid-flow.
+sudo systemctl stop smk25-autoconnect.service 2>/dev/null
+trap 'sudo systemctl start smk25-autoconnect.service 2>/dev/null' EXIT
+
 echo "[1/3] scanning ${SCAN_SECS}s for /$NAME_PAT/ (keyboard in pairing mode?)"
 bluetoothctl --timeout "$SCAN_SECS" scan on >/dev/null 2>&1 &
 scanpid=$!
