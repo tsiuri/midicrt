@@ -190,3 +190,96 @@ def groups():
 
 def params_in_group(group):
     return [p for p in PARAMS if p[0] == group]
+
+
+# ---------------------------------------------------------------------------
+# Patch dump (edit buffer / single patch) — ported from the VST's
+# tryDecodePatchDump/applyPatchBytesToParameters (PluginProcessor.cpp).
+# Frame: F0 10 06 <01|0D> <pp> <268 nibbles, LO nibble first> <sum&0x7F> F7
+# Patch bytes: 0-7 name, 8-103 parameters via PATCH_BYTE_TO_PARAM, 104-133
+# mod matrix (10 x source/amount/dest, amount signed 8-bit).
+# ---------------------------------------------------------------------------
+
+PATCH_BYTE_TO_PARAM = [
+    -1, -1, -1, -1, -1, -1, -1, -1,
+    48, 0, 5, 3, 7, 6, 10, 15, 13, 17, 16, 12, 20, 8, 9, 18, 19, 2, 21, 24, 25, 26, 30, 27,
+    44, 46, 47, 80, 86, 87, 82, 83, 88, 84, 90, 96, 97, 92, 93, 98, 94, 57, 50, 51, 52, 53, 54, 55,
+    59, 58, 67, 60, 61, 62, 63, 64, 65, 69, 68, 77, 70, 71, 72, 73, 74, 75, 79, 78, 33, 34, 35, 36,
+    37, 38, 40, 41, 42, 43, 1, 4, 11, 14, 22, 23, 28, 29, 56, 66, 76, 85, 95, 45, 31, 32, 81, 91,
+]
+
+_SIGNED_PARAMS = {num for (_, _, _, num, mn, _, _, _) in PARAMS if mn < 0}
+
+
+def _signed8(v):
+    return v - 256 if v >= 128 else v
+
+
+def decode_patch_dump(data):
+    """Decode a patch dump. `data` = mido sysex bytes (F0/F7 excluded) or a
+    full frame. Returns {"values": {param#: actual}, "mod": {slot: [s,a,d]},
+    "name": str, "patch": int} or None if not a valid dump."""
+    b = list(data)
+    if b and b[0] == 0xF0:
+        b = b[1:]
+    if b and b[-1] == 0xF7:
+        b = b[:-1]
+    # b: 10 06 cmd pp <268 nibbles> sum
+    if len(b) < 4 + 268 + 1 or b[0] != 0x10 or b[1] != 0x06:
+        return None
+    cmd = b[2]
+    if cmd not in (0x01, 0x0D):
+        return None
+    nib = b[4:4 + 268]
+    if any(n > 0x0F for n in nib):
+        return None
+    patch = []
+    checksum = 0
+    for i in range(134):
+        v = nib[2 * i] | (nib[2 * i + 1] << 4)   # LO nibble first
+        patch.append(v)
+        checksum += v
+    if (checksum & 0x7F) != b[4 + 268]:
+        return None
+    values = {}
+    for idx, pnum in enumerate(PATCH_BYTE_TO_PARAM):
+        if pnum < 0:
+            continue
+        raw = patch[idx]
+        values[pnum] = _signed8(raw) if pnum in _SIGNED_PARAMS else raw
+    mod = {}
+    for slot in range(MOD_SLOTS):
+        off = 104 + slot * 3
+        mod[slot] = [
+            max(0, min(len(MOD_SOURCES) - 1, patch[off])),
+            max(-63, min(63, _signed8(patch[off + 1]))),
+            max(0, min(len(MOD_DESTS) - 1, patch[off + 2])),
+        ]
+    name = "".join(chr(c & 0x7F) if 32 <= (c & 0x7F) < 127 else " "
+                   for c in patch[0:8]).strip()
+    return {"values": values, "mod": mod, "name": name, "patch": b[3]}
+
+
+def build_patch_dump(values, mod, name="PULLTEST", patch_num=0, cmd=0x0D):
+    """Inverse of decode_patch_dump (testing / synthetic injection). Returns
+    mido-style sysex data (F0/F7 excluded)."""
+    patchb = [0] * 134
+    for i, ch in enumerate(str(name)[:8].ljust(8)):
+        patchb[i] = ord(ch) & 0x7F
+    for idx, pnum in enumerate(PATCH_BYTE_TO_PARAM):
+        if pnum < 0:
+            continue
+        v = int(values.get(pnum, 0))
+        patchb[idx] = v & 0xFF
+    for slot in range(MOD_SLOTS):
+        off = 104 + slot * 3
+        s, a, d = (mod.get(slot) or [0, 0, 0])
+        patchb[off] = int(s) & 0xFF
+        patchb[off + 1] = int(a) & 0xFF
+        patchb[off + 2] = int(d) & 0xFF
+    out = [0x10, 0x06, cmd, patch_num & 0x7F]
+    for v in patchb:
+        out.append(v & 0x0F)
+        out.append((v >> 4) & 0x0F)
+    out.append(sum(patchb) & 0x7F)
+    return tuple(out)

@@ -17,6 +17,7 @@ BACKGROUND = False
 PAGE_ID = 19
 PAGE_NAME = "Matrix-1000"
 
+import threading
 import time
 
 import mido
@@ -365,6 +366,75 @@ def _entry_commit():
             _status(f"stored edit buffer to bank {bank} program {program}")
 
 
+_pull_active = False
+
+
+def _apply_pull(dec):
+    global program
+    for num, v in dec["values"].items():
+        values[str(num)] = v
+    for slot, row in dec["mod"].items():
+        mod[str(slot)] = list(row)
+    _mark_save()
+    name = dec.get("name") or "(unnamed)"
+    _status(f"PULLED edit buffer: {name} — GUI now mirrors the synth")
+
+
+def _pull_worker():
+    global _pull_active
+    inp = None
+    try:
+        names = list(mido.get_input_names())
+        target = None
+        for hint in output_hints:
+            hl = str(hint).lower()
+            for n in names:
+                if hl in n.lower():
+                    target = n
+                    break
+            if target:
+                break
+        if target is None:
+            _status("PULL: no MIDI input matching output hints")
+            return
+        inp = mido.open_input(target)
+        # drain anything stale, then ask
+        for _ in inp.iter_pending():
+            pass
+        if not _send_sysex(DEV.request_edit_buffer_sysex(), "REQ edit buffer"):
+            return
+        deadline = time.time() + 3.0
+        while time.time() < deadline:
+            for msg in inp.iter_pending():
+                if msg.type != "sysex":
+                    continue
+                dec = DEV.decode_patch_dump(msg.data)
+                if dec is not None:
+                    _apply_pull(dec)
+                    return
+            time.sleep(0.02)
+        _status("PULL: no dump in 3s — is the Matrix OUT cabled into the UX16 return chain?")
+    except Exception as exc:
+        _status(f"PULL failed: {exc}")
+    finally:
+        if inp is not None:
+            try:
+                inp.close()
+            except Exception:
+                pass
+        _pull_active = False
+
+
+def _start_pull():
+    global _pull_active
+    if _pull_active:
+        _status("pull already in progress")
+        return
+    _pull_active = True
+    _status("PULL: requesting edit buffer...")
+    threading.Thread(target=_pull_worker, daemon=True).start()
+
+
 def _arm_learn():
     import midicrt as _m
     knob = next((p for p in _m.PLUGINS if hasattr(p, "arm_learn")), None)
@@ -445,8 +515,7 @@ def keypress(key):
         _entry_begin("store")
         return True
     if s == "E":
-        if _send_sysex(DEV.request_edit_buffer_sysex(), "REQ edit buffer"):
-            _status("edit-buffer dump requested (see event log / sysex.log)")
+        _start_pull()
         return True
     if s == ",":
         channel = max(1, channel - 1)
@@ -477,6 +546,48 @@ def _bar(f, v, width=10):
     return "#" * fill + "-" * (width - fill)
 
 
+_ENV_PARAM_BASE = {"Envelope 1": 50, "Envelope 2": 60, "Envelope 3": 70}
+_GRAPH_W, _GRAPH_H = 34, 9
+
+
+def _env_graph_lines(g):
+    """ASCII envelope curve (delay/attack/decay/sustain/release) from the
+    group's current shadow values."""
+    base = _ENV_PARAM_BASE[g]
+    def val(off):
+        return int(values.get(str(base + off), 0))
+    delay, attack, decay, sustain, release, amp = (
+        val(0), val(1), val(2), val(3), val(4), val(5))
+    H, W = _GRAPH_H, _GRAPH_W
+    peak = (amp / 63.0) * (H - 1)
+    sus_y = (sustain / 63.0) * peak
+    seg_w = lambda v: 2 + round(v / 63.0 * 7)
+    sus_w = 4
+    # (width, y_from, y_to) segments
+    segs = [
+        (seg_w(delay), 0.0, 0.0),
+        (seg_w(attack), 0.0, peak),
+        (seg_w(decay), peak, sus_y),
+        (sus_w, sus_y, sus_y),
+        (seg_w(release), sus_y, 0.0),
+    ]
+    total = sum(w for w, _, _ in segs)
+    grid = [[" "] * W for _ in range(H)]
+    x = 0
+    for w, y0, y1 in segs:
+        px_w = max(1, round(w / total * (W - 1)))
+        for i in range(px_w + 1):
+            xx = min(W - 1, x + i)
+            frac = i / max(1, px_w)
+            y = y0 + (y1 - y0) * frac
+            row = (H - 1) - int(round(y))
+            grid[max(0, min(H - 1, row))][xx] = "*"
+        x = min(W - 1, x + px_w)
+    lines = ["".join(r) for r in grid]
+    lines.append(f"D{delay:02d} A{attack:02d} D{decay:02d} S{sustain:02d} R{release:02d} amp{amp:02d}")
+    return lines
+
+
 def _build_lines(cols):
     flds = _fields()
     cur = min(cursor, len(flds) - 1)
@@ -487,14 +598,24 @@ def _build_lines(cols):
         f"out: {'ok' if out_port else out_err or '(closed)'}   knob: {_knob_status()}",
         "",
     ]
+    graph = _env_graph_lines(g) if g in _ENV_PARAM_BASE else None
+    rows = []
     for i, f in enumerate(flds):
         v = _get_value(f)
         mark = ">" if i == cur else " "
         if f["choices"]:
-            lines.append(f" {mark} {f['name']:<24s} <{_display(f, v)}>")
+            rows.append(f" {mark} {f['name']:<24s} <{_display(f, v)}>")
         else:
-            lines.append(f" {mark} {f['name']:<24s} [{_bar(f, v)}] {_display(f, v):>6s}"
+            rows.append(f" {mark} {f['name']:<24s} [{_bar(f, v)}] {_display(f, v):>6s}"
                          f"  ({f['min']}..{f['max']})")
+    if graph:
+        merged = []
+        for i in range(max(len(rows), len(graph))):
+            left = rows[i] if i < len(rows) else ""
+            right = graph[i] if i < len(graph) else ""
+            merged.append(f"{left:<58.58s}|{right}")
+        rows = merged
+    lines.extend(rows)
     lines.append("")
     if entry_mode == "value":
         f = flds[cur]

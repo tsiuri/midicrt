@@ -126,6 +126,7 @@ function fieldRow(dev, f) {
   } else {
     const r = document.createElement("input");
     r.type = "range"; r.min = f.min; r.max = f.max;
+    r.dataset.key = f.key;
     r.value = (f.value === null || f.value === undefined)
       ? Math.round((f.min + f.max) / 2) : f.value;
     const val = document.createElement("span");
@@ -188,6 +189,52 @@ function actionBar(dev, actions) {
   return bar;
 }
 
+// Live ADSR preview for any group carrying Attack/Decay/Sustain/Release
+// fields (Matrix-1000 Env1-3, Bass Station envelopes, ...). Values are read
+// straight from the group's sliders so the curve tracks every tweak.
+function envGraphFor(g) {
+  const find = (name) => g.fields.find(f => f.label.toLowerCase() === name
+      || f.label.toLowerCase().endsWith(" " + name));
+  const A = find("attack"), D = find("decay"), S = find("sustain"), R = find("release");
+  if (!A || !D || !S || !R) return null;
+  const DL = find("delay"), AMP = find("amplitude");
+  const W = 300, H = 80, PAD = 4;
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.setAttribute("style", "width:100%;max-width:340px;height:80px;display:block;margin:6px 12px 0");
+  const poly = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+  poly.setAttribute("fill", "none");
+  poly.setAttribute("stroke", "#4ade80");
+  poly.setAttribute("stroke-width", "2");
+  svg.appendChild(poly);
+  const wrap = document.createElement("div");
+  wrap.appendChild(svg);
+  const sliderVal = (f) => {
+    const inp = wrap.closest("details")?.querySelector(`input[data-key="${f.key}"]`);
+    const v = inp ? parseInt(inp.value, 10) : (f.value ?? Math.round(f.max / 2));
+    return Math.max(0, Math.min(1, v / f.max));
+  };
+  const update = () => {
+    const dl = DL ? sliderVal(DL) : 0;
+    const a = sliderVal(A), dc = sliderVal(D), su = sliderVal(S), r = sliderVal(R);
+    const peak = AMP ? sliderVal(AMP) : 1;
+    const susY = su * peak;
+    const seg = (v) => 0.06 + v * 0.22;
+    const widths = [dl ? seg(dl) : 0.02, seg(a), seg(dc), 0.12, seg(r)];
+    const total = widths.reduce((x, y) => x + y, 0);
+    const ys = [0, 0, peak, susY, susY, 0];
+    let x = PAD;
+    const pts = [`${x},${H - PAD}`];
+    for (let i = 0; i < widths.length; i++) {
+      x += (widths[i] / total) * (W - 2 * PAD);
+      const y = (H - PAD) - ys[i + 1] * (H - 2 * PAD);
+      pts.push(`${x},${y}`);
+    }
+    poly.setAttribute("points", pts.join(" "));
+  };
+  return { el: wrap, update };
+}
+
 function render() {
   const dev = SCHEMA.devices.find(d => d.id === current) || SCHEMA.devices[0];
   current = dev.id;
@@ -216,7 +263,13 @@ function render() {
     const s = document.createElement("summary");
     s.textContent = g.name;
     d.appendChild(s);
+    const env = envGraphFor(g);
+    if (env) d.appendChild(env.el);
     g.fields.forEach(f => d.appendChild(fieldRow(dev.id, f)));
+    if (env) {
+      d.addEventListener("input", env.update);
+      env.update();
+    }
     main.appendChild(d);
   });
 }
