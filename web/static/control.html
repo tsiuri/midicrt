@@ -89,6 +89,9 @@ function setField(dev, key, value) {
         await api("/api/manage/control/set", { device: dev, key, value: v });
         say(key + " = " + v);
       } catch (e) { say("set " + key + ": " + e.message, true); }
+      // pace slider streams: old synth CPUs (Matrix-1000!) overload on
+      // back-to-back parameter messages; trailing value still always sent
+      await new Promise(r => setTimeout(r, 35));
     }
     pending.delete(key + "!inflight");
   })();

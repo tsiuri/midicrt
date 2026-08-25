@@ -57,6 +57,13 @@ out_port = None
 out_err = ""
 _save_pending = 0.0
 
+# The Matrix-1000's CPU is slow; fast NRPN/sysex streams (knob sweeps) can
+# overload it. Continuous edits are coalesced: at most one transmit per
+# MIN_TX_GAP_S per field, with the trailing value always flushed from draw().
+MIN_TX_GAP_S = 0.035
+_last_tx_time = 0.0
+_pending_tx = {}   # field-key -> field dict (value read from shadow at flush)
+
 
 # ---------------------------------------------------------------------------
 # Field model.  Regular fields wrap a DEV.PARAMS row; mod-matrix fields are
@@ -219,6 +226,45 @@ def _display(f, v):
     return f"{v:+d}" if f["min"] < 0 else str(v)
 
 
+def _transmit(f):
+    """Send the field's current shadow value to the synth immediately."""
+    if f["kind"] == "mod":
+        row = mod.get(str(f["slot"]), [0, 0, 0])
+        _send_sysex(DEV.mod_matrix_sysex(f["slot"], row[0], row[1], row[2]),
+                    f"MOD slot{f['slot']+1} {row}")
+    else:
+        _send_nrpn(f["num"], int(values.get(str(f["num"]), f["default"])))
+
+
+def _field_key(f):
+    return f"m{f['slot']}.{f['role']}" if f["kind"] == "mod" else f"n{f['num']}"
+
+
+def _request_tx(f):
+    """Rate-gated transmit: immediate if the gap has passed, else queued for
+    draw() to flush — the trailing value always goes out."""
+    global _last_tx_time
+    now = time.time()
+    if now - _last_tx_time >= MIN_TX_GAP_S and not _pending_tx:
+        _last_tx_time = now
+        _transmit(f)
+    else:
+        _pending_tx[_field_key(f)] = f
+
+
+def _flush_tx():
+    global _last_tx_time
+    if not _pending_tx:
+        return
+    now = time.time()
+    if now - _last_tx_time < MIN_TX_GAP_S:
+        return
+    key = next(iter(_pending_tx))
+    f = _pending_tx.pop(key)
+    _last_tx_time = now
+    _transmit(f)
+
+
 def _set_value(f, v, send=True):
     v = max(f["min"], min(f["max"], int(v)))
     if f["kind"] == "mod":
@@ -226,14 +272,11 @@ def _set_value(f, v, send=True):
         row[f["role"]] = v
         mod[str(f["slot"])] = row
         _mark_save()
-        if send:
-            _send_sysex(DEV.mod_matrix_sysex(f["slot"], row[0], row[1], row[2]),
-                        f"MOD slot{f['slot']+1} {row}")
     else:
         values[str(f["num"])] = v
         _mark_save()
-        if send:
-            _send_nrpn(f["num"], v)
+    if send:
+        _request_tx(f)
     return v
 
 
@@ -472,6 +515,7 @@ def _build_lines(cols):
 
 
 def draw(state):
+    _flush_tx()
     _flush_save()
     cols = state["cols"]
     y0 = state.get("y_offset", 3)
