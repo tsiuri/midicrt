@@ -49,6 +49,9 @@ LEARN_TIMEOUT_S = 20.0   # a stale armed learn must never silently grab a
 _last_knob_val = None
 _last_seen = 0.0
 _lock = threading.Lock()
+_fwd_ok = 0
+_fwd_fail = 0
+_last_fwd_err = ""
 
 _FORWARD_TYPES = {
     "note_on", "note_off", "pitchwheel", "aftertouch", "polytouch", "program_change",
@@ -81,9 +84,10 @@ def knob_status():
         return "kbd offline"
     if _learn_armed:
         return "LEARNING..."
+    fwd = f" fwd:{_fwd_ok}/{_fwd_fail}" + (f" [{_last_fwd_err}]" if _last_fwd_err else "")
     if knob_cc is None:
-        return f"{_in_name.split(':')[0]} (no knob learned)"
-    return f"cc{knob_cc} on {_in_name.split(':')[0]}"
+        return f"{_in_name.split(':')[0]} (no knob learned)" + fwd
+    return f"cc{knob_cc} on {_in_name.split(':')[0]}" + fwd
 
 
 def _open_input():
@@ -182,7 +186,10 @@ def _handle(msg):
         return
     if msg.type not in _FORWARD_TYPES and msg.type != "control_change":
         return
+    global _fwd_ok, _fwd_fail, _last_fwd_err
     if not _ensure_out():
+        _fwd_fail += 1
+        _last_fwd_err = "no out port"
         return
     page = _current_page()
     ch = getattr(page, "note_target_channel", None) or default_channel
@@ -191,8 +198,10 @@ def _handle(msg):
         if hasattr(msg, "channel"):
             msg = msg.copy(channel=ch - 1)
         _out_port.send(msg)
-    except Exception:
-        pass
+        _fwd_ok += 1
+    except Exception as exc:
+        _fwd_fail += 1
+        _last_fwd_err = str(exc)[:40]
 
 
 # If the BLE keyboard drops and reconnects, bluetoothd recreates its seq
