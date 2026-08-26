@@ -123,6 +123,30 @@ send echoes back (harmless but noisy — it swamped the sysex plugin once).
 - Loopback trick for remote debugging: LXP-1 THRU → UX16 IN echoes every
   byte we send, proving integrity without ears.
 
+## External-controller mapping layer — `plugins/midimap.py`, `midimap_model.py`
+
+The Cirklon (or any controller) addresses every parameter of every synth by
+plain MIDI alone, in the background, permanently:
+
+- **Sources**: 7-bit CC, or 14-bit NRPN (CC99/98 select, CC6 [+CC38] data),
+  per channel. **Targets**: any field of any device (`lxp1 p<n>`,
+  `matrix1000 n<n>` / `m<slot>.<role>`, `tg77 <scope>.<id>`, `bassstation <id>`).
+  One source may fan out to several targets; a target has one source.
+- **Learn**: on any page put the cursor on the field, press **`M`**, move the
+  controller (20 s window). **`U`** unmaps. The header shows the focused
+  field's mapping; web labels show `[ch1 cc74]` badges.
+- Values scale linearly from the source range onto the field range and go
+  out through the same DeviceSession encoders as the web surface (own output
+  port), paced per device (Matrix 35 ms, TG77 20 ms) with trailing-value
+  coalescing; the owning page mirrors the change into its shadow.
+- Mappings persist in `settings.json → midimap.mappings`. Edit by hand if
+  you want to lay out a whole Cirklon CC set at once.
+- **Inputs**: the monitor input always; add controllers on their own
+  interface via `midimap.input_hints` (e.g. `["Cirklon"]`, a second USB
+  MIDI cable on the Pi). Don't list the rack-return interface there.
+- Verified 2026-08-25: CC74 learned onto LXP-1 Effects Level; 0/127 became
+  0x8000/0xBFFF sysex on the wire with no controller page displayed.
+
 ## Web + Android
 - `http://pivisualizer.internal:8765/control` (midicrt-web-observer). POST
   mutations under `/api/manage/control/*`. Per-field slider streams are

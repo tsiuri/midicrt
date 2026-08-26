@@ -181,6 +181,47 @@ def _consider(src_type, ch, num, value, bits):
         _apply(m["device"], m["key"], value, in_max)
 
 
+# Extra inputs: controllers usually arrive on their own interface (a second
+# USB MIDI cable on the Pi, the Cirklon's port...). settings "midimap":
+# {"input_hints": ["Cirklon", "USB MIDI"]} — each matching port is opened
+# and fed through handle() exactly like the monitor input.  Never list the
+# rack return interface here (it's already the monitor input).
+_extra_hints = list(_cfg.get("input_hints", []))
+_extra_ports = {}
+
+
+def _extra_worker():
+    import mido
+    while True:
+        try:
+            names = list(mido.get_input_names())
+        except Exception:
+            names = []
+        for hint in _extra_hints:
+            hl = str(hint).lower()
+            for n in names:
+                if hl in n.lower() and n not in _extra_ports:
+                    try:
+                        _extra_ports[n] = mido.open_input(n)
+                    except Exception:
+                        pass
+        for n, port in list(_extra_ports.items()):
+            try:
+                for m in port.iter_pending():
+                    handle(m)
+            except Exception:
+                try:
+                    port.close()
+                except Exception:
+                    pass
+                _extra_ports.pop(n, None)
+        time.sleep(0.01 if _extra_ports else 3.0)
+
+
+if _extra_hints:
+    threading.Thread(target=_extra_worker, name="midimap-inputs", daemon=True).start()
+
+
 def handle(msg):
     if msg.type != "control_change":
         return
