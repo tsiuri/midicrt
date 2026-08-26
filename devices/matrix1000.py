@@ -149,11 +149,10 @@ MOD_SLOTS = 10
 _OB = (0x10, 0x06)   # Oberheim manufacturer, Matrix family
 
 
-# Stock firmware (v1.11) has NRPN handling disabled by a firmware bug; it only
-# works on Bob Grieb's / untergeek's v1.20+. Oberheim's own sysex edit command
-# works on every firmware: F0 10 06 06 <param> <value> F7, value raw 7-bit
-# (signed params as 7-bit two's complement, VCF cutoff 0-127).
-EDIT_MODE_DEFAULT = "sysex"   # "sysex" | "nrpn" | "both"
+# Two edit transports: NRPN (proven on this unit by the JUCE VST) and
+# Oberheim's edit-parameter sysex F0 10 06 06 <param> <value> F7 (value raw
+# 7-bit; signed params as 7-bit two's complement, VCF cutoff 0-127).
+EDIT_MODE_DEFAULT = "both"   # "both" | "nrpn" | "sysex"
 
 
 def edit_param_sysex(param_num, value):

@@ -55,15 +55,12 @@ Pages: **18 LXP-1** (`*`), **19 Matrix-1000** (`(`), **20 TG77** (`)`),
 - Envelope-less; no graphs.
 
 ### Oberheim Matrix-1000 (page 19) — `devices/matrix1000.py` (generated from the JUCE VST header)
-- **Edits go out as Oberheim sysex `F0 10 06 06 <param> <value> F7`** by
-  default (`settings matrix1000.edit_mode = sysex|nrpn|both`). Stock firmware
-  v1.11 has NRPN disabled by a firmware bug (only v1.20/1.21 fix it; the
-  power-on display shows the version) — verified 2026-08-26: NRPN silent,
-  sysex edits audible. NRPN encoding (value+64, param 21 raw) kept for
-  updated firmware. Mod matrix via sysex; bank select + unlock; Program
-  Change; store edit buffer; `E` pulls the edit buffer into the GUI.
-- Consequence for the Cirklon: send plain CC and let the midimap layer
-  translate to sysex — direct NRPN from the Cirklon is dead on stock firmware.
+- Edits: NRPN (CC99=0/CC98/CC6 = value+64, **param 21 raw**) — proven on this
+  unit by the JUCE VST — and/or Oberheim's edit-parameter sysex
+  `F0 10 06 06 <param> <value> F7`; `settings matrix1000.edit_mode =
+  both|nrpn|sysex` (default both). Mod matrix via sysex; bank select +
+  unlock; Program Change; store edit buffer; `E` pulls the edit buffer
+  (dump parser ported from the VST) into the GUI.
 - **Throttled**: continuous edits coalesce to ≥35 ms apart, trailing value
   always sent — the M1000's CPU chokes on fast NRPN streams.
 - ASCII ADSR curve beside Envelope 1-3 (web: live SVG).
