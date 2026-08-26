@@ -92,16 +92,6 @@ out_port = None
 out_err = ""
 _save_pending = 0.0
 
-# probe mode: sweep channel x format combos pumping Effects Level max/min so
-# the right combo is found by ear (the LXP-1 sends no acknowledgements and its
-# MIDI jack is factory-jumpered as THRU, so listening is the only feedback)
-probe_on = False
-_probe_idx = 0
-_probe_t0 = 0.0
-_probe_pumps_sent = 0
-PROBE_COMBOS = [(ch, k) for ch in range(1, 17) for k in ("packed", "nibble")]
-PROBE_COMBO_SECS = 3.5
-PROBE_PUMP_SECS = 0.7
 
 
 def _fields():
@@ -381,9 +371,13 @@ _pull_active = False
 def _apply_setup_dump(dec):
     global program, cursor
     pgm = dec["program"]
-    if pgm in ALGORITHMS:
-        program = pgm
-        cursor = 0
+    if pgm not in ALGORITHMS:
+        v0 = dec["values16"].get(0, 0)
+        _status(f"PULL: unit reports program ID {pgm} / p0=0x{v0:04X} — INVALID."
+                " Memory corrupt (battery?) — do the front-panel factory reset")
+        return
+    program = pgm
+    cursor = 0
     steps = {}
     for p in fields_for_program(program):
         v16 = dec["values16"].get(p["num"])
@@ -465,39 +459,6 @@ def _knob_status():
     return knob.knob_status() if knob else "knobctl off"
 
 
-def _probe_toggle():
-    global probe_on, _probe_idx, _probe_t0, _probe_pumps_sent, channel, param_class
-    if not probe_on:
-        probe_on = True
-        _probe_idx = 0
-        _probe_t0 = time.time()
-        _probe_pumps_sent = 0
-        _status("PROBE started: press T the moment you hear the wet level pumping")
-        return
-    probe_on = False
-    ch, k = PROBE_COMBOS[_probe_idx % len(PROBE_COMBOS)]
-    channel = ch
-    param_class = k
-    _mark_save()
-    _status(f"PROBE locked: channel {ch}, {k} sysex class")
-
-
-def _probe_tick():
-    """Called from draw(); pumps Effects Level (param 2) max/min on the
-    current combo, advancing combos every PROBE_COMBO_SECS."""
-    global _probe_idx, _probe_t0, _probe_pumps_sent
-    now = time.time()
-    if now - _probe_t0 >= PROBE_COMBO_SECS:
-        _probe_idx = (_probe_idx + 1) % len(PROBE_COMBOS)
-        _probe_t0 = now
-        _probe_pumps_sent = 0
-    due = int((now - _probe_t0) / PROBE_PUMP_SECS) + 1
-    if _probe_pumps_sent < due:
-        ch, k = PROBE_COMBOS[_probe_idx % len(PROBE_COMBOS)]
-        value = 0xBFFF if (_probe_pumps_sent % 2 == 0) else 0x8000
-        _send_param(2, value, klass=k, ch=ch)
-        _probe_pumps_sent += 1
-
 
 # ---------------------------------------------------------------------------
 # Key handling
@@ -577,9 +538,6 @@ def keypress(key):
     if s == "E":
         _start_pull()
         return True
-    if s == "T":
-        _probe_toggle()
-        return True
     return False
 
 
@@ -614,9 +572,6 @@ def _build_lines(cols):
             f"{'  (bi)' if param['bipolar'] else ''}"
         )
     lines.append("")
-    if probe_on:
-        pch, pk = PROBE_COMBOS[_probe_idx % len(PROBE_COMBOS)]
-        lines.append(f" ### PROBE ch{pch:02d} {pk.upper()} — pumping FX Level; press T when you HEAR it ###")
     if entry_mode == "value":
         param = flds[cur]
         lines.append(f" ENTER {param['name']} ({param['dmin']:g}..{param['dmax']:g}{param['unit']}): {entry_buf}_")
@@ -627,15 +582,13 @@ def _build_lines(cols):
     elif status_msg and time.time() - status_time < 6.0:
         lines.append(f" {status_msg}")
     else:
-        lines.append(" arrows:nudge Enter:type g:preset E:pull S/R:st/rcl L:learn ,/.:ch c:unit-ch T:probe")
+        lines.append(" arrows:nudge Enter:type g:preset E:pull S/R:store/recall L:learn ,/.:ch c:unit-ch")
     if last_tx:
         lines.append(f" tx: {last_tx}"[: max(20, cols - 1)])
     return lines
 
 
 def draw(state):
-    if probe_on:
-        _probe_tick()
     _flush_save()
     cols = state["cols"]
     y0 = state.get("y_offset", 3)
