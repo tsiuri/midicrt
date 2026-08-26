@@ -313,8 +313,8 @@ def _set_value(f, v, send=True):
     v = max(f["min"], min(f["max"], int(v)))
     if f["kind"] == "master":
         if master_raw is None:
-            _status("master block not pulled yet (press E)")
-            return v
+            _status("MASTER NOT PULLED — cable Matrix OUT -> UX16 IN, then press E (globals need the block)")
+            return None
         v = DEV.master_set(master_raw, f["spec"], v)
         if send:
             _request_tx(f)
@@ -336,7 +336,8 @@ def _nudge(delta):
     flds = _fields()
     f = flds[min(cursor, len(flds) - 1)]
     v = _set_value(f, _get_value(f) + delta)
-    _status(f"{f['name']} = {_display(f, v)}")
+    if v is not None:
+        _status(f"{f['name']} = {_display(f, v)}")
 
 
 def on_knob_value(value):
@@ -348,7 +349,8 @@ def on_knob_value(value):
     if v == _get_value(f):
         return
     v = _set_value(f, v)
-    _status(f"{f['name']} = {_display(f, v)}")
+    if v is not None:
+        _status(f"{f['name']} = {_display(f, v)}")
 
 
 def on_knob_delta(delta):
@@ -393,7 +395,8 @@ def _entry_commit():
         flds = _fields()
         f = flds[min(cursor, len(flds) - 1)]
         v = _set_value(f, num)
-        _status(f"{f['name']} = {_display(f, v)}")
+        if v is not None:
+            _status(f"{f['name']} = {_display(f, v)}")
     elif mode == "bank":
         bank = max(0, min(9, num))
         _mark_save()
@@ -766,6 +769,9 @@ def _build_lines(cols):
     for i, f in enumerate(flds):
         v = _get_value(f)
         mark = ">" if i == cur else " "
+        if f["kind"] == "master" and master_raw is None:
+            rows.append(f" {mark} {f['name']:<24s} --   (not pulled: needs Matrix OUT -> UX16 IN, then E)")
+            continue
         if f["choices"]:
             rows.append(f" {mark} {f['name']:<24s} <{_display(f, v)}>")
             if ctrlgfx.is_wave_field(f["name"], f["choices"]):
