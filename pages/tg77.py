@@ -13,6 +13,7 @@
 BACKGROUND = False
 PAGE_ID = 20
 PAGE_NAME = "TG77 Ctrl"
+DEVICE_ID = "tg77"
 
 import threading
 import time
@@ -279,6 +280,61 @@ def _cancel_burst_thread():
     _status("cancel burst sent (3x Cancel + 3x Exit)")
 
 
+def mapping_key_for_cursor():
+    flds = _fields()
+    f = flds[min(cursor, len(flds) - 1)]
+    g = GROUPS[group_idx % len(GROUPS)]
+    if f["family"] == "op":
+        scope = f"o{group_idx}"
+    elif f["family"] == "flt":
+        scope = f"f{filter_select}"
+    else:
+        scope = "g"
+    return f"{scope}.{f['sid']}", f"{g} {f['name']}"
+
+
+def on_mapped_set(key, v):
+    values[key] = int(v)
+    _mark_save()
+
+
+# --- external MIDI mapping (plugins/midimap.py) ------------------------------
+
+def _midimap():
+    import midicrt as _m
+    return next((p for p in _m.PLUGINS if getattr(p, "__name__", "").endswith("midimap")), None)
+
+
+def _map_learn():
+    mm = _midimap()
+    if mm is None:
+        _status("midimap plugin not loaded")
+        return
+    key, label = mapping_key_for_cursor()
+    mm.arm_learn(DEVICE_ID, key, label)
+    _status(f"MAP LEARN armed for {label}: move a knob on the Cirklon/controller")
+
+
+def _map_unbind():
+    mm = _midimap()
+    if mm is None:
+        return
+    key, label = mapping_key_for_cursor()
+    _status(f"unmapped {label}" if mm.unbind(DEVICE_ID, key) else f"{label} had no mapping")
+
+
+def _map_text():
+    mm = _midimap()
+    if mm is None:
+        return ""
+    ls = mm.learn_status()
+    if ls:
+        return ls
+    key, label = mapping_key_for_cursor()
+    d = mm.describe(DEVICE_ID, key)
+    return f"map: {d}" if d else "map: (none — M to learn)"
+
+
 def _arm_learn():
     import midicrt as _m
     knob = next((p for p in _m.PLUGINS if hasattr(p, "arm_learn")), None)
@@ -383,6 +439,12 @@ def keypress(key):
     if s == "L":
         _arm_learn()
         return True
+    if s == "M":
+        _map_learn()
+        return True
+    if s == "U":
+        _map_unbind()
+        return True
     return False
 
 
@@ -401,7 +463,7 @@ def _build_lines(cols):
     lines = [
         f"--- TG77  ch{channel:02d} dev{device_number:02d}  slot {element_slot+1}"
         f"  fltbank {filter_select+1}  [{group_idx+1}/{len(GROUPS)}] {g} ---",
-        f"out: {'ok' if out_port else out_err or '(closed)'}   knob: {_knob_status()}",
+        f"out: {'ok' if out_port else out_err or '(closed)'}   knob: {_knob_status()}   {_map_text()}",
         "",
     ]
     # two-column layout: 40 rows of specs don't fit one column on the CRT
@@ -429,7 +491,7 @@ def _build_lines(cols):
         lines.append(f" {status_msg}")
     else:
         lines.append("")
-    lines.append(" [/]:group s:slot f:fltbank d:devnum x/v/X:panel Enter:type L:learn ,/.:ch")   # key legend: always on screen
+    lines.append(" [/]:group s:slot f:fltbank d:devnum x/v/X:panel Enter:type L:learn M/U:map ,/.:ch")   # key legend: always on screen
     if last_tx:
         lines.append(f" tx: {last_tx}"[: max(20, cols - 1)])
     return lines

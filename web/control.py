@@ -22,6 +22,21 @@ from devices import lxp1 as LXP1
 from devices import matrix1000 as M1K
 from devices import tg77 as TG77
 from devices import bassstation as BSR
+from midimap_model import MapModel, SECTION as MAP_SECTION
+
+
+def _map_badges(settings_path, device, schema):
+    """Annotate field labels with their external-controller mapping."""
+    try:
+        model = MapModel((_settings_section(settings_path, MAP_SECTION) or {}).get("mappings", []))
+    except Exception:
+        return schema
+    for g in schema["groups"]:
+        for f in g["fields"]:
+            d = model.describe(device, f["key"])
+            if d:
+                f["label"] = f"{f['label']}  [{d}]"
+    return schema
 
 _OUT_HINTS = ["UX16", "USB MIDI", "MIDI 1"]
 
@@ -452,7 +467,8 @@ def register_control_routes(app, settings_path: str) -> None:
     async def get_schema(request):
         return web.json_response({
             "ok": True,
-            "devices": [s.schema() for s in sessions.values()],
+            "devices": [_map_badges(settings_path, dev, s.schema())
+                        for dev, s in sessions.items()],
         })
 
     def _session(body) -> Any:

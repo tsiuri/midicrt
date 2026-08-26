@@ -24,6 +24,7 @@
 BACKGROUND = False
 PAGE_ID = 18
 PAGE_NAME = "LXP-1 Ctrl"
+DEVICE_ID = "lxp1"
 
 import threading
 import time
@@ -480,6 +481,57 @@ def _start_pull():
     threading.Thread(target=_pull_worker, daemon=True).start()
 
 
+def mapping_key_for_cursor():
+    flds = _fields()
+    p = flds[min(cursor, len(flds) - 1)]
+    return f"p{p['num']}", p["name"]
+
+
+def on_mapped_set(key, step):
+    """midimap already transmitted; just mirror into the shadow/display."""
+    if not key.startswith("p"):
+        return
+    values.setdefault(str(program), {})[key[1:]] = int(step)
+    _mark_save()
+
+
+# --- external MIDI mapping (plugins/midimap.py) ------------------------------
+
+def _midimap():
+    import midicrt as _m
+    return next((p for p in _m.PLUGINS if getattr(p, "__name__", "").endswith("midimap")), None)
+
+
+def _map_learn():
+    mm = _midimap()
+    if mm is None:
+        _status("midimap plugin not loaded")
+        return
+    key, label = mapping_key_for_cursor()
+    mm.arm_learn(DEVICE_ID, key, label)
+    _status(f"MAP LEARN armed for {label}: move a knob on the Cirklon/controller")
+
+
+def _map_unbind():
+    mm = _midimap()
+    if mm is None:
+        return
+    key, label = mapping_key_for_cursor()
+    _status(f"unmapped {label}" if mm.unbind(DEVICE_ID, key) else f"{label} had no mapping")
+
+
+def _map_text():
+    mm = _midimap()
+    if mm is None:
+        return ""
+    ls = mm.learn_status()
+    if ls:
+        return ls
+    key, label = mapping_key_for_cursor()
+    d = mm.describe(DEVICE_ID, key)
+    return f"map: {d}" if d else "map: (none — M to learn)"
+
+
 def _arm_learn():
     import midicrt as _m
     knob = next((p for p in _m.PLUGINS if hasattr(p, "arm_learn")), None)
@@ -575,6 +627,12 @@ def keypress(key):
     if s == "E":
         _start_pull()
         return True
+    if s == "M":
+        _map_learn()
+        return True
+    if s == "U":
+        _map_unbind()
+        return True
     return False
 
 
@@ -596,7 +654,7 @@ def _build_lines(cols):
     pgm_name = ALGORITHMS[program][0]
     lines = [
         f"--- LXP-1  ch{channel:02d} {param_class}  preset {preset}: {PRESETS[preset][0]}  alg: {pgm_name} ---",
-        f"out: {'ok' if out_port else out_err or '(closed)'}   knob: {_knob_status()}",
+        f"out: {'ok' if out_port else out_err or '(closed)'}   knob: {_knob_status()}   {_map_text()}",
         "",
     ]
     for i, param in enumerate(flds):
@@ -620,7 +678,7 @@ def _build_lines(cols):
         lines.append(f" {status_msg}")
     else:
         lines.append("")
-    lines.append(" arrows:nudge Enter:type g:preset E:pull S/R:store/recall L:learn ,/.:ch c:unit-ch")   # key legend: always on screen
+    lines.append(" arrows:nudge Enter:type g:preset E:pull S/R:st/rcl L:learn M/U:map ,/.:ch c:unit-ch")   # key legend: always on screen
     if last_tx:
         lines.append(f" tx: {last_tx}"[: max(20, cols - 1)])
     return lines

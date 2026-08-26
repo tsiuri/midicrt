@@ -15,6 +15,7 @@
 BACKGROUND = False
 PAGE_ID = 21
 PAGE_NAME = "BassStation"
+DEVICE_ID = "bassstation"
 
 import time
 
@@ -225,6 +226,54 @@ def on_device_message(msg):
     _status(f"unit: {pid} -> {msg.value}")
 
 
+def mapping_key_for_cursor():
+    flds = _fields()
+    f = flds[min(cursor, len(flds) - 1)]
+    return f["id"], f["name"]
+
+
+def on_mapped_set(key, v):
+    values[key] = int(v)
+    _mark_save()
+
+
+# --- external MIDI mapping (plugins/midimap.py) ------------------------------
+
+def _midimap():
+    import midicrt as _m
+    return next((p for p in _m.PLUGINS if getattr(p, "__name__", "").endswith("midimap")), None)
+
+
+def _map_learn():
+    mm = _midimap()
+    if mm is None:
+        _status("midimap plugin not loaded")
+        return
+    key, label = mapping_key_for_cursor()
+    mm.arm_learn(DEVICE_ID, key, label)
+    _status(f"MAP LEARN armed for {label}: move a knob on the Cirklon/controller")
+
+
+def _map_unbind():
+    mm = _midimap()
+    if mm is None:
+        return
+    key, label = mapping_key_for_cursor()
+    _status(f"unmapped {label}" if mm.unbind(DEVICE_ID, key) else f"{label} had no mapping")
+
+
+def _map_text():
+    mm = _midimap()
+    if mm is None:
+        return ""
+    ls = mm.learn_status()
+    if ls:
+        return ls
+    key, label = mapping_key_for_cursor()
+    d = mm.describe(DEVICE_ID, key)
+    return f"map: {d}" if d else "map: (none — M to learn)"
+
+
 def _arm_learn():
     import midicrt as _m
     knob = next((p for p in _m.PLUGINS if hasattr(p, "arm_learn")), None)
@@ -300,6 +349,12 @@ def keypress(key):
     if s == "L":
         _arm_learn()
         return True
+    if s == "M":
+        _map_learn()
+        return True
+    if s == "U":
+        _map_unbind()
+        return True
     return False
 
 
@@ -314,7 +369,7 @@ def _build_lines(cols):
     lines = [
         f"--- Bass Station Rack  ch{channel:02d}"
         f"  pgm {program:02d}: {DEV.program_name(program)} ---",
-        f"out: {'ok' if out_port else out_err or '(closed)'}   knob: {_knob_status()}",
+        f"out: {'ok' if out_port else out_err or '(closed)'}   knob: {_knob_status()}   {_map_text()}",
         "",
     ]
     last_group = None
@@ -338,7 +393,7 @@ def _build_lines(cols):
         lines.append(f" {status_msg}")
     else:
         lines.append("")
-    lines.append(" arrows:move/nudge Enter:type p:program L:learn ,/.:ch")   # key legend: always on screen
+    lines.append(" arrows:move/nudge Enter:type p:program L:learn M/U:map ,/.:ch")   # key legend: always on screen
     if last_tx:
         lines.append(f" tx: {last_tx}"[: max(20, cols - 1)])
     return lines
