@@ -150,7 +150,8 @@ class Lxp1Session:
             self.preset = int(arg) % 16
             self.program = LXP1.PRESETS[self.preset][1]
             self.values = {f"p{k}": v for k, v in LXP1.factory_default_steps(self.preset).items()}
-            self.out.sysex(LXP1.setup_select_sysex(128 + self.preset, self.channel, self.klass))
+            # presets = rebuilt registers 0-15 (unit's preset table is dead)
+            self.out.program_change(self.channel, self.preset)
         elif key == "recall":
             self.out.program_change(self.channel, int(arg))
             self.values.clear()

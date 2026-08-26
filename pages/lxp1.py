@@ -10,7 +10,8 @@
 #   Left/Right         nudge field one step (transmits)
 #   Shift-Left/Right   coarse nudge (~5% of range)
 #   Enter              typed entry in display units; Enter commits, Esc cancels
-#   g / G              next / previous factory preset (setup select, param 64)
+#   g / G              next / previous preset = registers 0-15 (Program
+#                      Change) followed by an automatic pull
 #   c                  channel-set burst: hold the unit's MIDI button while
 #                      this arrives to lock the LXP-1 to the page's channel
 #   S / R              store register / recall setup (typed number; R: 0-127
@@ -323,14 +324,21 @@ def _seed_factory_defaults():
 
 
 def _set_preset(idx):
+    """Presets live in registers 0-15 (rebuilt over MIDI after the battery
+    loss; the unit's own preset table is unusable without a front-panel
+    reset).  Load via Program Change, then auto-pull so the GUI is exact."""
     global preset, program, cursor
     preset = idx % 16
     program = PRESETS[preset][1]
     cursor = 0
     _seed_factory_defaults()
     _mark_save()
-    if _send_param(PARAM_SETUP, 128 + preset):
-        _status(f"preset {preset}: {PRESETS[preset][0]} ({ALGORITHMS[program][0]}) — manual defaults shown")
+    if _send_program_change(preset):
+        _status(f"preset {preset}: {PRESETS[preset][0]} ({ALGORITHMS[program][0]}) — pulling...")
+        def _later():
+            time.sleep(0.4)
+            _start_pull()
+        threading.Thread(target=_later, daemon=True).start()
 
 
 def _send_program_change(pp):
