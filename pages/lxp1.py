@@ -33,7 +33,8 @@ import mido
 
 from midicrt import draw_line
 from configutil import load_section, save_section
-from ui.model import PageLinesWidget
+from ui.model import PageLinesWidget, CanvasWidget
+from ui import ctrlgfx
 
 
 # ---------------------------------------------------------------------------
@@ -93,6 +94,7 @@ last_tx = ""
 out_port = None
 out_err = ""
 _save_pending = 0.0
+_gfx = []   # pixel geometry for the compositor painter
 
 
 
@@ -657,10 +659,16 @@ def _build_lines(cols):
         f"out: {'ok' if out_port else out_err or '(closed)'}   knob: {_knob_status()}   {_map_text()}",
         "",
     ]
+    _gfx.clear()
+    row0 = len(lines)
     for i, param in enumerate(flds):
         step = _get_step(param)
         mark = ">" if i == cur else " "
         steptxt = "---" if step is None else f"{step:4d}"
+        _gfx.append({"kind": "bar", "row": row0 + i, "col": 19, "cols": 14,
+                     "frac": 0.0 if step is None else step / max(1, param["steps"] - 1),
+                     "bipolar": param["bipolar"], "focused": i == cur,
+                     "unknown": step is None})
         lines.append(
             f" {mark} {param['name']:<15s} [{_bar(param, step)}] "
             f"{steptxt}/{param['steps']-1:<4d} {_display_value(param, step):>10s}"
@@ -684,6 +692,10 @@ def _build_lines(cols):
     return lines
 
 
+def on_tick(state):
+    _flush_save()
+
+
 def draw(state):
     _flush_save()
     cols = state["cols"]
@@ -697,5 +709,6 @@ def update(state):
 
 
 def build_widget(state):
-    return PageLinesWidget(page_id=PAGE_ID, page_name=PAGE_NAME,
-                           lines=_build_lines(int(state.get("cols", 100))))
+    lines = _build_lines(int(state.get("cols", 100)))
+    return CanvasWidget(page_id=PAGE_ID, page_name=PAGE_NAME, lines=lines,
+                        painters=(ctrlgfx.make_painter(_gfx),))

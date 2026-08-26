@@ -6,6 +6,7 @@ TTY-only renderer: no framebuffer or X dependencies.
 from blessed import Terminal
 
 from ui.model import (
+    CanvasWidget,
     CaptureStatusWidget,
     Column,
     EventLogWidget,
@@ -75,6 +76,8 @@ class TextRenderer:
             ]
         if isinstance(widget, NotesWidget):
             return widget.lines
+        if isinstance(widget, CanvasWidget):
+            return [Line.plain(s) for s in widget.lines]
         if isinstance(widget, PageLinesWidget):
             return [Line.plain(t) for t in widget.lines]
         if isinstance(widget, EventLogWidget):

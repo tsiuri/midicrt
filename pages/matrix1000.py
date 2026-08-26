@@ -25,7 +25,8 @@ import mido
 
 from midicrt import draw_line
 from configutil import load_section, save_section
-from ui.model import PageLinesWidget
+from ui.model import PageLinesWidget, CanvasWidget
+from ui import ctrlgfx
 from devices import matrix1000 as DEV
 
 MOD_GROUP = "Mod Matrix"
@@ -66,6 +67,7 @@ _save_pending = 0.0
 MIN_TX_GAP_S = 0.035
 _last_tx_time = 0.0
 _pending_tx = {}   # field-key -> field dict (value read from shadow at flush)
+_gfx = []          # pixel geometry recorded by _build_lines for the compositor
 
 
 # ---------------------------------------------------------------------------
@@ -683,6 +685,8 @@ def _build_lines(cols):
     ]
     graph = _env_graph_lines(g) if g in _ENV_PARAM_BASE else None
     rows = []
+    _gfx.clear()
+    row0 = len(lines)
     for i, f in enumerate(flds):
         v = _get_value(f)
         mark = ">" if i == cur else " "
@@ -691,6 +695,16 @@ def _build_lines(cols):
         else:
             rows.append(f" {mark} {f['name']:<24s} [{_bar(f, v)}] {_display(f, v):>6s}"
                          f"  ({f['min']}..{f['max']})")
+            span = f["max"] - f["min"]
+            _gfx.append({"kind": "bar", "row": row0 + i, "col": 28, "cols": 12,
+                         "frac": (v - f["min"]) / span if span else 0.0,
+                         "bipolar": f["min"] < 0, "focused": i == cur})
+    if graph:
+        base = _ENV_PARAM_BASE[g]
+        ev = lambda off: int(values.get(str(base + off), 0)) / 63.0
+        _gfx.append({"kind": "env", "row": row0, "col": 60, "cols": 38, "rows": 10,
+                     "segments": ctrlgfx.adsr_segments(ev(0), ev(1), ev(2), ev(3), ev(4), ev(5)),
+                     "label": g})
     if graph:
         merged = []
         for i in range(max(len(rows), len(graph))):
@@ -719,6 +733,12 @@ def _build_lines(cols):
     return lines
 
 
+def on_tick(state):
+    """Frame hook (build_widget pages never get draw())."""
+    _flush_tx()
+    _flush_save()
+
+
 def draw(state):
     _flush_tx()
     _flush_save()
@@ -729,5 +749,6 @@ def draw(state):
 
 
 def build_widget(state):
-    return PageLinesWidget(page_id=PAGE_ID, page_name=PAGE_NAME,
-                           lines=_build_lines(int(state.get("cols", 100))))
+    lines = _build_lines(int(state.get("cols", 100)))
+    return CanvasWidget(page_id=PAGE_ID, page_name=PAGE_NAME, lines=lines,
+                        painters=(ctrlgfx.make_painter(_gfx),))

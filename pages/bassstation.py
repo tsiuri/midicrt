@@ -23,7 +23,8 @@ import mido
 
 from midicrt import draw_line
 from configutil import load_section, save_section
-from ui.model import PageLinesWidget
+from ui.model import PageLinesWidget, CanvasWidget
+from ui import ctrlgfx
 from devices import bassstation as DEV
 
 _cfg = {}
@@ -49,6 +50,7 @@ last_tx = ""
 out_port = None
 out_err = ""
 _save_pending = 0.0
+_gfx = []
 
 
 def _fields():
@@ -373,16 +375,28 @@ def _build_lines(cols):
         "",
     ]
     last_group = None
+    _gfx.clear()
+    env_row = {}
     for i, f in enumerate(flds):
         group, label = f["name"].split(": ", 1)
         if group != last_group:
             if last_group is not None:
                 lines.append("")
             lines.append(f"  == {group} ==")
+            env_row[group] = len(lines)
             last_group = group
         v = _get_value(f)
         mark = ">" if i == cur else " "
+        _gfx.append({"kind": "bar", "row": len(lines), "col": 16, "cols": 16,
+                     "frac": v / 127.0, "focused": i == cur})
         lines.append(f" {mark} {label:<12s} [{_bar(v)}] {v:3d}   (CC{f['cc']})")
+    for g in ("Envelope 1", "Envelope 2"):
+        if g in env_row:
+            p = "env1" if g.endswith("1") else "env2"
+            gv = lambda k: int(values.get(f"{p}{k}", 64)) / 127.0
+            _gfx.append({"kind": "env", "row": env_row[g], "col": 46, "cols": 40, "rows": 5,
+                         "segments": ctrlgfx.adsr_segments(0, gv("Attack"), gv("Decay"), gv("Sustain"), gv("Release")),
+                         "label": g, "focused": flds[cur]["name"].startswith(g)})
     lines.append("")
     if entry_mode == "value":
         f = flds[cur]
@@ -399,6 +413,10 @@ def _build_lines(cols):
     return lines
 
 
+def on_tick(state):
+    _flush_save()
+
+
 def draw(state):
     _flush_save()
     cols = state["cols"]
@@ -408,5 +426,6 @@ def draw(state):
 
 
 def build_widget(state):
-    return PageLinesWidget(page_id=PAGE_ID, page_name=PAGE_NAME,
-                           lines=_build_lines(int(state.get("cols", 100))))
+    lines = _build_lines(int(state.get("cols", 100)))
+    return CanvasWidget(page_id=PAGE_ID, page_name=PAGE_NAME, lines=lines,
+                        painters=(ctrlgfx.make_painter(_gfx),))

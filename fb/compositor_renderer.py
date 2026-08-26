@@ -23,6 +23,7 @@ from fb.compositor import (
     Compositor, GREEN_BRIGHT, GREEN_MID, GREEN_DIM, _rgb565,
 )
 from ui.model import (
+    CanvasWidget,
     Column,
     EventLogWidget,
     FooterStatusWidget,
@@ -708,6 +709,21 @@ class CompositorRenderer(TextRenderer):
                 frame,
                 y_row,
             )
+
+        if isinstance(widget, CanvasWidget):
+            end_row = self._render_widget(
+                TextBlock(lines=[self._line_plain(s) for s in widget.lines]),
+                frame,
+                y_row,
+            )
+            from fb.canvas import Canvas
+            canvas = Canvas(self.comp, (PAGE_Y_OFFSET + y_row) * self.comp.char_h)
+            for painter in widget.painters:
+                try:
+                    painter(canvas)
+                except Exception:
+                    pass
+            return end_row
 
         # Unknown widget type — skip one row
         return y_row + 1

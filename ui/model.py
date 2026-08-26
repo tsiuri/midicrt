@@ -63,6 +63,18 @@ class PageLinesWidget(Widget):
 
 
 @dataclass(frozen=True)
+class CanvasWidget(Widget):
+    """Text lines (rendered everywhere) plus pixel painters that the fb
+    compositor invokes with a fb.canvas.Canvas — controller pages use this
+    for gauges and envelope plots. Text renderers show just the lines."""
+
+    page_id: int
+    page_name: str
+    lines: List[str] = field(default_factory=list)
+    painters: tuple = ()
+
+
+@dataclass(frozen=True)
 class Spacer(Widget):
     """Fixed number of blank rows."""
 

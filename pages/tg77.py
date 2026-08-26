@@ -22,7 +22,8 @@ import mido
 
 from midicrt import draw_line
 from configutil import load_section, save_section
-from ui.model import PageLinesWidget
+from ui.model import PageLinesWidget, CanvasWidget
+from ui import ctrlgfx
 from devices import tg77 as DEV
 
 _cfg = {}
@@ -53,6 +54,7 @@ last_tx = ""
 out_port = None
 out_err = ""
 _save_pending = 0.0
+_gfx = []
 
 _SIGN_CHOICES = ["+", "-"]
 
@@ -468,19 +470,44 @@ def _build_lines(cols):
     ]
     # two-column layout: 40 rows of specs don't fit one column on the CRT
     rows = []
+    bars = []
     for i, f in enumerate(flds):
         v = _get_value(f["family"], f["sid"])
         mark = ">" if i == cur else " "
         if f["choices"]:
             rows.append(f" {mark} {f['name']:<22.22s} <{_display(f, v):>8.8s}>")
+            bars.append(None)
         else:
             rows.append(f" {mark} {f['name']:<22.22s} [{_bar(f, v)}]{_display(f, v):>4s}")
+            span = f["max"] - f["min"]
+            bars.append({"frac": (v - f["min"]) / span if span else 0.0,
+                         "bipolar": f["min"] < 0, "focused": i == cur})
     half = (len(rows) + 1) // 2
     width = max(len(r) for r in rows) + 2 if rows else 0
+    _gfx.clear()
+    row0 = len(lines)
     for i in range(half):
         left = rows[i]
         right = rows[i + half] if i + half < len(rows) else ""
         lines.append(f"{left:<{width}s}{right}")
+        for j, coloff in ((i, 0), (i + half, width)):
+            if j < len(bars) and bars[j]:
+                _gfx.append({"kind": "bar", "row": row0 + i, "col": coloff + 26, "cols": 10, **bars[j]})
+    if g in _OP_GROUPS:
+        # AFM EG: HT hold at L0, rates R1..R4 to L1..L4, release RR1/RR2 to RL1/RL2
+        gv = lambda sid: _get_value("op", sid) / 63.0
+        rate_w = lambda r: 0.04 + (1.0 - r) * 0.22
+        segs = [(0.03 + gv("AfmEgHt") * 0.15, gv("AfmEgL0"), gv("AfmEgL0")),
+                (rate_w(gv("AfmEgR1")), gv("AfmEgL0"), gv("AfmEgL1")),
+                (rate_w(gv("AfmEgR2")), gv("AfmEgL1"), gv("AfmEgL2")),
+                (rate_w(gv("AfmEgR3")), gv("AfmEgL2"), gv("AfmEgL3")),
+                (rate_w(gv("AfmEgR4")), gv("AfmEgL3"), gv("AfmEgL4")),
+                (0.12, gv("AfmEgL4"), gv("AfmEgL4")),
+                (rate_w(gv("AfmEgRr1")), gv("AfmEgL4"), gv("AfmEgRl1")),
+                (rate_w(gv("AfmEgRr2")), gv("AfmEgRl1"), gv("AfmEgRl2"))]
+        _gfx.append({"kind": "env", "row": row0 + half + 1, "col": 2, "cols": 60, "rows": 8,
+                     "segments": segs, "label": f"{g} AFM EG"})
+        lines.extend([""] * 9)
     lines.append("")
     if entry_mode == "value":
         f = flds[cur]
@@ -497,6 +524,10 @@ def _build_lines(cols):
     return lines
 
 
+def on_tick(state):
+    _flush_save()
+
+
 def draw(state):
     _flush_save()
     cols = state["cols"]
@@ -506,5 +537,6 @@ def draw(state):
 
 
 def build_widget(state):
-    return PageLinesWidget(page_id=PAGE_ID, page_name=PAGE_NAME,
-                           lines=_build_lines(int(state.get("cols", 100))))
+    lines = _build_lines(int(state.get("cols", 100)))
+    return CanvasWidget(page_id=PAGE_ID, page_name=PAGE_NAME, lines=lines,
+                        painters=(ctrlgfx.make_painter(_gfx),))
