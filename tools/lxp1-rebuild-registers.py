@@ -53,14 +53,28 @@ if not a.verify_only:
             print(f"  stored registers {reg-15:3d}-{reg:3d}")
     print("all 128 registers written")
 
-print("verifying a sample via Program Change + pull:")
-ok = 0
-for reg in (0, 7, 12, 15, 16, 77, 127):
-    out.send(mido.Message("program_change", program=reg, channel=CH - 1)); time.sleep(0.6)
+def check(reg):
+    out.send(mido.Message("program_change", program=reg, channel=CH - 1)); time.sleep(0.5)
     dec = pull()
     want = d.PRESETS[reg % 16]
-    good = dec and dec["program"] == want[1] and dec["name"].startswith(want[0].upper()[:8])
-    ok += bool(good)
-    print(f"  reg {reg:3d}: {'OK ' if good else 'BAD'} -> {dec and (dec['program'], dec['name'])}  expected {want}")
-print(f"{ok}/7 verified")
+    return bool(dec and dec["program"] == want[1]
+                and dec["name"].startswith(want[0].upper()[:8])), dec, want
+
+
+print("verifying ALL 128 registers via Program Change + pull (repairing misses):")
+bad = []
+for reg in range(128):
+    good, dec, want = check(reg)
+    if not good:
+        bad.append(reg)
+        print(f"  reg {reg:3d}: BAD -> {dec and (dec['program'], dec['name'])} expected {want}; rewriting")
+        for attempt in range(3):
+            sx(d.factory_like_image(reg % 16, CH), 0.5)
+            sx(d.event_sysex(0x70, reg, CH), 0.5)
+            good, dec, want = check(reg)
+            if good:
+                print(f"           repaired on attempt {attempt+1}")
+                bad.remove(reg)
+                break
+print(f"done: {128-len(bad)}/128 registers verified" + (f"; still bad: {bad}" if bad else ""))
 out.send(mido.Message("program_change", program=0, channel=CH - 1))
