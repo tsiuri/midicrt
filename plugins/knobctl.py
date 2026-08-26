@@ -32,6 +32,8 @@ except Exception:
 # "Midi Through Port-0" is the PipeWire->ALSA landing zone for the BLE
 # keyboard (see tools/smk25-pair.sh); Port-1 belongs to netmidi — never add it.
 input_hints = _cfg.get("input_hints", ["SMK", "M-VAVE", "MVAVE", "SMK25", "Midi Through Port-0"])
+# (the same hints match the keyboard's USB-MIDI name when it is cabled to the Pi —
+#  preferred over BLE: bluez's BLE-MIDI parser garbles multi-message packets)
 output_hints = _cfg.get("output_hints", ["UX16", "USB MIDI", "MIDI 1"])
 knob_cc = _cfg.get("knob_cc")            # int or None (unlearned)
 knob_mode = _cfg.get("knob_mode", "abs")  # "abs" | "rel2" (2's-complement relative)
@@ -52,6 +54,9 @@ _lock = threading.Lock()
 _fwd_ok = 0
 _fwd_fail = 0
 _last_fwd_err = ""
+_dropped_bad = 0
+_held = {}        # target channel (1-16) -> set of held notes we forwarded
+_last_target_ch = None
 
 _FORWARD_TYPES = {
     "note_on", "note_off", "pitchwheel", "aftertouch", "polytouch", "program_change",
@@ -84,7 +89,8 @@ def knob_status():
         return "kbd offline"
     if _learn_armed:
         return "LEARNING..."
-    fwd = f" fwd:{_fwd_ok}/{_fwd_fail}" + (f" [{_last_fwd_err}]" if _last_fwd_err else "")
+    fwd = f" fwd:{_fwd_ok}/{_fwd_fail}" + (f" bad:{_dropped_bad}" if _dropped_bad else "") \
+        + (f" [{_last_fwd_err}]" if _last_fwd_err else "")
     if knob_cc is None:
         return f"{_in_name.split(':')[0]} (no knob learned)" + fwd
     return f"cc{knob_cc} on {_in_name.split(':')[0]}" + fwd
@@ -191,7 +197,12 @@ def _handle(msg):
         return
     if msg.type not in _FORWARD_TYPES and msg.type != "control_change":
         return
-    global _fwd_ok, _fwd_fail, _last_fwd_err
+    global _fwd_ok, _fwd_fail, _last_fwd_err, _dropped_bad, _last_target_ch
+    # BLE-MIDI garbling (bluez parser, multi-message packets) produces
+    # impossible notes; drop them rather than stick a voice forever.
+    if msg.type in ("note_on", "note_off") and (msg.note >= 120 or msg.note < 12):
+        _dropped_bad += 1
+        return
     if not _ensure_out():
         _fwd_fail += 1
         _last_fwd_err = "no out port"
@@ -200,8 +211,22 @@ def _handle(msg):
     ch = getattr(page, "note_target_channel", None) or default_channel
     ch = max(1, min(16, int(ch)))
     try:
+        # Page (target channel) changed while notes are held: release them on
+        # the old channel first, otherwise their note-offs land elsewhere.
+        if _last_target_ch is not None and ch != _last_target_ch:
+            for n in list(_held.get(_last_target_ch, ())):
+                _out_port.send(mido.Message("note_off", note=n, velocity=0, channel=_last_target_ch - 1))
+            _held.pop(_last_target_ch, None)
+        _last_target_ch = ch
         if hasattr(msg, "channel"):
             msg = msg.copy(channel=ch - 1)
+        if msg.type == "note_on" and msg.velocity > 0:
+            held = _held.setdefault(ch, set())
+            if msg.note in held:   # retrigger without an off: release first
+                _out_port.send(mido.Message("note_off", note=msg.note, velocity=0, channel=ch - 1))
+            held.add(msg.note)
+        elif msg.type == "note_off" or (msg.type == "note_on" and msg.velocity == 0):
+            _held.get(ch, set()).discard(msg.note)
         _out_port.send(msg)
         _fwd_ok += 1
     except Exception as exc:
