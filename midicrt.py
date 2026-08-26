@@ -7,6 +7,7 @@ from configutil import load_section, save_section
 from inspect import signature
 from blessed import Terminal
 import mido
+import threading
 from engine.core import MidiEngine
 from engine.ipc import SnapshotPublisher
 from engine.modules import LegacyPluginModule, PianoRollViewModule
@@ -648,13 +649,20 @@ except Exception:
     pass
 
 
+MENU_ACTIONS = [
+    ("action:notesoff", "** ALL NOTES OFF  (CC123/120, all ch) **"),
+    ("action:panic", "** PANIC  (+ note-off sweep, all ch) **"),
+]
+
+
 def _menu_entries():
-    return [(pid, str(getattr(PAGES[pid], "PAGE_NAME", f"page {pid}"))) for pid in sorted(PAGES)]
+    pages = [(pid, str(getattr(PAGES[pid], "PAGE_NAME", f"page {pid}"))) for pid in sorted(PAGES)]
+    return pages + MENU_ACTIONS
 
 
 def _menu_open_now():
     global _menu_open, _menu_sel, _menu_scroll
-    ids = sorted(PAGES)
+    ids = [e[0] for e in _menu_entries()]
     try:
         _menu_sel = ids.index(current_page)
     except ValueError:
@@ -670,16 +678,85 @@ def _menu_close():
 
 def _menu_move(step):
     global _menu_sel
-    n = len(PAGES)
+    n = len(_menu_entries())
     if n:
         _menu_sel = (_menu_sel + int(step)) % n
 
 
 def _menu_activate():
-    ids = sorted(PAGES)
-    if ids:
-        switch_page(ids[_menu_sel % len(ids)])
+    entries = _menu_entries()
+    if entries:
+        target = entries[_menu_sel % len(entries)][0]
+        if isinstance(target, str) and target.startswith("action:"):
+            _menu_close()
+            run_menu_action(target)
+            return
+        switch_page(target)
     _menu_close()
+
+
+# ---------------------------------------------------------------------------
+# Panic / all-notes-off (Escape menu actions)
+# ---------------------------------------------------------------------------
+
+def _panic_out_port():
+    """Prefer the configured panic port; fall back to the rack interface."""
+    global PANIC_OUT_PORT
+    if PANIC_OUT_PORT is not None:
+        return PANIC_OUT_PORT
+    try:
+        for hint in ("UX16", "USB MIDI", "MIDI 1"):
+            for name in mido.get_output_names():
+                if hint.lower() in name.lower():
+                    PANIC_OUT_PORT = mido.open_output(name)
+                    return PANIC_OUT_PORT
+    except Exception:
+        pass
+    return None
+
+
+def send_all_notes_off(sweep=False):
+    """CC64 off + CC123 (all notes off) + CC120 (all sound off) + bend centre
+    on all 16 channels; sweep=True also sends an explicit note-off for every
+    note on every channel (for synths that ignore CC123)."""
+    port = _panic_out_port()
+    if port is None:
+        _append_runtime_log("[panic] no output port")
+        return 0
+    sent = 0
+    try:
+        for ch in range(16):
+            port.send(mido.Message("control_change", control=64, value=0, channel=ch))
+            port.send(mido.Message("control_change", control=123, value=0, channel=ch))
+            port.send(mido.Message("control_change", control=120, value=0, channel=ch))
+            port.send(mido.Message("pitchwheel", pitch=0, channel=ch))
+            sent += 4
+        if sweep:
+            for ch in range(16):
+                for note in range(128):
+                    port.send(mido.Message("note_off", note=note, velocity=0, channel=ch))
+                    sent += 1
+                time.sleep(0.004)
+    except Exception as exc:
+        _append_runtime_log(f"[panic] send failed: {exc}")
+    _append_runtime_log(f"[panic] sent {sent} messages (sweep={sweep})")
+    return sent
+
+
+def run_menu_action(action):
+    sweep = action == "action:panic"
+    try:
+        ENGINE.set_status_text("PANIC: note-off sweep..." if sweep else "ALL NOTES OFF sent")
+    except Exception:
+        pass
+
+    def _go():
+        n = send_all_notes_off(sweep=sweep)
+        try:
+            ENGINE.set_status_text(f"{'PANIC' if sweep else 'ALL NOTES OFF'} done ({n} msgs)")
+        except Exception:
+            pass
+    threading.Thread(target=_go, daemon=True).start()
 
 
 def _draw_escape_menu(cr):
