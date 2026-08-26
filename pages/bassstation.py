@@ -296,6 +296,7 @@ def keypress(key):
     global cursor, channel, entry_buf, note_target_channel
     kname = key.name if getattr(key, "is_sequence", False) else ""
     s = "" if kname else str(key)
+    sl = s.lower()
 
     if entry_mode is not None:
         if kname == "KEY_ENTER" or s in ("\r", "\n"):
@@ -335,7 +336,7 @@ def keypress(key):
     if kname == "KEY_ENTER" or s in ("\r", "\n"):
         _entry_begin("value")
         return True
-    if s == "p":
+    if sl == "p":
         _entry_begin("program")
         return True
     if s == ",":
@@ -348,13 +349,13 @@ def keypress(key):
         note_target_channel = channel
         _mark_save()
         return True
-    if s == "L":
+    if sl == "l":
         _arm_learn()
         return True
-    if s == "M":
+    if sl == "m":
         _map_learn()
         return True
-    if s == "U":
+    if sl == "u":
         _map_unbind()
         return True
     return False

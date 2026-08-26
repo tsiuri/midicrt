@@ -358,6 +358,7 @@ def keypress(key):
     global entry_buf, note_target_channel
     kname = key.name if getattr(key, "is_sequence", False) else ""
     s = "" if kname else str(key)
+    sl = s.lower()   # letter commands accept either case (x/X stay distinct)
 
     if entry_mode is not None:
         if kname == "KEY_ENTER" or s in ("\r", "\n"):
@@ -404,24 +405,24 @@ def keypress(key):
     if kname == "KEY_ENTER" or s in ("\r", "\n"):
         _entry_begin("value")
         return True
-    if s == "s":
+    if sl == "s":
         element_slot = (element_slot + 1) % 4
         _mark_save()
         _status(f"element slot {element_slot + 1} (no burst on switch, VST-style)")
         return True
-    if s == "f":
+    if sl == "f":
         filter_select = 1 - filter_select
         _mark_save()
         _status(f"filter bank {filter_select + 1}")
         return True
-    if s == "d":
+    if sl == "d":
         _entry_begin("devnum")
         return True
     if s == "x":
         _send_messages(DEV.panel_cancel(device_number), "panel Cancel")
         _status("panel Cancel sent")
         return True
-    if s == "v":
+    if sl == "v":
         _send_messages(DEV.panel_exit(device_number), "panel Exit")
         _status("panel Exit sent")
         return True
@@ -438,13 +439,13 @@ def keypress(key):
         note_target_channel = channel
         _mark_save()
         return True
-    if s == "L":
+    if sl == "l":
         _arm_learn()
         return True
-    if s == "M":
+    if sl == "m":
         _map_learn()
         return True
-    if s == "U":
+    if sl == "u":
         _map_unbind()
         return True
     return False

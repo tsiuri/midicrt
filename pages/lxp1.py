@@ -559,6 +559,7 @@ def keypress(key):
     global cursor, channel, entry_buf, note_target_channel
     kname = key.name if getattr(key, "is_sequence", False) else ""
     s = "" if kname else str(key)
+    sl = s.lower()   # letter commands accept either case (g/G stay distinct)
 
     if entry_mode is not None:
         if kname == "KEY_ENTER" or s in ("\r", "\n"):
@@ -604,13 +605,13 @@ def keypress(key):
     if s == "G":
         _set_preset(preset - 1)
         return True
-    if s == "c":
+    if sl == "c":
         _channel_set_burst()
         return True
-    if s == "S":
+    if sl == "s":
         _entry_begin("store")
         return True
-    if s == "R":
+    if sl == "r":
         _entry_begin("recall")
         return True
     if s == ",":
@@ -623,16 +624,16 @@ def keypress(key):
         note_target_channel = channel
         _mark_save()
         return True
-    if s == "L":
+    if sl == "l":
         _arm_learn()
         return True
-    if s == "E":
+    if sl == "e":
         _start_pull()
         return True
-    if s == "M":
+    if sl == "m":
         _map_learn()
         return True
-    if s == "U":
+    if sl == "u":
         _map_unbind()
         return True
     return False
