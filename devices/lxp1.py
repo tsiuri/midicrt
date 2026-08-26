@@ -333,3 +333,28 @@ def factory_like_image(preset, channel=1, register=None):
     program = PRESETS[preset][1]
     return build_setup_dump(program, factory_like_values16(preset), channel=channel,
                             name=PRESETS[preset][0].upper()[:16], register=register)
+
+
+def decode_param_adjust(data):
+    """Decode a Packed (2n) or Nibblized (5n) parameter-change message —
+    what the unit TRANSMITS when a front-panel knob moves (jack jumpered as
+    OUT): Decay -> param 0, Delay -> param 1, Program knob -> param 64.
+    Returns (channel 1-16, param#, value16) or None."""
+    b = list(data)
+    if b and b[0] == 0xF0:
+        b = b[1:]
+    if b and b[-1] == 0xF7:
+        b = b[:-1]
+    if len(b) < 5 or b[0] != 0x06 or b[1] != 0x02:
+        return None
+    klass, ch = b[2] >> 4, (b[2] & 0x0F) + 1
+    param = b[3]
+    if klass == 0x2 and len(b) >= 7:
+        msb_bits, a, bb = b[4], b[5], b[6]
+        lo = a | ((msb_bits & 1) << 7)
+        hi = bb | (((msb_bits >> 1) & 1) << 7)
+        return ch, param, lo | (hi << 8)
+    if klass == 0x5 and len(b) >= 8:
+        v = (b[4] << 12) | (b[5] << 8) | (b[6] << 4) | b[7]
+        return ch, param, v
+    return None

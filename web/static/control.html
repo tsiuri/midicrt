@@ -19,6 +19,7 @@
         border:1px solid var(--dim); border-radius:6px; font:inherit; }
   .tabs button.on { background:var(--dim); color:var(--bright); font-weight:bold; }
   #hdr { color:var(--amber); font-size:12px; padding:6px 2px 0; min-height:1.2em; }
+  #legend { color:var(--green); font-size:11px; padding:3px 2px 0; opacity:.85; }
   #status { color:var(--dim); font-size:11px; padding:2px; min-height:1.1em; }
   main { padding:8px; max-width:760px; margin:0 auto; }
   details { border:1px solid var(--dim); border-radius:8px; margin:8px 0;
@@ -50,6 +51,7 @@
   <h1>midicrt controllers</h1>
   <div class="tabs" id="tabs"></div>
   <div id="hdr"></div>
+  <div id="legend"></div>
   <div id="status"></div>
 </header>
 <main id="main"></main>
@@ -248,6 +250,7 @@ function render() {
     tabs.appendChild(b);
   });
   $("#hdr").textContent = "ch" + String(dev.channel).padStart(2, "0") + "  " + dev.header;
+  $("#legend").textContent = dev.legend || "";
   const main = $("#main");
   main.innerHTML = "";
   const actions = document.createElement("details");

@@ -209,6 +209,22 @@ def _entry_commit():
             _status(f"program {program:02d}: {DEV.program_name(program)}")
 
 
+_CC_TO_ID = {cc: pid for _, pid, _, cc in DEV.PARAMS}
+
+
+def on_device_message(msg):
+    """devicesync plugin: the rack transmits CC 105-118 when its filter /
+    envelope knobs move — keep the GUI in step."""
+    if msg.type != "control_change" or msg.channel != (channel - 1):
+        return
+    pid = _CC_TO_ID.get(msg.control)
+    if pid is None or msg.control < 105:
+        return
+    values[pid] = int(msg.value)
+    _mark_save()
+    _status(f"unit: {pid} -> {msg.value}")
+
+
 def _arm_learn():
     import midicrt as _m
     knob = next((p for p in _m.PLUGINS if hasattr(p, "arm_learn")), None)

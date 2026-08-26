@@ -117,6 +117,8 @@ class Lxp1Session:
             "channel": self.channel,
             "header": f"preset {self.preset}: {LXP1.PRESETS[self.preset][0]}"
                       f" — {LXP1.ALGORITHMS[self.program][0]} [{self.klass}]",
+            "legend": "sliders send live · Preset = register 0-15 · Store/Recall = registers 0-127"
+                      " · Unit-channel burst: hold the MIDI button while pressing",
             "groups": [{"name": LXP1.ALGORITHMS[self.program][0], "fields": fields}],
             "actions": [
                 {"key": "preset", "label": "Preset", "type": "select",
@@ -208,6 +210,8 @@ class Matrix1000Session:
             "id": "matrix1000", "name": "Matrix-1000 (Oberheim)",
             "channel": self.channel,
             "header": f"bank {self.bank}  program {self.program:02d}",
+            "legend": "sliders send NRPN live (paced) · Bank sends select+unlock · Program = patch 0-99"
+                      " · Store writes edit buffer to bank/prog · Mod Matrix at the bottom",
             "groups": groups,
             "actions": [
                 {"key": "bank", "label": "Bank 0-9", "type": "number",
@@ -328,6 +332,8 @@ class Tg77Session:
             "channel": self.channel,
             "header": f"dev {self.device_number}  slot {self.element_slot+1}"
                       f"  filter bank {self.filter_select+1}",
+            "legend": "OP1-6 = AFM operators for the selected element slot · Filter bank 1/2 via action bar"
+                      " · Panel Cancel/Exit = front-panel buttons · device number must match the unit",
             "groups": groups,
             "actions": [
                 {"key": "slot", "label": "Element slot 1-4", "type": "number",
@@ -399,8 +405,9 @@ class BassStationSession:
         return {
             "id": "bassstation", "name": "BassStation (Novation rack)",
             "channel": self.channel,
-            "header": f"program {self.program:02d}: {BSR.program_name(self.program)}"
-                      "  (filter+env only — the hardware's full CC surface)",
+            "header": f"program {self.program:02d}: {BSR.program_name(self.program)}",
+            "legend": "filter + envelopes are the rack's whole MIDI surface (osc/LFO are panel-only)"
+                      " · Program 0-39 factory, 40-99 user",
             "groups": groups,
             "actions": [
                 {"key": "program", "label": "Program 0-99", "type": "number",

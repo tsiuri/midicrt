@@ -50,7 +50,7 @@ from devices.lxp1 import (
     ALGORITHMS, PRESETS, PARAM_SETUP, EVENT_STORE_REGISTER, P,
     fields_for_program, step_to_value16, param_adjust_sysex, event_sysex,
     factory_default_steps, request_active_setup_sysex, decode_setup_dump,
-    value16_to_step,
+    value16_to_step, decode_param_adjust,
 )
 
 # ---------------------------------------------------------------------------
@@ -439,6 +439,35 @@ def _pull_worker():
             except Exception:
                 pass
         _pull_active = False
+
+
+def on_device_message(msg):
+    """devicesync plugin: the unit transmits when a front-panel knob moves
+    (Decay=p0, Delay=p1, Program knob=p64) and answers pulls with dumps."""
+    global preset, program, cursor
+    if msg.type != "sysex":
+        return
+    dec = decode_param_adjust(msg.data)
+    if dec is not None:
+        ch, num, v16 = dec
+        if ch != channel:
+            return
+        if num == 64:
+            # Program knob turned: registers 0-127 / presets 128+; mirror what
+            # we can and refresh by pull so all fields are exact
+            _status(f"unit: Program knob -> setup {v16}; pulling...")
+            _start_pull()
+            return
+        for p in fields_for_program(program):
+            if p["num"] == num:
+                values.setdefault(str(program), {})[str(num)] = value16_to_step(p, v16)
+                _mark_save()
+                _status(f"unit: {p['name']} -> {_display_value(p, value16_to_step(p, v16))}")
+                return
+        return
+    dump = decode_setup_dump(msg.data)
+    if dump is not None and not _pull_active:
+        _apply_setup_dump(dump)
 
 
 def _start_pull():
