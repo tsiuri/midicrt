@@ -38,6 +38,9 @@ output_hints = _cfg.get("output_hints", ["UX16", "USB MIDI", "MIDI 1"])
 knob_cc = _cfg.get("knob_cc")            # int or None (unlearned)
 knob_mode = _cfg.get("knob_mode", "abs")  # "abs" | "rel2" (2's-complement relative)
 forward_notes = bool(_cfg.get("forward_notes", True))
+# A note-off for a note we never forwarded = a garbled release (BLE chord
+# packets): release everything held on that channel — the fingers came off.
+stuck_guard = bool(_cfg.get("stuck_guard", True))
 default_channel = int(_cfg.get("default_channel", 1))
 
 _in_port = None
@@ -71,6 +74,7 @@ def _save_cfg():
             "knob_cc": knob_cc,
             "knob_mode": knob_mode,
             "forward_notes": forward_notes,
+            "stuck_guard": stuck_guard,
             "default_channel": default_channel,
         })
     except Exception:
@@ -226,7 +230,13 @@ def _handle(msg):
                 _out_port.send(mido.Message("note_off", note=msg.note, velocity=0, channel=ch - 1))
             held.add(msg.note)
         elif msg.type == "note_off" or (msg.type == "note_on" and msg.velocity == 0):
-            _held.get(ch, set()).discard(msg.note)
+            held = _held.setdefault(ch, set())
+            if msg.note not in held and stuck_guard and held:
+                for n in list(held):
+                    _out_port.send(mido.Message("note_off", note=n, velocity=0, channel=ch - 1))
+                held.clear()
+                _last_fwd_err = "garbled release: cleared chord"
+            held.discard(msg.note)
         _out_port.send(msg)
         _fwd_ok += 1
     except Exception as exc:
