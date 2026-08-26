@@ -30,6 +30,7 @@ from ui import ctrlgfx
 from devices import matrix1000 as DEV
 
 MOD_GROUP = "Mod Matrix"
+MASTER_GROUP = "Master (global)"
 
 _cfg = {}
 try:
@@ -48,7 +49,10 @@ edit_mode = str(_cfg.get("edit_mode", DEV.EDIT_MODE_DEFAULT))   # sysex | nrpn |
 
 note_target_channel = channel
 
-GROUPS = DEV.groups() + [MOD_GROUP]
+GROUPS = DEV.groups() + [MOD_GROUP, MASTER_GROUP]
+master_raw = None          # 172-byte master block, pulled on demand
+_master_pull_active = False
+_master_status = "not pulled"
 group_idx = 0
 cursor = 0
 entry_mode = None      # None | "value" | "bank" | "program" | "store"
@@ -99,12 +103,16 @@ def _mod_fields():
 
 
 _MOD_FIELDS = _mod_fields()
+_MASTER_FIELDS = [{"kind": "master", "spec": s, "name": s[2], "min": s[3], "max": s[4],
+                   "default": s[3], "choices": s[6], "num": -1} for s in DEV.MASTER_PARAMS]
 
 
 def _fields():
     g = GROUPS[group_idx % len(GROUPS)]
     if g == MOD_GROUP:
         return _MOD_FIELDS
+    if g == MASTER_GROUP:
+        return _MASTER_FIELDS
     return [_param_field(r) for r in DEV.params_in_group(g)]
 
 
@@ -222,6 +230,10 @@ def _send_pc(pp):
 # ---------------------------------------------------------------------------
 
 def _get_value(f):
+    if f["kind"] == "master":
+        if master_raw is None:
+            return f["min"]
+        return DEV.master_get(master_raw, f["spec"])
     if f["kind"] == "mod":
         row = mod.get(str(f["slot"]), [0, 0, 0])
         return int(row[f["role"]])
@@ -239,6 +251,10 @@ def _display(f, v):
 
 def _transmit(f):
     """Send the field's current shadow value to the synth immediately."""
+    if f["kind"] == "master":
+        if master_raw is not None:
+            _send_sysex(DEV.build_master_dump(master_raw), f"MASTER block ({f['name']})")
+        return
     if f["kind"] == "mod":
         row = mod.get(str(f["slot"]), [0, 0, 0])
         _send_sysex(DEV.mod_matrix_sysex(f["slot"], row[0], row[1], row[2]),
@@ -248,6 +264,8 @@ def _transmit(f):
 
 
 def _field_key(f):
+    if f["kind"] == "master":
+        return "master"        # one key: all master edits coalesce into one block write
     return f"m{f['slot']}.{f['role']}" if f["kind"] == "mod" else f"n{f['num']}"
 
 
@@ -293,6 +311,14 @@ threading.Thread(target=_flush_thread, name="m1k-flush", daemon=True).start()
 
 def _set_value(f, v, send=True):
     v = max(f["min"], min(f["max"], int(v)))
+    if f["kind"] == "master":
+        if master_raw is None:
+            _status("master block not pulled yet (press E)")
+            return v
+        v = DEV.master_set(master_raw, f["spec"], v)
+        if send:
+            _request_tx(f)
+        return v
     if f["kind"] == "mod":
         row = list(mod.get(str(f["slot"]), [0, 0, 0]))
         row[f["role"]] = v
@@ -450,6 +476,52 @@ def _pull_worker():
         _pull_active = False
 
 
+def _master_pull_worker():
+    global _master_pull_active, master_raw, _master_status
+    inp = None
+    try:
+        names = list(mido.get_input_names())
+        target = next((n for h in output_hints for n in names if str(h).lower() in n.lower()), None)
+        if target is None:
+            _master_status = "no input"
+            return
+        inp = mido.open_input(target)
+        for _ in inp.iter_pending():
+            pass
+        if not _send_sysex(DEV.request_master_sysex(), "REQ master block"):
+            return
+        deadline = time.time() + 3.0
+        while time.time() < deadline:
+            for msg in inp.iter_pending():
+                if msg.type == "sysex":
+                    raw = DEV.decode_master_dump(msg.data)
+                    if raw is not None:
+                        master_raw = raw
+                        _master_status = "pulled"
+                        _status("MASTER block pulled from the unit")
+                        return
+            time.sleep(0.02)
+        _master_status = "no reply"
+        _status("MASTER: no block in 3s — Matrix OUT on the return path?")
+    except Exception as exc:
+        _master_status = f"err {exc}"
+    finally:
+        if inp is not None:
+            try:
+                inp.close()
+            except Exception:
+                pass
+        _master_pull_active = False
+
+
+def _start_master_pull():
+    global _master_pull_active
+    if _master_pull_active:
+        return
+    _master_pull_active = True
+    threading.Thread(target=_master_pull_worker, daemon=True).start()
+
+
 def _start_pull():
     global _pull_active
     if _pull_active:
@@ -556,13 +628,11 @@ def keypress(key):
         return True
 
     flds = _fields()
-    if s == "[":
-        group_idx = (group_idx - 1) % len(GROUPS)
+    if s in ("[", "]"):
+        group_idx = (group_idx + (1 if s == "]" else -1)) % len(GROUPS)
         cursor = 0
-        return True
-    if s == "]":
-        group_idx = (group_idx + 1) % len(GROUPS)
-        cursor = 0
+        if GROUPS[group_idx] == MASTER_GROUP and master_raw is None:
+            _start_master_pull()
         return True
     if kname == "KEY_UP":
         cursor = (cursor - 1) % len(flds)
@@ -594,7 +664,10 @@ def keypress(key):
         _entry_begin("store")
         return True
     if s == "E":
-        _start_pull()
+        if GROUPS[group_idx % len(GROUPS)] == MASTER_GROUP:
+            _start_master_pull()
+        else:
+            _start_pull()
         return True
     if s == ",":
         channel = max(1, channel - 1)
@@ -678,9 +751,10 @@ def _build_lines(cols):
     flds = _fields()
     cur = min(cursor, len(flds) - 1)
     g = GROUPS[group_idx % len(GROUPS)]
+    mnote = f"  master:{_master_status}" if g == MASTER_GROUP else ""
     lines = [
         f"--- Matrix-1000  ch{channel:02d} {edit_mode}  bank {bank}  prog {program:02d}"
-        f"  [{group_idx+1}/{len(GROUPS)}] {g} ---",
+        f"  [{group_idx+1}/{len(GROUPS)}] {g}{mnote} ---",
         f"out: {'ok' if out_port else out_err or '(closed)'}   knob: {_knob_status()}   {_map_text()}",
         "",
     ]

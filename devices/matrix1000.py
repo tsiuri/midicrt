@@ -318,7 +318,7 @@ MASTER_PARAMS = [
     (164, "bendRange", "Bend Range", 0, 24, False, None),
     (8, "masterTune", "Master Tune", -31, 31, True, None),
     (34, "masterTranspose", "Master Transpose", -31, 31, True, None),
-    (1, "vibSpeed", "Vibrato Speed", 0, 63, False, None),
+    (1, "vibSpeed", "Vibrato Speed", 0, 255, False, None),   # unit holds >63 here (216 observed)
     (4, "vibWave", "Vibrato Wave", 0, 7, False, MASTER_VIB_WAVES),
     (5, "vibAmp", "Vibrato Amplitude", 0, 63, False, None),
     (2, "vibSpeedSrc", "Vib Speed Mod Src", 0, 3, False, ["Off", "Src 1", "Src 2", "Src 3"]),
