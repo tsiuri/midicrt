@@ -21,6 +21,23 @@ plugins/devicesync.py hardware -> GUI mirroring (units that transmit)
 Adding a controller = a `devices/` module + a page + ~40 lines of web session.
 The web/Android surfaces pick it up automatically (schema-driven).
 
+### Pixel graphics (fb compositor)
+
+Controller pages return a `ui.model.CanvasWidget` from `build_widget`: text
+`lines` (rendered by every backend — tty fallback keeps the ASCII bars) plus
+`painters` — callables the `fb/compositor_renderer` invokes with a
+`fb.canvas.Canvas` (pixel primitives on the RGB565 buffer: `rect`, `line`,
+`polyline`, `fill_under`, `hbar` gauges, `envelope` plots; row/col → px via
+`row_px`/`col_px`). Pages record geometry in `_gfx` while building lines
+(`{"kind": "bar"|"env", row, col, cols, ...}`) and `ui/ctrlgfx.py` paints it
+over the ASCII cells. Envelope helpers: `ctrlgfx.adsr_segments(...)`; TG77
+builds its AFM EG segments directly. Painters must use the page's own
+default-fallback for unknown values (a `values.get(k, 0)` slip drew flat
+envelopes once).
+
+**Frame hook:** pages that define `build_widget` never get `draw()` called;
+periodic work (config flush, throttle flush) lives in `on_tick(state)`.
+
 ### Page contract (what every controller page implements)
 
 | symbol | purpose |
@@ -29,7 +46,7 @@ The web/Android surfaces pick it up automatically (schema-driven).
 | `on_knob_delta(steps)` | fallback for endless encoders (`knobctl.knob_mode = "rel2"`) |
 | `note_target_channel` | where knobctl forwards SMK-25 notes ("the keyboard plays what I'm pointed at") |
 | `on_device_message(msg)` | optional: mirror hardware-originated MIDI into the GUI (devicesync) |
-| `draw(state)` | ALSO drives periodic work (config flush, throttle flush) — **midicrt never calls `update()`** |
+| `on_tick(state)` | per-frame hook for periodic work (config flush, throttle flush) — `update()` and (with `build_widget`) `draw()` are never called |
 
 Common keys on every page: arrows = cursor / nudge (Shift = coarse), Enter =
 typed entry (auto page-lock so digits reach the page), `,`/`.` MIDI channel,
