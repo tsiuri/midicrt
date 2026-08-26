@@ -38,9 +38,6 @@ output_hints = _cfg.get("output_hints", ["UX16", "USB MIDI", "MIDI 1"])
 knob_cc = _cfg.get("knob_cc")            # int or None (unlearned)
 knob_mode = _cfg.get("knob_mode", "abs")  # "abs" | "rel2" (2's-complement relative)
 forward_notes = bool(_cfg.get("forward_notes", True))
-# A note-off for a note we never forwarded = a garbled release (BLE chord
-# packets): release everything held on that channel — the fingers came off.
-stuck_guard = bool(_cfg.get("stuck_guard", True))
 default_channel = int(_cfg.get("default_channel", 1))
 
 _in_port = None
@@ -74,7 +71,6 @@ def _save_cfg():
             "knob_cc": knob_cc,
             "knob_mode": knob_mode,
             "forward_notes": forward_notes,
-            "stuck_guard": stuck_guard,
             "default_channel": default_channel,
         })
     except Exception:
@@ -93,8 +89,7 @@ def knob_status():
         return "kbd offline"
     if _learn_armed:
         return "LEARNING..."
-    fwd = f" fwd:{_fwd_ok}/{_fwd_fail}" + (f" bad:{_dropped_bad}" if _dropped_bad else "") \
-        + (f" [{_last_fwd_err}]" if _last_fwd_err else "")
+    fwd = f" fwd:{_fwd_ok}/{_fwd_fail}" + (f" [{_last_fwd_err}]" if _last_fwd_err else "")
     if knob_cc is None:
         return f"{_in_name.split(':')[0]} (no knob learned)" + fwd
     return f"cc{knob_cc} on {_in_name.split(':')[0]}" + fwd
@@ -202,11 +197,6 @@ def _handle(msg):
     if msg.type not in _FORWARD_TYPES and msg.type != "control_change":
         return
     global _fwd_ok, _fwd_fail, _last_fwd_err, _dropped_bad, _last_target_ch
-    # BLE-MIDI garbling (bluez parser, multi-message packets) produces
-    # impossible notes; drop them rather than stick a voice forever.
-    if msg.type in ("note_on", "note_off") and (msg.note >= 120 or msg.note < 12):
-        _dropped_bad += 1
-        return
     if not _ensure_out():
         _fwd_fail += 1
         _last_fwd_err = "no out port"
@@ -225,18 +215,9 @@ def _handle(msg):
         if hasattr(msg, "channel"):
             msg = msg.copy(channel=ch - 1)
         if msg.type == "note_on" and msg.velocity > 0:
-            held = _held.setdefault(ch, set())
-            if msg.note in held:   # retrigger without an off: release first
-                _out_port.send(mido.Message("note_off", note=msg.note, velocity=0, channel=ch - 1))
-            held.add(msg.note)
+            _held.setdefault(ch, set()).add(msg.note)
         elif msg.type == "note_off" or (msg.type == "note_on" and msg.velocity == 0):
-            held = _held.setdefault(ch, set())
-            if msg.note not in held and stuck_guard and held:
-                for n in list(held):
-                    _out_port.send(mido.Message("note_off", note=n, velocity=0, channel=ch - 1))
-                held.clear()
-                _last_fwd_err = "garbled release: cleared chord"
-            held.discard(msg.note)
+            _held.get(ch, set()).discard(msg.note)
         _out_port.send(msg)
         _fwd_ok += 1
     except Exception as exc:
