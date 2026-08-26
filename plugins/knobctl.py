@@ -162,6 +162,11 @@ def _handle(msg):
                 _save_cfg()
                 return
         if knob_cc is not None and msg.control == knob_cc:
+            try:
+                import midicrt as _m
+                _m.wake_screensaver()   # knob activity counts as user activity
+            except Exception:
+                pass
             page = _current_page()
             # absolute-position contract preferred: CC 0..127 = full range of
             # the focused field (right for pot-style knobs like the SMK-25)

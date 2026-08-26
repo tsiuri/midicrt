@@ -274,6 +274,21 @@ def _flush_tx():
     _transmit(f)
 
 
+def _flush_thread():
+    """Flush the throttle queue independently of draw(): draw() stops when the
+    screensaver is up or the page isn't current, and a queued edit must
+    never wait for the screen."""
+    while True:
+        try:
+            _flush_tx()
+        except Exception:
+            pass
+        time.sleep(0.005)
+
+
+threading.Thread(target=_flush_thread, name="m1k-flush", daemon=True).start()
+
+
 def _set_value(f, v, send=True):
     v = max(f["min"], min(f["max"], int(v)))
     if f["kind"] == "mod":
