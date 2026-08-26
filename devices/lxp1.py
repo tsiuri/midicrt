@@ -295,3 +295,41 @@ def value16_to_step(param, v16):
         frac = (v16 - 0x8000) / 0x3FFF
     frac = max(0.0, min(1.0, frac))
     return round(frac * (param["steps"] - 1))
+
+
+# ---------------------------------------------------------------------------
+# Factory-LIKE setup images: for rebuilding a battery-wiped unit over MIDI
+# when the front-panel factory reset isn't possible. Program ID + the
+# manual's documented knob/FX values per preset; the remaining params get
+# musically sensible defaults (documented as approximations, not factory).
+# ---------------------------------------------------------------------------
+
+_ALG_FILL = {   # param -> value16 defaults per algorithm for undocumented params
+    1: {3: 0x8000, 4: 0xB000, 5: 0xA000, 6: 0x8000, 7: 0xB800},          # reverbs
+    2: {3: 0x8000, 4: 0xB000, 5: 0xA000, 6: 0x8000, 7: 0xB800},
+    3: {3: 0x8000, 4: 0x8800, 5: 0xB000, 6: 0x8000, 7: 0x8800, 8: 0x9000},  # chorus 1
+    4: {1: 0x9000, 3: 0x8000, 4: 0x9000, 5: 0x9000, 7: 0xB000, 8: 0xB800},  # delay 2
+    5: {3: 0x8800, 4: 0x8400, 5: 0x8800, 6: 0xB000, 7: 0x8800, 8: 0x9000, 9: 0x8000},  # chorus 2
+    6: {4: 0xB000, 5: 0xBFFF, 6: 0x8000, 7: 0xB800},                      # inverse
+    7: {4: 0xB000, 5: 0xBFFF, 6: 0x8000, 7: 0xB800},                      # gate
+    8: {3: 0xB000, 4: 0x9000, 5: 0x9000, 6: 0x8000, 7: 0xB800, 8: 0x9000},  # delay 1
+}
+
+
+def factory_like_values16(preset):
+    """{param#: value16} for a preset: documented values + algorithm fill."""
+    program = PRESETS[preset][1]
+    out = {p: 0x8000 for p in range(10)}
+    out.update(_ALG_FILL.get(program, {}))
+    for p in fields_for_program(program):
+        step = factory_default_steps(preset).get(p["num"])
+        if step is not None:
+            out[p["num"]] = step_to_value16(p, step)
+    out[2] = 0xBFFF   # FX level 100% in every factory preset
+    return out
+
+
+def factory_like_image(preset, channel=1, register=None):
+    program = PRESETS[preset][1]
+    return build_setup_dump(program, factory_like_values16(preset), channel=channel,
+                            name=PRESETS[preset][0].upper()[:16], register=register)
