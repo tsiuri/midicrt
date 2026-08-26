@@ -35,6 +35,13 @@ builds its AFM EG segments directly. Painters must use the page's own
 default-fallback for unknown values (a `values.get(k, 0)` slip drew flat
 envelopes once).
 
+**Waveform selectors:** choice fields whose options are waveform names
+(`ctrlgfx.is_wave_field`) draw an inline glyph strip in the row and, when
+focused, a large selector panel — the chosen shape is backlit and expanded
+(`Canvas.wave_strip`, `wave_kinds`, `wave_points`; combos like Pulse+Saw
+overlay both traces). The web UI renders the same strip as clickable SVG
+buttons (`waveStrip` in control.html).
+
 **Frame hook:** pages that define `build_widget` never get `draw()` called;
 periodic work (config flush, throttle flush) lives in `on_tick(state)`.
 
