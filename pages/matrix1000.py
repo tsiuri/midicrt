@@ -397,10 +397,11 @@ def _entry_commit():
     elif mode == "bank":
         bank = max(0, min(9, num))
         _mark_save()
+        # like the VST: bank select twice, NO unlock (0x0C would undo it)
         ok = _send_sysex(DEV.bank_select_sysex(bank), f"BANK {bank}")
         if ok:
-            _send_sysex(DEV.bank_unlock_sysex(), f"BANK {bank}+unlock")
-            _status(f"bank {bank} selected (+unlock)")
+            _send_sysex(DEV.bank_select_sysex(bank), f"BANK {bank}")
+            _status(f"bank {bank} selected — now p:program to load a patch from it")
     elif mode == "program":
         program = max(0, min(99, num))
         _mark_save()

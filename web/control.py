@@ -270,7 +270,7 @@ class Matrix1000Session:
         if key == "bank":
             self.bank = max(0, min(9, int(arg)))
             self.out.sysex(M1K.bank_select_sysex(self.bank))
-            self.out.sysex(M1K.bank_unlock_sysex())
+            self.out.sysex(M1K.bank_select_sysex(self.bank))
         elif key == "program":
             self.program = max(0, min(99, int(arg)))
             self.out.program_change(self.channel, self.program)
