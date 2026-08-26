@@ -90,6 +90,13 @@ Pages: **18 LXP-1** (`*`), **19 Matrix-1000** (`(`), **20 TG77** (`)`),
 - ASCII ADSR curve beside Envelope 1-3 (web: live SVG).
 - `[`/`]` groups: DCO1, Global, DCO2, VCF, VCA, Tracking, Ramps, Env1-3, LFO1-2, Mod Matrix.
 - Default channel 2 ("Matrix-1k" in the rack list).
+- **Master (global) group** (last group, `]` from Mod Matrix): MIDI channel,
+  OMNI, Mono mode, controller/patch-change enables, MIDI echo, bend range,
+  master tune/transpose, vibrato (speed/wave/amp/mod), pedal & lever CC#s.
+  There is no per-parameter global edit opcode: entering the group pulls
+  the 172-byte master block (`04 03` request → `03H` dump) and every edit
+  writes the whole block back (coalesced). Needs Matrix OUT on the return
+  path. `E` re-pulls. Not on the web surface (no listener there).
 - **Acting mono?** The unit's MIDI-channel setting has values 1-16, OMNI and
   `G1`-`G9` (= MIDI Mono Mode on basic channel n; the display shows e.g.
   `G2`). Clear it by sending Mono Mode Off / Poly On (`CC127`, value 0) on
