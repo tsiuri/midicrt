@@ -90,6 +90,11 @@ Pages: **18 LXP-1** (`*`), **19 Matrix-1000** (`(`), **20 TG77** (`)`),
 - ASCII ADSR curve beside Envelope 1-3 (web: live SVG).
 - `[`/`]` groups: DCO1, Global, DCO2, VCF, VCA, Tracking, Ramps, Env1-3, LFO1-2, Mod Matrix.
 - Default channel 2 ("Matrix-1k" in the rack list).
+- **Acting mono?** The unit's MIDI-channel setting has values 1-16, OMNI and
+  `G1`-`G9` (= MIDI Mono Mode on basic channel n; the display shows e.g.
+  `G2`). Clear it by sending Mono Mode Off / Poly On (`CC127`, value 0) on
+  the basic channel — verified 2026-08-26 via the master-parameters dump
+  (`F0 10 06 04 03 00 F7` → global byte 35 "MIDI Mono Mode enable" went 1→0).
 
 ### Yamaha TG77 (page 20) — `devices/tg77.py`, `docs/tg77-port-notes.md`
 - Byte-exact port of TG77ControllerVST3 (28 hand-derived tests). Frame
