@@ -590,7 +590,8 @@ def _build_lines(cols):
     elif status_msg and time.time() - status_time < 6.0:
         lines.append(f" {status_msg}")
     else:
-        lines.append(" arrows:nudge Enter:type g:preset E:pull S/R:store/recall L:learn ,/.:ch c:unit-ch")
+        lines.append("")
+    lines.append(" arrows:nudge Enter:type g:preset E:pull S/R:store/recall L:learn ,/.:ch c:unit-ch")   # key legend: always on screen
     if last_tx:
         lines.append(f" tx: {last_tx}"[: max(20, cols - 1)])
     return lines

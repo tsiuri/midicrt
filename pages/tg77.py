@@ -428,7 +428,8 @@ def _build_lines(cols):
     elif status_msg and time.time() - status_time < 6.0:
         lines.append(f" {status_msg}")
     else:
-        lines.append(" [/]:group s:slot f:fltbank d:devnum x/v/X:panel Enter:type L:learn ,/.:ch")
+        lines.append("")
+    lines.append(" [/]:group s:slot f:fltbank d:devnum x/v/X:panel Enter:type L:learn ,/.:ch")   # key legend: always on screen
     if last_tx:
         lines.append(f" tx: {last_tx}"[: max(20, cols - 1)])
     return lines
