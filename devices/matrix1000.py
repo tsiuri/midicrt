@@ -293,3 +293,92 @@ def build_patch_dump(values, mod, name="PULLTEST", patch_num=0, cmd=0x0D):
         out.append((v >> 4) & 0x0F)
     out.append(sum(patchb) & 0x7F)
     return tuple(out)
+
+
+# ---------------------------------------------------------------------------
+# Master (global) parameters — manual "Master Parameter Data" (03H).
+#   F0 10 06 03 <version=03> <172 bytes as 344 nibbles, lo nibble first>
+#      <checksum = sum of the 172 raw bytes & 0x7F> F7
+#   request: F0 10 06 04 03 00 F7
+# There is no single-global-param edit opcode: edits are done by writing the
+# whole block back.  (Mono/Poly can also be flipped with CC126/CC127.)
+# ---------------------------------------------------------------------------
+
+MASTER_LEN = 172
+MASTER_VIB_WAVES = ["Triangle", "Saw Up", "Saw Down", "Square", "Random", "Noise", "S&H", "Reserved"]
+
+# (byte, id, label, min, max, signed, choices)
+MASTER_PARAMS = [
+    (11, "midiChannel", "MIDI Channel", 1, 16, False, None),
+    (12, "omni", "OMNI Mode", 0, 1, False, ["Off", "On"]),
+    (35, "monoMode", "MIDI Mono Mode", 0, 1, False, ["Off", "On"]),
+    (13, "ctrlEnable", "Controllers Enable", 0, 1, False, ["Off", "On"]),
+    (14, "pgmEnable", "Patch Changes Enable", 0, 1, False, ["Off", "On"]),
+    (32, "midiEcho", "MIDI Echo", 0, 1, False, ["Off", "On"]),
+    (164, "bendRange", "Bend Range", 0, 24, False, None),
+    (8, "masterTune", "Master Tune", -31, 31, True, None),
+    (34, "masterTranspose", "Master Transpose", -31, 31, True, None),
+    (1, "vibSpeed", "Vibrato Speed", 0, 63, False, None),
+    (4, "vibWave", "Vibrato Wave", 0, 7, False, MASTER_VIB_WAVES),
+    (5, "vibAmp", "Vibrato Amplitude", 0, 63, False, None),
+    (2, "vibSpeedSrc", "Vib Speed Mod Src", 0, 3, False, ["Off", "Src 1", "Src 2", "Src 3"]),
+    (3, "vibSpeedAmt", "Vib Speed Mod Amt", 0, 63, False, None),
+    (6, "vibAmpSrc", "Vib Amp Mod Src", 0, 3, False, ["Off", "Src 1", "Src 2", "Src 3"]),
+    (7, "vibAmpAmt", "Vib Amp Mod Amt", 0, 63, False, None),
+    (17, "pedal1CC", "Pedal 1 CC#", 0, 127, False, None),
+    (18, "pedal2CC", "Pedal 2 CC#", 0, 127, False, None),
+    (19, "lever2CC", "Lever 2 CC#", 0, 127, False, None),
+    (20, "lever3CC", "Lever 3 CC#", 0, 127, False, None),
+]
+
+
+def request_master_sysex():
+    return (0x10, 0x06, 0x04, 0x03, 0x00)
+
+
+def decode_master_dump(data):
+    """-> list of 172 raw bytes, or None. Accepts mido data or full frame."""
+    b = list(data)
+    if b and b[0] == 0xF0:
+        b = b[1:]
+    if b and b[-1] == 0xF7:
+        b = b[:-1]
+    if len(b) < 4 + 2 * MASTER_LEN + 1 or b[0] != 0x10 or b[1] != 0x06 or b[2] != 0x03:
+        return None
+    nib = b[4:4 + 2 * MASTER_LEN]
+    if any(n > 0x0F for n in nib):
+        return None
+    raw = [nib[2 * i] | (nib[2 * i + 1] << 4) for i in range(MASTER_LEN)]
+    if (sum(raw) & 0x7F) != b[4 + 2 * MASTER_LEN]:
+        return None
+    return raw
+
+
+def build_master_dump(raw, version=0x03):
+    raw = [int(v) & 0xFF for v in raw][:MASTER_LEN]
+    raw += [0] * (MASTER_LEN - len(raw))
+    out = [0x10, 0x06, 0x03, version & 0x7F]
+    for v in raw:
+        out.append(v & 0x0F)
+        out.append((v >> 4) & 0x0F)
+    out.append(sum(raw) & 0x7F)
+    return tuple(out)
+
+
+def master_get(raw, spec):
+    byte, _, _, mn, mx, signed, _ = spec
+    v = raw[byte]
+    if signed:
+        v = v - 256 if v >= 128 else v
+    if spec[1] == "midiChannel":
+        v = v + 1
+    return max(mn, min(mx, v))
+
+
+def master_set(raw, spec, value):
+    byte, _, _, mn, mx, signed, _ = spec
+    v = max(mn, min(mx, int(value)))
+    if spec[1] == "midiChannel":
+        v = v - 1
+    raw[byte] = v & 0xFF
+    return max(mn, min(mx, int(value)))
