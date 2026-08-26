@@ -98,7 +98,8 @@ class Lxp1Session:
         self.klass = str(cfg.get("param_class", "packed"))
         self.preset = int(cfg.get("preset", 0))
         self.program = LXP1.PRESETS[self.preset][1]
-        self.values: dict[str, int] = {}
+        self.values: dict[str, int] = {
+            f"p{k}": v for k, v in LXP1.factory_default_steps(self.preset).items()}
 
     def schema(self) -> dict:
         fields = []
@@ -148,7 +149,7 @@ class Lxp1Session:
         if key == "preset":
             self.preset = int(arg) % 16
             self.program = LXP1.PRESETS[self.preset][1]
-            self.values.clear()
+            self.values = {f"p{k}": v for k, v in LXP1.factory_default_steps(self.preset).items()}
             self.out.sysex(LXP1.setup_select_sysex(128 + self.preset, self.channel, self.klass))
         elif key == "recall":
             self.out.program_change(self.channel, int(arg))

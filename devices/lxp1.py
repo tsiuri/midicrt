@@ -142,3 +142,156 @@ def event_sysex(event, p, channel):
 def setup_select_sysex(setup, channel, klass="packed"):
     """setup 0-127 = registers, 128-144 = factory presets 0-15."""
     return param_adjust_sysex(PARAM_SETUP, setup, channel, klass)
+
+
+# ---------------------------------------------------------------------------
+# Factory preset defaults from the owner's manual program tables (p.2-9/2-10):
+# the two front-panel knob parameters (param 0 / param 1) as DISPLAY values,
+# plus Effects Level (param 2) which the manual says is always 100% in factory
+# presets. Other params are unknown until a dump is pulled.
+#   preset index -> {param#: display_value}
+# ---------------------------------------------------------------------------
+FACTORY_DEFAULTS = {
+    0:  {0: 0.8, 1: 16.0, 2: 100},    # Small 1
+    1:  {0: 1.2, 1: 16.0, 2: 100},    # Small 2
+    2:  {0: 1.2, 1: 33.0, 2: 100},    # Medium 1
+    3:  {0: 1.6, 1: 33.0, 2: 100},    # Medium 2
+    4:  {0: 2.2, 1: 33.0, 2: 100},    # Large 1
+    5:  {0: 2.4, 1: 33.0, 2: 100},    # Large 2
+    6:  {0: 1.6, 1: 33.0, 2: 100},    # Hall D
+    7:  {0: 2.6, 1: 33.0, 2: 100},    # Hall B
+    8:  {0: 1.8, 1: 33.0, 2: 100},    # Plate D
+    9:  {0: 1.7, 1: 0.0, 2: 100},     # Plate B
+    10: {0: 0.3 * 32, 8: 0.0, 2: 100},   # Inverse: size .3s (of 1..32 scale), predelay 0ms
+    11: {0: 250.0, 8: 0.0, 2: 100},   # Gate: time .25s, predelay 0ms
+    12: {0: 0.0, 1: 4.1, 2: 100},     # Chorus 1: feedback 0%, depth 4.1ms
+    13: {0: 93.0, 1: 0.0, 2: 100},    # Chorus 2: resonance 93%, tuning 0 semi
+    14: {0: 40.0, 1: 279.0, 2: 100},  # Delay 1: feedback 40%, group delay 279ms
+    15: {0: 25.0, 1: 9.8, 2: 100},    # Delay 2: feedback 25%, delay spacing 9.8ms
+}
+
+
+def display_to_step(param, disp):
+    lo, hi = param["dmin"], param["dmax"]
+    if hi == lo:
+        return 0
+    frac = (float(disp) - lo) / (hi - lo)
+    frac = max(0.0, min(1.0, frac))
+    return round(frac * (param["steps"] - 1))
+
+
+def factory_default_steps(preset):
+    """{param#: step} for a factory preset, in the preset's own algorithm."""
+    program = PRESETS[preset][1]
+    out = {}
+    for p in fields_for_program(program):
+        d = FACTORY_DEFAULTS.get(preset, {}).get(p["num"])
+        if d is not None:
+            out[p["num"]] = display_to_step(p, d)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Dumps: Active Setup Data (class 0n) / Stored Register (class 1n).
+# 7-in-8 packing (manual 4-9/4-10): 8 wire bytes -> 7 data bytes; the first
+# wire byte carries the MSBs (0 g7 f7 e7 d7 c7 b7 a7), then a6..a0 ... g6..g0.
+# 49 unpacked bytes: [0] prog ID, [1..20] params 0-9 as 16-bit little-endian,
+# [21..36] name, [37..40] patch sources, [41..44] dests, [45..48] scale factors.
+# Requires the unit's MIDI jack jumpered as OUT (factory = THRU) to ever be
+# transmitted; the request is class 3n event 60h.
+# ---------------------------------------------------------------------------
+
+def unpack_7in8(packed):
+    out = []
+    packed = list(packed)
+    for i in range(0, len(packed), 8):
+        chunk = packed[i:i + 8]
+        if len(chunk) < 2:
+            break
+        msbs = chunk[0]
+        for j, b in enumerate(chunk[1:]):
+            out.append((b & 0x7F) | (((msbs >> j) & 1) << 7))
+    return out
+
+
+def pack_7in8(data):
+    out = []
+    data = list(data)
+    for i in range(0, len(data), 7):
+        chunk = data[i:i + 7]
+        msbs = 0
+        for j, b in enumerate(chunk):
+            msbs |= ((b >> 7) & 1) << j
+        out.append(msbs)
+        out.extend(b & 0x7F for b in chunk)
+    return out
+
+
+def request_active_setup_sysex(channel):
+    n = (channel - 1) & 0x0F
+    return (0x06, 0x02, 0x30 | n, 0x60, 0x00)
+
+
+def decode_setup_dump(data):
+    """Decode an Active Setup (0n) or Stored Register (1n) dump. `data` =
+    mido sysex bytes (F0/F7 excluded) or full frame. Returns
+    {"program": pgm_id, "values16": {param#: v16}, "name": str,
+     "register": int|None} or None."""
+    b = list(data)
+    if b and b[0] == 0xF0:
+        b = b[1:]
+    if b and b[-1] == 0xF7:
+        b = b[:-1]
+    if len(b) < 4 or b[0] != 0x06 or b[1] != 0x02:
+        return None
+    klass = b[2] >> 4
+    if klass == 0x0:
+        count_idx, register = 3, None
+    elif klass == 0x1:
+        count_idx, register = 4, b[3]
+    else:
+        return None
+    count = b[count_idx]
+    packed = b[count_idx + 1:count_idx + 1 + count]
+    if len(packed) != count or count != 56:
+        return None
+    if (sum(packed) & 0x7F) != b[count_idx + 1 + count]:
+        return None
+    raw = unpack_7in8(packed)[:49]
+    if len(raw) < 49:
+        return None
+    values16 = {}
+    for p in range(10):
+        lo, hi = raw[1 + 2 * p], raw[2 + 2 * p]
+        values16[p] = lo | (hi << 8)
+    name = "".join(chr(c) if 32 <= c < 127 else " " for c in raw[21:37]).strip()
+    return {"program": raw[0], "values16": values16, "name": name,
+            "register": register}
+
+
+def build_setup_dump(program, values16, channel=1, name="TEST", register=None):
+    """Inverse of decode_setup_dump (tests / synthetic injection)."""
+    raw = [0] * 49
+    raw[0] = program & 0xFF
+    for p in range(10):
+        v = int(values16.get(p, 0x8000)) & 0xFFFF
+        raw[1 + 2 * p] = v & 0xFF
+        raw[2 + 2 * p] = v >> 8
+    for i, ch in enumerate(str(name)[:16].ljust(16)):
+        raw[21 + i] = ord(ch) & 0x7F
+    packed = pack_7in8(raw)
+    n = (channel - 1) & 0x0F
+    if register is None:
+        head = [0x06, 0x02, 0x00 | n, len(packed)]
+    else:
+        head = [0x06, 0x02, 0x10 | n, register & 0x7F, len(packed)]
+    return tuple(head + packed + [sum(packed) & 0x7F])
+
+
+def value16_to_step(param, v16):
+    if param["bipolar"]:
+        frac = (v16 - 0x4000) / 0x7FFF
+    else:
+        frac = (v16 - 0x8000) / 0x3FFF
+    frac = max(0.0, min(1.0, frac))
+    return round(frac * (param["steps"] - 1))

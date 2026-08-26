@@ -17,11 +17,14 @@
 #                      registers, 128-144 factory presets 0-15)
 #   , / .              MIDI channel down / up
 #   L                  arm knob-learn on the knobctl plugin (next CC binds)
+#   E                  pull the active setup dump into the GUI (needs the
+#                      unit's MIDI jack jumpered as OUT + cabled to UX16 IN)
 
 BACKGROUND = False
 PAGE_ID = 18
 PAGE_NAME = "LXP-1 Ctrl"
 
+import threading
 import time
 
 import mido
@@ -45,6 +48,8 @@ from ui.model import PageLinesWidget
 from devices.lxp1 import (
     ALGORITHMS, PRESETS, PARAM_SETUP, EVENT_STORE_REGISTER, P,
     fields_for_program, step_to_value16, param_adjust_sysex, event_sysex,
+    factory_default_steps, request_active_setup_sysex, decode_setup_dump,
+    value16_to_step,
 )
 
 # ---------------------------------------------------------------------------
@@ -63,6 +68,10 @@ preset = int(_cfg.get("preset", 0))              # factory preset 0-15
 # values[str(pgm)][str(param_num)] = last-sent step (device state is write-only
 # from our side for now, so unknown fields show "--")
 values = _cfg.get("values", {}) if isinstance(_cfg.get("values"), dict) else {}
+# a fresh program with no known values shows the manual's factory defaults
+def _seed_if_empty():
+    if not values.get(str(program)):
+        values[str(program)] = {str(k): v for k, v in factory_default_steps(preset).items()}
 output_hints = _cfg.get("output_hints", ["UX16", "USB MIDI", "MIDI 1"])
 # sysex parameter-adjust class: "packed" (0x2n, the format the PC1600 template
 # provably used on real units) or "nibble" (0x5n, manual-documented)
@@ -70,6 +79,7 @@ param_class = str(_cfg.get("param_class", "packed"))
 
 # expose for plugins/knobctl.py: notes from the little keyboard follow the page
 note_target_channel = channel
+_seed_if_empty()
 
 cursor = 0
 entry_mode = None       # None | "value" | "store" | "recall"
@@ -316,15 +326,21 @@ def _entry_commit():
             _status(f"recalled {label} (params now unknown)")
 
 
+def _seed_factory_defaults():
+    """Show the manual's documented factory values for the selected preset
+    (knob params + FX level); everything else stays unknown until pulled."""
+    values[str(program)] = {str(k): v for k, v in factory_default_steps(preset).items()}
+
+
 def _set_preset(idx):
     global preset, program, cursor
     preset = idx % 16
     program = PRESETS[preset][1]
     cursor = 0
-    values.pop(str(program), None)   # preset load resets device params
+    _seed_factory_defaults()
     _mark_save()
     if _send_param(PARAM_SETUP, 128 + preset):
-        _status(f"preset {preset}: {PRESETS[preset][0]} ({ALGORITHMS[program][0]})")
+        _status(f"preset {preset}: {PRESETS[preset][0]} ({ALGORITHMS[program][0]}) — manual defaults shown")
 
 
 def _send_program_change(pp):
@@ -357,6 +373,80 @@ def _channel_set_burst():
         _status(f"channel-set burst sent on ch{channel} (hold the MIDI button!)")
     except Exception as exc:
         _status(f"TX FAILED: {exc}")
+
+
+_pull_active = False
+
+
+def _apply_setup_dump(dec):
+    global program, cursor
+    pgm = dec["program"]
+    if pgm in ALGORITHMS:
+        program = pgm
+        cursor = 0
+    steps = {}
+    for p in fields_for_program(program):
+        v16 = dec["values16"].get(p["num"])
+        if v16 is not None:
+            steps[str(p["num"])] = value16_to_step(p, v16)
+    values[str(program)] = steps
+    _mark_save()
+    src = f"register {dec['register']}" if dec.get("register") is not None else "active setup"
+    _status(f"PULLED {src}: {dec.get('name') or '(unnamed)'} — {ALGORITHMS[program][0]}")
+
+
+def _pull_worker():
+    global _pull_active
+    inp = None
+    try:
+        target = None
+        names = list(mido.get_input_names())
+        for hint in output_hints:
+            hl = str(hint).lower()
+            for n in names:
+                if hl in n.lower():
+                    target = n
+                    break
+            if target:
+                break
+        if target is None:
+            _status("PULL: no MIDI input matching output hints")
+            return
+        inp = mido.open_input(target)
+        for _ in inp.iter_pending():
+            pass
+        if not _send_sysex(request_active_setup_sysex(channel)):
+            return
+        deadline = time.time() + 3.0
+        while time.time() < deadline:
+            for msg in inp.iter_pending():
+                if msg.type != "sysex":
+                    continue
+                dec = decode_setup_dump(msg.data)
+                if dec is not None:
+                    _apply_setup_dump(dec)
+                    return
+            time.sleep(0.02)
+        _status("PULL: no dump in 3s — LXP-1 jack must be jumpered as OUT and cabled to UX16 IN")
+    except Exception as exc:
+        _status(f"PULL failed: {exc}")
+    finally:
+        if inp is not None:
+            try:
+                inp.close()
+            except Exception:
+                pass
+        _pull_active = False
+
+
+def _start_pull():
+    global _pull_active
+    if _pull_active:
+        _status("pull already in progress")
+        return
+    _pull_active = True
+    _status("PULL: requesting active setup...")
+    threading.Thread(target=_pull_worker, daemon=True).start()
 
 
 def _arm_learn():
@@ -484,6 +574,9 @@ def keypress(key):
     if s == "L":
         _arm_learn()
         return True
+    if s == "E":
+        _start_pull()
+        return True
     if s == "T":
         _probe_toggle()
         return True
@@ -534,7 +627,7 @@ def _build_lines(cols):
     elif status_msg and time.time() - status_time < 6.0:
         lines.append(f" {status_msg}")
     else:
-        lines.append(" arrows:nudge Enter:type g:preset S/R:st/rcl L:learn ,/.:ch c:unit-ch T:probe")
+        lines.append(" arrows:nudge Enter:type g:preset E:pull S/R:st/rcl L:learn ,/.:ch c:unit-ch T:probe")
     if last_tx:
         lines.append(f" tx: {last_tx}"[: max(20, cols - 1)])
     return lines
