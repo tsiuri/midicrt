@@ -43,6 +43,7 @@ values = _cfg.get("values", {}) if isinstance(_cfg.get("values"), dict) else {}
 # mod matrix shadow: {"0": [src, amt, dst], ...}
 mod = _cfg.get("mod", {}) if isinstance(_cfg.get("mod"), dict) else {}
 output_hints = _cfg.get("output_hints", ["UX16", "USB MIDI", "MIDI 1"])
+edit_mode = str(_cfg.get("edit_mode", DEV.EDIT_MODE_DEFAULT))   # sysex | nrpn | both
 
 note_target_channel = channel
 
@@ -122,6 +123,7 @@ def _flush_save():
             save_section("matrix1000", {
                 "channel": channel, "bank": bank, "program": program,
                 "values": values, "mod": mod, "output_hints": output_hints,
+                "edit_mode": edit_mode,
             })
         except Exception:
             pass
@@ -167,14 +169,19 @@ def _tx(desc):
 
 
 def _send_nrpn(num, value):
+    """Parameter edit in the configured edit_mode (sysex by default — the
+    only mode stock v1.11 firmware honours)."""
     if not _ensure_out():
         _status(f"TX FAILED: {out_err}")
         return False
     try:
-        for cc, val in DEV.nrpn_cc_messages(num, value, channel):
-            out_port.send(mido.Message("control_change", control=cc, value=val,
-                                       channel=(channel - 1) & 0x0F))
-        _tx(f"NRPN p{num}={value} ch{channel}")
+        if edit_mode in ("sysex", "both"):
+            out_port.send(mido.Message("sysex", data=list(DEV.edit_param_sysex(num, value))))
+        if edit_mode in ("nrpn", "both"):
+            for cc, val in DEV.nrpn_cc_messages(num, value, channel):
+                out_port.send(mido.Message("control_change", control=cc, value=val,
+                                           channel=(channel - 1) & 0x0F))
+        _tx(f"{edit_mode.upper()} p{num}={value}")
         return True
     except Exception as exc:
         _status(f"TX FAILED: {exc}")
@@ -654,7 +661,7 @@ def _build_lines(cols):
     cur = min(cursor, len(flds) - 1)
     g = GROUPS[group_idx % len(GROUPS)]
     lines = [
-        f"--- Matrix-1000  ch{channel:02d}  bank {bank}  prog {program:02d}"
+        f"--- Matrix-1000  ch{channel:02d} {edit_mode}  bank {bank}  prog {program:02d}"
         f"  [{group_idx+1}/{len(GROUPS)}] {g} ---",
         f"out: {'ok' if out_port else out_err or '(closed)'}   knob: {_knob_status()}   {_map_text()}",
         "",

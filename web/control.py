@@ -193,6 +193,7 @@ class Matrix1000Session:
         self.program = int(cfg.get("program", 0))
         self.values: dict[str, int] = {}
         self.mod: dict[int, list[int]] = {}
+        self.edit_mode = str(cfg.get("edit_mode", M1K.EDIT_MODE_DEFAULT))
 
     def schema(self) -> dict:
         groups = []
@@ -258,8 +259,11 @@ class Matrix1000Session:
         _, _, _, _, mn, mx, _, _ = rows[0]
         v = max(mn, min(mx, int(value)))
         self.values[key] = v
-        for cc, val in M1K.nrpn_cc_messages(num, v, self.channel):
-            self.out.cc(self.channel, cc, val)
+        if self.edit_mode in ("sysex", "both"):
+            self.out.sysex(M1K.edit_param_sysex(num, v))
+        if self.edit_mode in ("nrpn", "both"):
+            for cc, val in M1K.nrpn_cc_messages(num, v, self.channel):
+                self.out.cc(self.channel, cc, val)
         return v
 
     def action(self, key: str, arg: Any):
