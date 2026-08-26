@@ -118,3 +118,118 @@ class Canvas:
         self.polyline(pts, GREEN_BRIGHT if focused else GREEN_MID, thick=2)
         if label:
             self.text(x + 4, y + 2, label, fg=GREEN_DIM)
+
+
+# ---------------------------------------------------------------------------
+# Waveform glyphs + selector strips
+# ---------------------------------------------------------------------------
+
+_NOISE_SEED = [0.1, 0.9, 0.3, 0.7, 0.5, 0.95, 0.2, 0.6, 0.85, 0.05, 0.4, 0.75,
+               0.25, 0.65, 0.15, 0.8, 0.45, 0.35, 0.9, 0.55]
+
+
+def wave_points(kind, n=32):
+    """Normalised (t 0..1, v 0..1) samples of one cycle of a waveform kind."""
+    import math
+    pts = []
+    k = kind.lower()
+    for i in range(n + 1):
+        t = i / n
+        if k in ("sine",):
+            v = 0.5 + 0.5 * math.sin(2 * math.pi * t)
+        elif k in ("tri", "triangle"):
+            v = 1 - abs((t * 2 + 0.5) % 2 - 1)
+        elif k in ("saw", "sawdown", "saw down"):
+            v = 1 - (t % 1.0)
+        elif k in ("sawup", "saw up"):
+            v = t % 1.0
+        elif k in ("square",):
+            v = 1.0 if (t % 1.0) < 0.5 else 0.0
+        elif k in ("pulse",):
+            v = 1.0 if (t % 1.0) < 0.25 else 0.0
+        elif k in ("noise",):
+            v = _NOISE_SEED[i % len(_NOISE_SEED)]
+        elif k in ("random",):
+            a, b = _NOISE_SEED[(i // 4) % 20], _NOISE_SEED[(i // 4 + 1) % 20]
+            v = a + (b - a) * ((i % 4) / 4.0)
+        elif k in ("sh", "s&h", "sample&hold", "sample & hold"):
+            v = _NOISE_SEED[(i // 5) % 20]
+        elif k in ("off",):
+            v = 0.5
+        else:   # unknown / reserved
+            v = 0.5
+        pts.append((t, v))
+    return pts
+
+
+def wave_kinds(label):
+    """'Pulse+Saw+Noise' -> ['pulse', 'saw', 'noise']; unknown -> ['?']."""
+    out = []
+    for part in str(label).split("+"):
+        p = part.strip().lower()
+        if p in ("off",):
+            out.append("off")
+        elif p.startswith("pulse"):
+            out.append("pulse")
+        elif p in ("saw", "sawtooth", "saw down"):
+            out.append("saw")
+        elif p == "saw up":
+            out.append("sawup")
+        elif p in ("square", "sqr"):
+            out.append("square")
+        elif p in ("triangle", "tri"):
+            out.append("tri")
+        elif p in ("random",):
+            out.append("random")
+        elif p in ("noise",):
+            out.append("noise")
+        elif p in ("s&h", "sample&hold", "sample & hold"):
+            out.append("sh")
+        elif p in ("sine",):
+            out.append("sine")
+        else:
+            out.append("?")
+    return out or ["?"]
+
+
+class _CanvasWaves:
+    pass
+
+
+def _wave_glyph(self, x, y, w, h, label, selected=False, focused=False):
+    """One waveform icon. selected = backlit (filled cell, dark trace)."""
+    cell_bg = (GREEN_BRIGHT if focused else GREEN_MID) if selected else self.bg
+    trace = BLACK if selected else (GREEN_MID if focused else GREEN_DIM)
+    self.rect(x, y, w, h, cell_bg)
+    if not selected:
+        self.outline(x, y, w, h, GREEN_GRID)
+    kinds = wave_kinds(label)
+    inner_x, inner_y, inner_w, inner_h = x + 2, y + 2, w - 4, h - 4
+    if inner_w < 4 or inner_h < 3:
+        return
+    for kind in kinds:
+        if kind == "off":
+            self.rect(inner_x, inner_y + inner_h // 2, inner_w, 1, trace)
+            continue
+        if kind == "?":
+            self.text(inner_x, inner_y, "?", fg=trace)
+            continue
+        pts = [(inner_x + int(t * inner_w), inner_y + int((1 - v) * (inner_h - 1)))
+               for t, v in wave_points(kind, n=max(8, inner_w // 2))]
+        self.polyline(pts, trace, thick=1 if h < 12 else 2)
+
+
+def _wave_strip(self, x, y, w, h, labels, selected, focused=False, expand=1.6):
+    """Row of waveform icons; the selected one is backlit and wider."""
+    n = max(1, len(labels))
+    unit = w / (n - 1 + expand) if n > 1 else w
+    px = x
+    for i, lab in enumerate(labels):
+        cw_ = unit * (expand if i == selected else 1.0)
+        self._wave_glyph(int(px), y, int(cw_) - 1, h, lab, selected=(i == selected), focused=focused)
+        px += cw_
+
+
+Canvas._wave_glyph = _wave_glyph
+Canvas.wave_glyph = _wave_glyph
+Canvas.wave_strip = _wave_strip

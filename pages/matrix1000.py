@@ -693,6 +693,14 @@ def _build_lines(cols):
         mark = ">" if i == cur else " "
         if f["choices"]:
             rows.append(f" {mark} {f['name']:<24s} <{_display(f, v)}>")
+            if ctrlgfx.is_wave_field(f["name"], f["choices"]):
+                sel = v - f["min"]
+                _gfx.append({"kind": "wavestrip", "row": row0 + i, "col": 28, "cols": 28, "rows": 1,
+                             "labels": list(f["choices"]), "selected": sel, "focused": i == cur})
+                if i == cur and not graph:
+                    _gfx.append({"kind": "wavestrip", "row": row0, "col": 58, "cols": 41, "rows": 5,
+                                 "labels": list(f["choices"]), "selected": sel, "focused": True,
+                                 "expand": 1.8, "title": f"{f['name']}: {_display(f, v)}"})
         else:
             rows.append(f" {mark} {f['name']:<24s} [{_bar(f, v)}] {_display(f, v):>6s}"
                          f"  ({f['min']}..{f['max']})")

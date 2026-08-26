@@ -476,7 +476,11 @@ def _build_lines(cols):
         mark = ">" if i == cur else " "
         if f["choices"]:
             rows.append(f" {mark} {f['name']:<22.22s} <{_display(f, v):>8.8s}>")
-            bars.append(None)
+            if ctrlgfx.is_wave_field(f["name"], f["choices"]):
+                bars.append({"wave": True, "labels": list(f["choices"]), "selected": v - f["min"],
+                             "focused": i == cur, "title": f"{f['name']}: {_display(f, v)}"})
+            else:
+                bars.append(None)
         else:
             rows.append(f" {mark} {f['name']:<22.22s} [{_bar(f, v)}]{_display(f, v):>4s}")
             span = f["max"] - f["min"]
@@ -492,7 +496,17 @@ def _build_lines(cols):
         lines.append(f"{left:<{width}s}{right}")
         for j, coloff in ((i, 0), (i + half, width)):
             if j < len(bars) and bars[j]:
-                _gfx.append({"kind": "bar", "row": row0 + i, "col": coloff + 26, "cols": 10, **bars[j]})
+                b = bars[j]
+                if b.get("wave"):
+                    _gfx.append({"kind": "wavestrip", "row": row0 + i, "col": coloff + 26, "cols": 11,
+                                 "rows": 1, "labels": b["labels"], "selected": b["selected"],
+                                 "focused": b["focused"]})
+                    if b["focused"] and g not in _OP_GROUPS:
+                        _gfx.append({"kind": "wavestrip", "row": row0 + half + 1, "col": 2, "cols": 60,
+                                     "rows": 5, "labels": b["labels"], "selected": b["selected"],
+                                     "focused": True, "expand": 1.8, "title": b["title"]})
+                else:
+                    _gfx.append({"kind": "bar", "row": row0 + i, "col": coloff + 26, "cols": 10, **b})
     if g in _OP_GROUPS:
         # AFM EG: HT hold at L0, rates R1..R4 to L1..L4, release RR1/RR2 to RL1/RL2
         gv = lambda sid: _get_value("op", sid) / 63.0
@@ -507,7 +521,7 @@ def _build_lines(cols):
                 (rate_w(gv("AfmEgRr2")), gv("AfmEgRl1"), gv("AfmEgRl2"))]
         _gfx.append({"kind": "env", "row": row0 + half + 1, "col": 2, "cols": 60, "rows": 8,
                      "segments": segs, "label": f"{g} AFM EG"})
-        lines.extend([""] * 9)
+    lines.extend([""] * 9)   # room for the EG plot / wave panel below the columns
     lines.append("")
     if entry_mode == "value":
         f = flds[cur]
