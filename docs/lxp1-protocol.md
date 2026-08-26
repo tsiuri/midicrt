@@ -108,3 +108,21 @@ patch sources (4), patch dests (4), scale factors (4).
   Delay 1/2) — encoded in `pages/lxp1.py` `PRESETS`; verify by ear.
 - Front-panel MIDI LED blinks continuously when knob positions don't match the
   loaded program — useful as visual confirmation that a remote load happened.
+
+## Verified against the unit with the jack jumpered as OUT (2026-08-25)
+
+- **Requests answer within ms**: class `3n` 60h (active setup), 62h/65h
+  (single param, packed/nibble reply), and the unit **transmits** packed param
+  changes (`2n`) when Decay/Delay/Program knobs move — exactly as manual 4-6.
+- **Active Setup Data write (`0n`, 56 packed bytes + sum) round-trips
+  exactly** — full setups can be pushed. Store-register event 70h + Program
+  Change recall work.
+- **Post-battery-loss RAM**: program ID reads 255, params 0xFFFF; setup
+  select (param 64 = 128+n) loads identical garbage for every preset — the
+  preset table is RAM initialised by the front-panel factory reset, not ROM
+  reads at recall time. Registers were rebuilt over MIDI instead
+  (`tools/lxp1-rebuild-registers.py`; images from
+  `devices.lxp1.factory_like_image`).
+- Jumper: **W2/W3 on the PCB behind the MIDI jack; W3 = THRU, W2 = OUT**.
+- Dump decoder (`decode_setup_dump`, 7-in-8 unpack, 49-byte layout) proven
+  against real hardware dumps.

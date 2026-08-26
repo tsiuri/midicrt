@@ -593,3 +593,8 @@ Examples:
 - **Android**: `mothership:~/projects/synth-controllers-android` — WebView shell
   APK (yt-remote-android no-Gradle pattern) → the /control URL. Built APK also
   at `\\192.168.0.187\samba_writeable\synth-controllers-debug.apk`.
+
+## Synth controllers — READ `docs/controllers.md` FIRST
+Architecture (devices/ → pages + web + Android), per-device pages 18-21,
+SMK-25 pairing lore, rack wiring, and the LXP-1 battery-loss/rebuild runbook
+all live there. Protocol notes: `docs/lxp1-protocol.md`, `docs/tg77-port-notes.md`.
