@@ -639,8 +639,9 @@ def _env_graph_lines(g):
     """ASCII envelope curve (delay/attack/decay/sustain/release) from the
     group's current shadow values."""
     base = _ENV_PARAM_BASE[g]
+    _defaults = {r[3]: r[6] for r in DEV.PARAMS}
     def val(off):
-        return int(values.get(str(base + off), 0))
+        return int(values.get(str(base + off), _defaults.get(base + off, 0)))
     delay, attack, decay, sustain, release, amp = (
         val(0), val(1), val(2), val(3), val(4), val(5))
     H, W = _GRAPH_H, _GRAPH_W
@@ -701,8 +702,9 @@ def _build_lines(cols):
                          "bipolar": f["min"] < 0, "focused": i == cur})
     if graph:
         base = _ENV_PARAM_BASE[g]
-        ev = lambda off: int(values.get(str(base + off), 0)) / 63.0
-        _gfx.append({"kind": "env", "row": row0, "col": 60, "cols": 38, "rows": 10,
+        _defaults = {r[3]: r[6] for r in DEV.PARAMS}
+        ev = lambda off: int(values.get(str(base + off), _defaults.get(base + off, 0))) / 63.0
+        _gfx.append({"kind": "env", "row": row0, "col": 58, "cols": 41, "rows": 10,
                      "segments": ctrlgfx.adsr_segments(ev(0), ev(1), ev(2), ev(3), ev(4), ev(5)),
                      "label": g})
     if graph:

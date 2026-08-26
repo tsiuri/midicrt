@@ -17,7 +17,7 @@ def paint(canvas, items):
         y = canvas.row_px(it["row"])
         if it["kind"] == "bar":
             w = it["cols"] * cw
-            canvas.hbar(x, y + 1, w, ch - 2, it.get("frac", 0.0),
+            canvas.hbar(x, y, w, ch, it.get("frac", 0.0),
                         bipolar=it.get("bipolar", False),
                         focused=it.get("focused", False),
                         unknown=it.get("unknown", False))

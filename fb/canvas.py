@@ -10,7 +10,7 @@ import numpy as np
 
 from fb.compositor import GREEN_BRIGHT, GREEN_MID, GREEN_DIM, BLACK, _rgb565
 
-GREEN_FAINT = _rgb565(0, 60, 20)
+GREEN_FAINT = _rgb565(0, 80, 26)
 GREEN_GRID = _rgb565(0, 40, 14)
 AMBER = _rgb565(255, 190, 40)
 AMBER_DIM = _rgb565(120, 90, 20)
@@ -23,6 +23,7 @@ class Canvas:
         self.H, self.W = self.buf.shape
         self.cw, self.ch = comp.char_w, comp.char_h
         self.y0 = y0_px
+        self.bg = getattr(comp, "_bg565", BLACK)
 
     # --- coordinate helpers -------------------------------------------------
     def col_px(self, col: int) -> int:
@@ -75,7 +76,7 @@ class Canvas:
     def hbar(self, x, y, w, h, frac, bipolar=False, focused=False, unknown=False):
         """Horizontal gauge. frac 0..1 (bipolar: 0.5 = centre)."""
         border = GREEN_BRIGHT if focused else GREEN_DIM
-        self.rect(x, y, w, h, BLACK)
+        self.rect(x, y, w, h, self.bg)
         self.outline(x, y, w, h, border)
         if unknown:
             for xx in range(x + 3, x + w - 3, 6):
@@ -98,7 +99,7 @@ class Canvas:
     def envelope(self, x, y, w, h, segments, peak=1.0, label=None, focused=False):
         """ADSR-style envelope plot. segments = [(width_weight, y_from, y_to)]
         with y in 0..1; draws grid, filled area, and the curve."""
-        self.rect(x, y, w, h, BLACK)
+        self.rect(x, y, w, h, self.bg)
         self.outline(x, y, w, h, GREEN_DIM)
         for gy in (0.25, 0.5, 0.75):
             self.rect(x + 1, y + int(h * gy), w - 2, 1, GREEN_GRID)
@@ -106,11 +107,12 @@ class Canvas:
         px = x + 2
         pts = [(px, y + h - 2)]
         inner_w = w - 4
+        inner_h = (h - 4) * 0.9
         for ww, ya, yb in segments:
             seg_w = ww / total * inner_w
-            pts.append((px, y + h - 2 - int(round(ya * (h - 4)))))
+            pts.append((px, y + h - 2 - int(round(ya * inner_h))))
             px += seg_w
-            pts.append((int(round(px)), y + h - 2 - int(round(yb * (h - 4)))))
+            pts.append((int(round(px)), y + h - 2 - int(round(yb * inner_h))))
         pts.append((int(round(px)), y + h - 2))
         self.fill_under(pts, y + h - 2, GREEN_FAINT)
         self.polyline(pts, GREEN_BRIGHT if focused else GREEN_MID, thick=2)
