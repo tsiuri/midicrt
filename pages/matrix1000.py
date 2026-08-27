@@ -28,7 +28,7 @@ from configutil import load_section, save_section
 from ui.model import PageLinesWidget, CanvasWidget
 from ui import ctrlgfx
 from devices import matrix1000 as DEV
-from devices.matrix1000_names import patch_name
+from devices.matrix1000_names import patch_name, bank_name
 
 MOD_GROUP = "Mod Matrix"
 MASTER_GROUP = "Master (global)"
@@ -761,7 +761,7 @@ def _build_lines(cols):
     pname = patch_name(bank, program)
     plabel = f" \"{pname}\"" if pname else ""
     lines = [
-        f"--- Matrix-1000  ch{channel:02d} {edit_mode}  bank {bank} prog {program:02d}{plabel}"
+        f"--- Matrix-1000  ch{channel:02d} {edit_mode}  bank {bank}({bank_name(bank)}) prog {program:02d}{plabel}"
         f"  [{group_idx+1}/{len(GROUPS)}] {g}{mnote} ---",
         f"out: {'ok' if out_port else out_err or '(closed)'}   knob: {_knob_status()}   {_map_text()}",
         "",

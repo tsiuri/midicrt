@@ -214,3 +214,21 @@ def patch_name(bank, program):
     if 0 <= idx < len(FACTORY_PATCH_NAMES):
         return FACTORY_PATCH_NAMES[idx]
     return ""
+
+
+BANK_NAMES = [
+    "Top 100 (factory)",     # 0
+    "Volume 2 (factory)",    # 1
+    "Synth #1",              # 2
+    "Synth #2",              # 3
+    "Woodwinds + Horns",     # 4
+    "Horns & Leads",         # 5
+    "Strings",               # 6
+    "Basses",                # 7
+    "FX & Perc",             # 8
+    "Keyboards",             # 9
+]
+
+
+def bank_name(bank):
+    return BANK_NAMES[bank] if 0 <= bank < len(BANK_NAMES) else ""

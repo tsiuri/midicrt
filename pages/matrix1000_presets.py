@@ -21,7 +21,7 @@ from midicrt import draw_line
 from configutil import load_section, save_section
 from ui.model import CanvasWidget
 from devices import matrix1000 as DEV
-from devices.matrix1000_names import FACTORY_PATCH_NAMES
+from devices.matrix1000_names import FACTORY_PATCH_NAMES, bank_name
 
 _cfg = {}
 try:
@@ -151,8 +151,8 @@ def _paint(canvas):
     idx = bank * 100 + cursor
     nm = FACTORY_PATCH_NAMES[idx] if 0 <= idx < len(FACTORY_PATCH_NAMES) else ""
     canvas.text(canvas.col_px(1), canvas.row_px(0),
-                f"Matrix-1000 PRESETS   bank {bank}   ch{channel:02d}   "
-                f"selected {bank}{cursor:02d}: {nm}", fg=GREEN_BRIGHT)
+                f"Matrix-1000 PRESETS   bank {bank}: {bank_name(bank)}   "
+                f"ch{channel:02d}   sel {bank}{cursor:02d}: {nm}", fg=GREEN_BRIGHT)
     canvas.text(canvas.col_px(1), canvas.row_px(1),
                 "arrows:move  Enter:LOAD to unit  [/]:bank  ,/.:ch", fg=GREEN_DIM)
     if status_msg and time.time() - status_time < 6.0:
@@ -180,7 +180,7 @@ def _lines():
     idx = bank * 100 + cursor
     nm = FACTORY_PATCH_NAMES[idx] if 0 <= idx < len(FACTORY_PATCH_NAMES) else ""
     # minimal tty fallback (the CRT uses the painter)
-    out = [f"Matrix-1000 presets  bank {bank}  ch{channel:02d}  "
+    out = [f"Matrix-1000 presets  bank {bank}: {bank_name(bank)}  ch{channel:02d}  "
            f"selected {bank}{cursor:02d}: {nm}",
            "arrows:move  Enter:load  [/]:bank"]
     for r in range(ROWS):
