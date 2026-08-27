@@ -33,6 +33,15 @@ from devices.matrix1000_names import patch_name, bank_name
 MOD_GROUP = "Mod Matrix"
 MASTER_GROUP = "Master (global)"
 
+# Consolidated pages: (page label, [device sub-groups shown on it]).
+GROUP_LAYOUT = [
+    ("Oscillators",          ["DCO 1", "Global", "DCO 2"]),
+    ("Filter / VCA",         ["VCF", "VCA"]),
+    ("Track / Ramp / Porta", ["Tracking", "Ramps / Portamento"]),
+    ("Envelopes 1-3",        ["Envelope 1", "Envelope 2", "Envelope 3"]),
+    ("LFO 1 & 2",            ["LFO 1", "LFO 2"]),
+]
+
 _cfg = {}
 try:
     _cfg = load_section("matrix1000") or {}
@@ -50,7 +59,8 @@ edit_mode = str(_cfg.get("edit_mode", DEV.EDIT_MODE_DEFAULT))   # sysex | nrpn |
 
 note_target_channel = channel
 
-GROUPS = DEV.groups() + [MOD_GROUP, MASTER_GROUP]
+GROUPS = [name for name, _ in GROUP_LAYOUT] + [MOD_GROUP, MASTER_GROUP]
+_LAYOUT = dict(GROUP_LAYOUT)
 master_raw = None          # 172-byte master block, pulled on demand
 _master_pull_active = False
 _master_status = "not pulled"
@@ -83,7 +93,7 @@ _gfx = []          # pixel geometry recorded by _build_lines for the compositor
 def _param_field(row):
     g, pid, name, num, mn, mx, dflt, ck = row
     return {
-        "kind": "param", "name": name, "num": num,
+        "kind": "param", "name": name, "num": num, "sub": g,
         "min": mn, "max": mx, "default": dflt,
         "choices": DEV.CHOICES.get(ck) if ck else None,
     }
@@ -114,7 +124,10 @@ def _fields():
         return _MOD_FIELDS
     if g == MASTER_GROUP:
         return _MASTER_FIELDS
-    return [_param_field(r) for r in DEV.params_in_group(g)]
+    out = []
+    for sub in _LAYOUT.get(g, [g]):
+        out.extend(_param_field(r) for r in DEV.params_in_group(sub))
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -766,23 +779,36 @@ def _build_lines(cols):
         f"out: {'ok' if out_port else out_err or '(closed)'}   knob: {_knob_status()}   {_map_text()}",
         "",
     ]
-    graph = _env_graph_lines(g) if g in _ENV_PARAM_BASE else None
     rows = []
     _gfx.clear()
     row0 = len(lines)
+    multi_sub = len({f.get("sub") for f in flds if f.get("sub")}) > 1
+    field_row = {}          # field index -> rendered row (relative to row0)
+    env_starts = {}         # env sub name -> rendered row
+    last_sub = None
+    rr = 0                  # rendered-row counter (relative to row0)
     for i, f in enumerate(flds):
+        sub = f.get("sub")
+        if multi_sub and sub and sub != last_sub:
+            rows.append(f"  == {sub} ==")
+            if sub in _ENV_PARAM_BASE:
+                env_starts[sub] = rr
+            rr += 1
+            last_sub = sub
         v = _get_value(f)
         mark = ">" if i == cur else " "
+        field_row[i] = rr
         if f["kind"] == "master" and master_raw is None:
             rows.append(f" {mark} {f['name']:<24s} --   (not pulled: needs Matrix OUT -> UX16 IN, then E)")
+            rr += 1
             continue
         if f["choices"]:
             rows.append(f" {mark} {f['name']:<24s} <{_display(f, v)}>")
             if ctrlgfx.is_wave_field(f["name"], f["choices"]):
                 sel = v - f["min"]
-                _gfx.append({"kind": "wavestrip", "row": row0 + i, "col": 28, "cols": 28, "rows": 1,
+                _gfx.append({"kind": "wavestrip", "row": row0 + rr, "col": 28, "cols": 28, "rows": 1,
                              "labels": list(f["choices"]), "selected": sel, "focused": i == cur})
-                if i == cur and not graph:
+                if i == cur:
                     _gfx.append({"kind": "wavestrip", "row": row0, "col": 58, "cols": 41, "rows": 5,
                                  "labels": list(f["choices"]), "selected": sel, "focused": True,
                                  "expand": 1.8, "title": f"{f['name']}: {_display(f, v)}"})
@@ -790,23 +816,18 @@ def _build_lines(cols):
             rows.append(f" {mark} {f['name']:<24s} [{_bar(f, v)}] {_display(f, v):>6s}"
                          f"  ({f['min']}..{f['max']})")
             span = f["max"] - f["min"]
-            _gfx.append({"kind": "bar", "row": row0 + i, "col": 28, "cols": 12,
+            _gfx.append({"kind": "bar", "row": row0 + rr, "col": 28, "cols": 12,
                          "frac": (v - f["min"]) / span if span else 0.0,
                          "bipolar": f["min"] < 0, "focused": i == cur})
-    if graph:
-        base = _ENV_PARAM_BASE[g]
-        _defaults = {r[3]: r[6] for r in DEV.PARAMS}
+        rr += 1
+    # envelope graphs: one per env sub-group on this page, aligned to its rows
+    _defaults = {r[3]: r[6] for r in DEV.PARAMS}
+    for sub, start in env_starts.items():
+        base = _ENV_PARAM_BASE[sub]
         ev = lambda off: int(values.get(str(base + off), _defaults.get(base + off, 0))) / 63.0
-        _gfx.append({"kind": "env", "row": row0, "col": 58, "cols": 41, "rows": 10,
+        _gfx.append({"kind": "env", "row": row0 + start, "col": 58, "cols": 41, "rows": 9,
                      "segments": ctrlgfx.adsr_segments(ev(0), ev(1), ev(2), ev(3), ev(4), ev(5)),
-                     "label": g})
-    if graph:
-        merged = []
-        for i in range(max(len(rows), len(graph))):
-            left = rows[i] if i < len(rows) else ""
-            right = graph[i] if i < len(graph) else ""
-            merged.append(f"{left:<58.58s}|{right}")
-        rows = merged
+                     "label": sub})
     lines.extend(rows)
     lines.append("")
     if entry_mode == "value":
