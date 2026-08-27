@@ -30,6 +30,7 @@ except Exception:
     _cfg = {}
 
 channel = int(_cfg.get("channel", DEV.DEFAULT_CHANNEL))
+note_target_channel = channel   # knobctl plays the SMK-25 to this channel
 bank = int(_cfg.get("bank", 0))            # 0-9, shared with the editor page
 cursor = int(_cfg.get("program", 0))       # 0-99 within the bank
 output_hints = _cfg.get("output_hints", ["UX16", "USB MIDI", "MIDI 1"])
@@ -108,7 +109,7 @@ def _load_selected():
 
 
 def keypress(key):
-    global cursor, bank, channel
+    global cursor, bank, channel, note_target_channel
     kname = key.name if getattr(key, "is_sequence", False) else ""
     s = "" if kname else str(key)
     row, col = cursor % ROWS, cursor // ROWS
@@ -137,9 +138,9 @@ def keypress(key):
         bank = (bank - 1) % 10
         _mark_save(); return True
     if s == ",":
-        channel = max(1, channel - 1); _mark_save(); return True
+        channel = max(1, channel - 1); note_target_channel = channel; _mark_save(); return True
     if s == ".":
-        channel = min(16, channel + 1); _mark_save(); return True
+        channel = min(16, channel + 1); note_target_channel = channel; _mark_save(); return True
     return False
 
 
