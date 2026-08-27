@@ -32,6 +32,15 @@ def paint(canvas, items):
             if it.get("title"):
                 from fb.canvas import GREEN_DIM
                 canvas.text(x, y + h + 2, it["title"], fg=GREEN_DIM)
+        elif it["kind"] == "wavebig":
+            w = it["cols"] * cw
+            h = it["rows"] * ch
+            canvas.wave_glyph(x, y, w, h, it["label"], selected=False,
+                              focused=it.get("focused", False))
+            if it.get("title"):
+                from fb.canvas import GREEN_DIM, GREEN_BRIGHT
+                canvas.text(x + 3, y + 3, it["title"],
+                            fg=GREEN_BRIGHT if it.get("focused") else GREEN_DIM)
         elif it["kind"] == "env":
             w = it["cols"] * cw
             h = it["rows"] * ch

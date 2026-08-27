@@ -783,21 +783,21 @@ def _build_lines(cols):
     _gfx.clear()
     row0 = len(lines)
     multi_sub = len({f.get("sub") for f in flds if f.get("sub")}) > 1
-    field_row = {}          # field index -> rendered row (relative to row0)
-    env_starts = {}         # env sub name -> rendered row
+    sub_starts = {}         # sub name -> rendered row (relative to row0)
+    wave_fields = []        # (sub, selected, choices, focused, name, value_str)
     last_sub = None
     rr = 0                  # rendered-row counter (relative to row0)
     for i, f in enumerate(flds):
         sub = f.get("sub")
+        if sub and sub not in sub_starts:
+            sub_starts[sub] = rr
         if multi_sub and sub and sub != last_sub:
             rows.append(f"  == {sub} ==")
-            if sub in _ENV_PARAM_BASE:
-                env_starts[sub] = rr
+            sub_starts[sub] = rr    # header row is the sub's start
             rr += 1
             last_sub = sub
         v = _get_value(f)
         mark = ">" if i == cur else " "
-        field_row[i] = rr
         if f["kind"] == "master" and master_raw is None:
             rows.append(f" {mark} {f['name']:<24s} --   (not pulled: needs Matrix OUT -> UX16 IN, then E)")
             rr += 1
@@ -808,10 +808,8 @@ def _build_lines(cols):
                 sel = v - f["min"]
                 _gfx.append({"kind": "wavestrip", "row": row0 + rr, "col": 28, "cols": 28, "rows": 1,
                              "labels": list(f["choices"]), "selected": sel, "focused": i == cur})
-                if i == cur:
-                    _gfx.append({"kind": "wavestrip", "row": row0, "col": 58, "cols": 41, "rows": 5,
-                                 "labels": list(f["choices"]), "selected": sel, "focused": True,
-                                 "expand": 1.8, "title": f"{f['name']}: {_display(f, v)}"})
+                wave_fields.append((f.get("sub"), sel, list(f["choices"]),
+                                    i == cur, f["name"], _display(f, v)))
         else:
             rows.append(f" {mark} {f['name']:<24s} [{_bar(f, v)}] {_display(f, v):>6s}"
                          f"  ({f['min']}..{f['max']})")
@@ -822,12 +820,18 @@ def _build_lines(cols):
         rr += 1
     # envelope graphs: one per env sub-group on this page, aligned to its rows
     _defaults = {r[3]: r[6] for r in DEV.PARAMS}
-    for sub, start in env_starts.items():
+    for sub in [s for s in sub_starts if s in _ENV_PARAM_BASE]:
         base = _ENV_PARAM_BASE[sub]
         ev = lambda off: int(values.get(str(base + off), _defaults.get(base + off, 0))) / 63.0
-        _gfx.append({"kind": "env", "row": row0 + start, "col": 58, "cols": 41, "rows": 9,
+        _gfx.append({"kind": "env", "row": row0 + sub_starts[sub], "col": 58, "cols": 41, "rows": 9,
                      "segments": ctrlgfx.adsr_segments(ev(0), ev(1), ev(2), ev(3), ev(4), ev(5)),
                      "label": sub})
+    # persistent waveform displays: one per wave field, aligned to its sub-group
+    for sub, sel, choices, focused, fname, vstr in wave_fields:
+        label = choices[sel] if 0 <= sel < len(choices) else "Off"
+        start = sub_starts.get(sub, 0)
+        _gfx.append({"kind": "wavebig", "row": row0 + start, "col": 58, "cols": 41, "rows": 9,
+                     "label": label, "focused": focused, "title": f"{fname}: {vstr}"})
     lines.extend(rows)
     lines.append("")
     if entry_mode == "value":
