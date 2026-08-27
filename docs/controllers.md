@@ -205,3 +205,19 @@ plain MIDI alone, in the background, permanently:
   paced sender; the hard parts are timing/glitch behaviour (the manual warns
   some params mute briefly when changed live) and merging with live knob
   input.
+
+## Pi-side config not in the repo (recreate if the Pi is reimaged)
+- **SMK-25 wireless clean-chord path**: `/etc/systemd/system/bluetooth.service.d/no-midi-plugin.conf`
+  (`bluetoothd -P midi` — bluez hands BLE-MIDI to PipeWire, whose parser keeps
+  chord note-offs); `~/.config/systemd/user/smk25-pwlink.service` (enabled, +
+  `loginctl enable-linger billie`) runs `tools/smk25-pwlink.sh`; `knobctl.input_hints`
+  in settings.json = `["Midi Through Port-0","SMK","M-VAVE"]`; `smk25-autoconnect`
+  service (root) powers/unblocks the adapter + reconnects. midicrt supervised by
+  `~/run_midicrt_supervised.sh` (wired into `~/.zprofile`).
+
+## Matrix-1000 factory patch names
+- `devices/matrix1000_names.py` — all 1000 factory names (banks 0-9 x 100),
+  parsed from the Matrix-1000 patchbook. Shown in the page + web header, e.g.
+  `bank 7 prog 04 "arp-2600"`. These are the KNOWN factory sound-set names; a
+  battery-generic unit (names read "BNKn: nn") still shows these as the slot
+  reference. Load the factory .syx into the unit if you want the sounds to match.

@@ -20,6 +20,7 @@ from typing import Any
 
 from devices import lxp1 as LXP1
 from devices import matrix1000 as M1K
+from devices.matrix1000_names import patch_name as _m1k_name
 from devices import tg77 as TG77
 from devices import bassstation as BSR
 from midimap_model import MapModel, SECTION as MAP_SECTION
@@ -225,7 +226,8 @@ class Matrix1000Session:
         return {
             "id": "matrix1000", "name": "Matrix-1000 (Oberheim)",
             "channel": self.channel,
-            "header": f"bank {self.bank}  program {self.program:02d}",
+            "header": (f"bank {self.bank}  program {self.program:02d}"
+                       + (f"  \"{_m1k_name(self.bank, self.program)}\"" if _m1k_name(self.bank, self.program) else "")),
             "legend": "sliders send NRPN live (paced) · Bank sends select+unlock · Program = patch 0-99"
                       " · Store writes edit buffer to bank/prog · Mod Matrix at the bottom",
             "groups": groups,
