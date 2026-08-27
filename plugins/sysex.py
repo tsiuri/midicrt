@@ -45,9 +45,22 @@ CMD_CAPABILITIES = 0x10
 
 MSG_DISPLAY_SECS = 5.0  # how long to show each command in the footer
 SYSEX_LOG_PATH = os.path.join(os.path.dirname(midicrt.__file__), "sysex.log")
-SYSEX_LOG_ALL = True  # log any incoming sysex (not just midicrt prefix)
 SYSEX_SPLIT_DIR = os.path.join(os.path.dirname(midicrt.__file__), "sysex.d")
-SYSEX_SPLIT_ENABLED = True
+
+# Config (section "sysex"). The per-message split-file writer is DEBUG tooling
+# that, left on, wrote one file per incoming sysex into an unbounded dir — with
+# controller dumps flooding in, the directory grew to thousands of files and
+# every new write stalled the scheduler (froze the GUI). So: split is OFF by
+# default, and bounded to split_max_files (oldest pruned) when enabled. The
+# single append-log stays on (cheap) but can be silenced too.
+try:
+    from configutil import load_section as _load_section
+    _sxcfg = _load_section("sysex") or {}
+except Exception:
+    _sxcfg = {}
+SYSEX_LOG_ALL = bool(_sxcfg.get("log_all", True))
+SYSEX_SPLIT_ENABLED = bool(_sxcfg.get("split_enabled", False))
+SYSEX_SPLIT_MAX_FILES = int(_sxcfg.get("split_max_files", 500))
 _sysex_seq = 0
 _tx_port = None
 
@@ -82,6 +95,16 @@ def _split_sysex(data, note="rx"):
         path = os.path.join(SYSEX_SPLIT_DIR, fname)
         with open(path, "w", encoding="utf-8") as f:
             f.write(full + "\n")
+        # bound the directory: prune oldest beyond the cap (checked cheaply,
+        # only every 64 writes, to avoid listing a big dir every message)
+        if SYSEX_SPLIT_MAX_FILES > 0 and (_sysex_seq & 0x3F) == 0:
+            files = sorted(f for f in os.listdir(SYSEX_SPLIT_DIR) if f.endswith(".syx"))
+            excess = len(files) - SYSEX_SPLIT_MAX_FILES
+            for old_f in files[:max(0, excess)]:
+                try:
+                    os.remove(os.path.join(SYSEX_SPLIT_DIR, old_f))
+                except Exception:
+                    pass
     except Exception:
         pass
 
