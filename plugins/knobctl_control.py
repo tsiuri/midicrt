@@ -9,7 +9,8 @@
 #     lo x3, hi x3, lo within a window); while active lo/hi step pages and every
 #     other note is swallowed; exited by holding lo+hi together for hold_s.
 #   * footer indicator — "BT ch3 *" style text with a short activity flash on
-#     ANY received message, reverse-video " BT CTRL " while in control mode.
+#     ANY received message, reverse-video " BT CTRL " while in control mode,
+#     blinking reverse-video " BT OFF " while the keyboard's link is down.
 #
 # Verdicts returned by note_on()/note_off():
 #   "forward"  pass the note to the rack as usual
@@ -24,13 +25,16 @@ HANDSHAKE = ("lo", "lo", "lo", "hi", "hi", "hi", "lo")
 
 class KeyboardControl:
     def __init__(self, lo=60, hi=72, window_s=5.0, hold_s=1.0, prefix_min=126,
-                 flash_s=0.12, sticky_channel=None, default_channel=1):
+                 flash_s=0.12, sticky_channel=None, default_channel=1,
+                 offline_blink=True, blink_s=0.5):
         self.lo = int(lo)
         self.hi = int(hi)
         self.window_s = float(window_s)
         self.hold_s = float(hold_s)
         self.prefix_min = int(prefix_min)
         self.flash_s = float(flash_s)
+        self.offline_blink = bool(offline_blink)
+        self.blink_s = float(blink_s)
         self.default_channel = int(default_channel)
         self.sticky_channel = int(sticky_channel) if sticky_channel else None
         self.in_control = False
@@ -87,10 +91,16 @@ class KeyboardControl:
         return False
 
     # ----- indicator ----------------------------------------------------
-    def indicator(self, now, source):
-        """(text, reverse). source: 'BT' | 'USB' | None (offline)."""
+    def indicator(self, now, source, connected=True):
+        """(text, reverse). source: 'BT' | 'USB' | None (no input port at all).
+        connected=False means the keyboard's actual link is down: the cell
+        becomes reverse-video " BT OFF ", blinking at blink_s unless
+        offline_blink is off (then it stays solid reverse)."""
         if source is None:
             return "BT off", False
+        if not connected:
+            on = True if not self.offline_blink else (int(now / self.blink_s) % 2 == 0)
+            return f" {source} OFF ", on
         if self.in_control:
             return f" {source} CTRL ", True
         flashing = self._last_msg_t is not None and now - self._last_msg_t < self.flash_s

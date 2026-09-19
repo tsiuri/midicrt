@@ -140,7 +140,14 @@ Pages: **18 LXP-1** (`*`), **19 Matrix-1000** (`(`), **20 TG77** (`)`),
   reverse-text page name: `BT ch3 *` / `USB ch3 *` — source (BLE via Midi
   Through / SMK25Mini, or the cabled name), sticky channel, and a `*` that
   lights for 120 ms on *any* received message, bound or not. `BT off` while
-  disconnected. `plugins/timeclock.py` keeps the last 11 columns clear for it.
+  disconnected (no input port at all). `plugins/timeclock.py` keeps the last 11 columns clear for it.
+  While the BLE link is actually down the cell becomes reverse ` BT OFF `,
+  blinking at 2 Hz — set `knobctl.offline_blink: false` for a solid cell.
+  Link state = a live connection object under `/sys/class/bluetooth/hci0/`
+  (`knobctl.link_probe_glob`, polled once a second; the SMK-25 is the only
+  bonded device so "any connection" means it). A bonded keyboard re-links in
+  under a second after `bluetoothctl disconnect`; to see the OFF cell for
+  real, power the keyboard off or `bluetoothctl block <MAC>` (then `unblock`).
 - **Keyboard-control mode (2026-09-19):** page switching from the keyboard
   alone. *Enter:* knob turned to max, then within 5 s tap lo-C x3, hi-C x3,
   lo-C (note numbers `knobctl.ctrl_note_lo`/`ctrl_note_hi`, default 60/72 —

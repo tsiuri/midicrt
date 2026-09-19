@@ -18,7 +18,8 @@
 #     5 s) enters a mode where lo/hi step pages and other notes are swallowed;
 #     hold lo+hi together 1 s to leave. Footer shows " BT CTRL " in reverse.
 #   * footer indicator — indicator() -> (text, reverse): "BT ch3 *" with a
-#     120 ms flash on ANY received message; "BT off" when disconnected.
+#     120 ms flash on ANY received message; blinking reverse " BT OFF " while
+#     the BLE link is down (config offline_blink=false -> solid reverse).
 #     State machine + rules: plugins/knobctl_control.py (unit-tested).
 #
 # The BLE keyboard comes and goes; a background thread rescans for the input
@@ -50,11 +51,32 @@ forward_notes = bool(_cfg.get("forward_notes", True))
 default_channel = int(_cfg.get("default_channel", 1))
 ctrl_note_lo = int(_cfg.get("ctrl_note_lo", 60))   # the two Cs of the handshake /
 ctrl_note_hi = int(_cfg.get("ctrl_note_hi", 72))   # chord-hold (note numbers)
+offline_blink = bool(_cfg.get("offline_blink", True))   # blink " BT OFF " when the link is down
+# Link-state probe: the kernel creates one hci0:<handle> object per live BLE
+# connection; the SMK-25 is the only bonded device, so "any connection" == it.
+link_probe_glob = str(_cfg.get("link_probe_glob", "/sys/class/bluetooth/hci0/hci0:*"))
+LINK_PROBE_INTERVAL_S = 1.0
 _ctl = KeyboardControl(
     lo=ctrl_note_lo, hi=ctrl_note_hi,
     sticky_channel=_cfg.get("sticky_channel"),
     default_channel=default_channel,
+    offline_blink=offline_blink,
 )
+_link_cache = (0.0, False)   # (checked_at, connected)
+
+
+def _link_up():
+    """True while a BLE connection exists on hci0 (cached, cheap sysfs glob)."""
+    global _link_cache
+    now = time.time()
+    if now - _link_cache[0] >= LINK_PROBE_INTERVAL_S:
+        try:
+            import glob
+            up = bool(glob.glob(link_probe_glob))
+        except Exception:
+            up = True   # probe broken: don't cry wolf
+        _link_cache = (now, up)
+    return _link_cache[1]
 
 _in_port = None
 _in_name = ""
@@ -91,6 +113,8 @@ def _save_cfg():
             "ctrl_note_lo": ctrl_note_lo,
             "ctrl_note_hi": ctrl_note_hi,
             "sticky_channel": _ctl.sticky_channel,
+            "offline_blink": offline_blink,
+            "link_probe_glob": link_probe_glob,
         })
     except Exception:
         pass
@@ -106,7 +130,9 @@ def _source():
 
 def indicator():
     """Footer cell, right end of the timer row: (text, reverse)."""
-    return _ctl.indicator(time.time(), _source())
+    src = _source()
+    connected = _link_up() if src != "USB" else True
+    return _ctl.indicator(time.time(), src, connected)
 
 
 def in_control_mode():

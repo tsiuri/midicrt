@@ -143,3 +143,30 @@ def test_indicator_in_control_mode_is_reverse():
     kc.knob(127, 0.0)
     _handshake(kc)
     assert kc.indicator(now=5.0, source="BT") == (" BT CTRL ", True)
+
+
+# ----- link state: the indicator must reflect the actual BLE connection -----
+
+def test_indicator_disconnected_is_reverse_and_blinks():
+    kc = KeyboardControl(lo=LO, hi=HI, offline_blink=True, blink_s=0.5)
+    assert kc.indicator(now=0.1, source="BT", connected=False) == (" BT OFF ", True)
+    assert kc.indicator(now=0.6, source="BT", connected=False) == (" BT OFF ", False)
+    assert kc.indicator(now=1.1, source="BT", connected=False) == (" BT OFF ", True)
+
+
+def test_indicator_disconnected_blink_can_be_disabled():
+    kc = KeyboardControl(lo=LO, hi=HI, offline_blink=False, blink_s=0.5)
+    assert kc.indicator(now=0.1, source="BT", connected=False) == (" BT OFF ", True)
+    assert kc.indicator(now=0.6, source="BT", connected=False) == (" BT OFF ", True)
+
+
+def test_indicator_disconnected_wins_over_control_mode():
+    kc = KeyboardControl(lo=LO, hi=HI, offline_blink=False)
+    kc.knob(127, 0.0)
+    _handshake(kc)
+    assert kc.indicator(now=5.0, source="BT", connected=False) == (" BT OFF ", True)
+
+
+def test_indicator_connected_keeps_normal_text():
+    kc = KeyboardControl(lo=LO, hi=HI)
+    assert kc.indicator(now=0.0, source="BT", connected=True) == ("BT ch1  ", False)
