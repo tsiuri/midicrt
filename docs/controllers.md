@@ -131,6 +131,26 @@ Pages: **18 LXP-1** (`*`), **19 Matrix-1000** (`(`), **20 TG77** (`)`),
   CC7 volume blip and "broke" the knob.
 - Keys forward to the current page's channel; the keyboard's 3-octave layer
   mode is its own setting.
+- **Sticky target (2026-09-19):** the channel of the last *controller* page you
+  visited (LXP-1, Matrix, TG77, Bass Station) keeps receiving the keyboard's
+  notes after you move to a neutral page. Persisted as
+  `knobctl.sticky_channel`; falls back to `default_channel` until a controller
+  page has been visited.
+- **Footer indicator (2026-09-19):** right end of the timer row, opposite the
+  reverse-text page name: `BT ch3 *` / `USB ch3 *` — source (BLE via Midi
+  Through / SMK25Mini, or the cabled name), sticky channel, and a `*` that
+  lights for 120 ms on *any* received message, bound or not. `BT off` while
+  disconnected. `plugins/timeclock.py` keeps the last 11 columns clear for it.
+- **Keyboard-control mode (2026-09-19):** page switching from the keyboard
+  alone. *Enter:* knob turned to max, then within 5 s tap lo-C x3, hi-C x3,
+  lo-C (note numbers `knobctl.ctrl_note_lo`/`ctrl_note_hi`, default 60/72 —
+  mind the octave shift). The taps still play through until the last one.
+  *In mode:* the footer cell becomes reverse ` BT CTRL `; lo-C = previous
+  page, hi-C = next page; every other note is swallowed; the knob still works.
+  *Exit:* hold lo-C + hi-C together (nothing else held) for 1 s. Rules live in
+  `plugins/knobctl_control.py` (tests: `tests/test_knobctl_control.py`).
+  Shell test rig without the keyboard: `aseqsend -p 14:0 "B0 15 7F"` (knob
+  max), then `"90 3C 40"` / `"80 3C 00"` taps — knobctl reads Midi Through Port-0.
 
 ## Wiring (rack, as of 2026-08-25)
 

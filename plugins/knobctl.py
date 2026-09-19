@@ -12,6 +12,14 @@
 #   * notes (+ pitchbend/aftertouch/sustain etc.) are forwarded to the rack
 #     output, rewritten to the current page's note_target_channel (1-16) when
 #     the page declares one — "the keyboard plays whatever I'm pointed at".
+#   * sticky target — the last controller page's channel keeps receiving notes
+#     on neutral pages (persisted as "sticky_channel").
+#   * keyboard-control mode — knob at max, then lo-C x3, hi-C x3, lo-C (within
+#     5 s) enters a mode where lo/hi step pages and other notes are swallowed;
+#     hold lo+hi together 1 s to leave. Footer shows " BT CTRL " in reverse.
+#   * footer indicator — indicator() -> (text, reverse): "BT ch3 *" with a
+#     120 ms flash on ANY received message; "BT off" when disconnected.
+#     State machine + rules: plugins/knobctl_control.py (unit-tested).
 #
 # The BLE keyboard comes and goes; a background thread rescans for the input
 # every few seconds and survives disconnects.
@@ -22,6 +30,7 @@ import time
 import mido
 
 from configutil import load_section, save_section
+from plugins.knobctl_control import KeyboardControl
 
 _cfg = {}
 try:
@@ -39,6 +48,13 @@ knob_cc = _cfg.get("knob_cc")            # int or None (unlearned)
 knob_mode = _cfg.get("knob_mode", "abs")  # "abs" | "rel2" (2's-complement relative)
 forward_notes = bool(_cfg.get("forward_notes", True))
 default_channel = int(_cfg.get("default_channel", 1))
+ctrl_note_lo = int(_cfg.get("ctrl_note_lo", 60))   # the two Cs of the handshake /
+ctrl_note_hi = int(_cfg.get("ctrl_note_hi", 72))   # chord-hold (note numbers)
+_ctl = KeyboardControl(
+    lo=ctrl_note_lo, hi=ctrl_note_hi,
+    sticky_channel=_cfg.get("sticky_channel"),
+    default_channel=default_channel,
+)
 
 _in_port = None
 _in_name = ""
@@ -72,9 +88,73 @@ def _save_cfg():
             "knob_mode": knob_mode,
             "forward_notes": forward_notes,
             "default_channel": default_channel,
+            "ctrl_note_lo": ctrl_note_lo,
+            "ctrl_note_hi": ctrl_note_hi,
+            "sticky_channel": _ctl.sticky_channel,
         })
     except Exception:
         pass
+
+
+def _source():
+    """'BT' | 'USB' | None — how the keyboard's input reaches us."""
+    if _in_port is None:
+        return None
+    n = _in_name.lower()
+    return "BT" if ("through" in n or "smk25mini" in n) else "USB"
+
+
+def indicator():
+    """Footer cell, right end of the timer row: (text, reverse)."""
+    return _ctl.indicator(time.time(), _source())
+
+
+def in_control_mode():
+    return _ctl.in_control
+
+
+def _user_activity():
+    """A mode change or page step counts as a keypress for screensaver/pagecycle."""
+    try:
+        import midicrt as _m
+        _m.wake_screensaver()
+        pc = _m._pagecycle_module()
+        if pc is not None:
+            pc.notify_keypress()
+    except Exception:
+        pass
+
+
+def _release_all():
+    """Send note-offs for everything we forwarded and still consider held."""
+    global _held
+    if _out_port is None:
+        _held = {}
+        return
+    for ch, notes in list(_held.items()):
+        for n in list(notes):
+            try:
+                _out_port.send(mido.Message("note_off", note=n, velocity=0, channel=ch - 1))
+            except Exception:
+                pass
+    _held = {}
+
+
+def _apply_verdict(verdict):
+    """Act on a KeyboardControl verdict. Returns True if the message is consumed."""
+    if verdict == "forward":
+        return False
+    if verdict == "enter":
+        _release_all()
+        _user_activity()
+    elif verdict in ("prev", "next"):
+        try:
+            import midicrt as _m
+            _m.switch_page_relative(-1 if verdict == "prev" else 1)
+        except Exception:
+            pass
+        _user_activity()
+    return True
 
 
 def arm_learn():
@@ -156,6 +236,19 @@ def _knob_delta(value):
 
 def _handle(msg):
     global _learn_armed, knob_cc, _last_knob_val
+    now = time.time()
+    if msg.type == "note_on" and msg.velocity > 0:
+        if _apply_verdict(_ctl.note_on(msg.note, now)):
+            return
+    elif msg.type in ("note_off", "note_on"):
+        if _apply_verdict(_ctl.note_off(msg.note, now)):
+            return
+    elif msg.type == "control_change" and knob_cc is not None and msg.control == knob_cc:
+        _ctl.knob(msg.value, now)
+    else:
+        _ctl.touch(now)
+        if _ctl.in_control:
+            return   # control mode: only the knob gets through
     if msg.type == "control_change":
         with _lock:
             if _learn_armed and time.time() - _learn_armed_at > LEARN_TIMEOUT_S:
@@ -202,8 +295,11 @@ def _handle(msg):
         _last_fwd_err = "no out port"
         return
     page = _current_page()
-    ch = getattr(page, "note_target_channel", None) or default_channel
-    ch = max(1, min(16, int(ch)))
+    prev_sticky = _ctl.sticky_channel
+    _ctl.observe_page_channel(getattr(page, "note_target_channel", None))
+    if _ctl.sticky_channel != prev_sticky:
+        _save_cfg()
+    ch = _ctl.target_channel()
     try:
         # Page (target channel) changed while notes are held: release them on
         # the old channel first, otherwise their note-offs land elsewhere.
@@ -249,6 +345,9 @@ def _worker():
                 _last_seen = time.time()
                 _handle(msg)
             now = time.time()
+            if _ctl.tick(now):          # chord-hold ended control mode
+                _release_all()
+                _user_activity()
             if not got and now - max(_last_seen, last_reopen) > IDLE_REOPEN_SECS:
                 try:
                     _in_port.close()

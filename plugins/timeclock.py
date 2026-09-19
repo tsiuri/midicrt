@@ -20,6 +20,9 @@ _state = globals().setdefault("_timeclock_state", {
     "blink_state": False,
 })
 
+# columns reserved at the right end of the row for knobctl.indicator()
+INDICATOR_RESERVE = 11
+
 def draw(state):
     import midicrt
     t = midicrt.term
@@ -82,6 +85,10 @@ def draw(state):
     if getattr(midicrt, "_page_locked", False):
         base_text = f"{base_text}  [PAGE-LOCK]"
     x = xmid - (len(base_text) // 2)
+    # The rightmost INDICATOR_RESERVE columns of this row belong to the BLE
+    # keyboard indicator (plugins/knobctl.py, drawn direct-to-compositor):
+    # never let a long line ([PAGE-LOCK], sysex status) run underneath it.
+    x = max(0, min(x, midicrt.SCREEN_COLS - INDICATOR_RESERVE - len(base_text)))
     sys.stdout.write(t.move_yx(y, x) + base_text.ljust(midicrt.SCREEN_COLS))
 
     # --- overlay reverse label safely ---

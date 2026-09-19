@@ -1338,6 +1338,20 @@ def _ui_loop_body():
                 fg=BLACK,
                 bg=GREEN_BRIGHT,
             )
+            # BLE keyboard indicator (plugins/knobctl.py), right end of the same
+            # row: activity flash + target channel, reverse while in control mode.
+            try:
+                _kc = next((p for p in PLUGINS if hasattr(p, "indicator")), None)
+                if _kc is not None:
+                    _itxt, _irev = _kc.indicator()
+                    _ix = max(0, _compositor.comp.cols - len(_itxt)) * _compositor.comp.char_w
+                    _iy = (SCREEN_ROWS - 3) * _compositor.comp.char_h
+                    if _irev:
+                        _compositor.comp.text(_ix, _iy, _itxt, fg=BLACK, bg=GREEN_BRIGHT)
+                    else:
+                        _compositor.comp.text(_ix, _iy, _itxt, fg=GREEN_BRIGHT, bg=BLACK)
+            except Exception:
+                pass
         if _compositor is not None and current_page == 1 and not _used_notes_page_cache:
             try:
                 y0_px = 3 * _compositor.comp.char_h

@@ -1,0 +1,145 @@
+"""Unit tests for plugins/knobctl_control.py — the BLE keyboard's control-mode
+state machine, sticky channel and footer indicator (pure Python, no MIDI)."""
+from __future__ import annotations
+
+import pytest
+
+from plugins.knobctl_control import KeyboardControl
+
+LO, HI = 60, 72
+
+
+def _handshake(kc, t0=0.0, step=0.2):
+    """Perform the enter handshake: lo x3, hi x3, lo. Returns list of verdicts."""
+    seq = [LO, LO, LO, HI, HI, HI, LO]
+    out = []
+    t = t0
+    for n in seq:
+        out.append(kc.note_on(n, t))
+        kc.note_off(n, t + 0.05)
+        t += step
+    return out
+
+
+def test_handshake_enters_control_mode():
+    kc = KeyboardControl(lo=LO, hi=HI)
+    kc.knob(127, 0.0)
+    verdicts = _handshake(kc)
+    assert verdicts[:-1] == ["forward"] * 6
+    assert verdicts[-1] == "enter"
+    assert kc.in_control
+
+
+def test_handshake_requires_knob_at_max():
+    kc = KeyboardControl(lo=LO, hi=HI)
+    kc.knob(100, 0.0)
+    verdicts = _handshake(kc)
+    assert verdicts == ["forward"] * 7
+    assert not kc.in_control
+
+
+def test_stray_note_resets_sequence():
+    kc = KeyboardControl(lo=LO, hi=HI)
+    kc.knob(127, 0.0)
+    kc.note_on(LO, 0.0); kc.note_off(LO, 0.05)
+    kc.note_on(LO, 0.2); kc.note_off(LO, 0.25)
+    assert kc.note_on(62, 0.4) == "forward"   # D breaks the pattern
+    kc.note_off(62, 0.45)
+    # remainder of what would have been a valid pattern
+    for i, n in enumerate([LO, HI, HI, HI, LO]):
+        assert kc.note_on(n, 0.6 + i * 0.2) == "forward"
+        kc.note_off(n, 0.65 + i * 0.2)
+    assert not kc.in_control
+
+
+def test_window_expiry_resets_sequence():
+    kc = KeyboardControl(lo=LO, hi=HI, window_s=5.0)
+    kc.knob(127, 0.0)
+    verdicts = _handshake(kc, t0=0.0, step=1.0)   # last tap lands at t=6.0 > window
+    assert verdicts[-1] == "forward"
+    assert not kc.in_control
+
+
+def test_control_mode_keys_step_pages_and_swallow_the_rest():
+    kc = KeyboardControl(lo=LO, hi=HI)
+    kc.knob(127, 0.0)
+    _handshake(kc)
+    assert kc.note_on(LO, 10.0) == "prev"
+    assert kc.note_off(LO, 10.1) == "swallow"
+    assert kc.note_on(HI, 10.2) == "next"
+    assert kc.note_off(HI, 10.3) == "swallow"
+    assert kc.note_on(64, 10.4) == "swallow"
+    assert kc.note_off(64, 10.5) == "swallow"
+
+
+def test_chord_hold_exits_after_hold_time():
+    kc = KeyboardControl(lo=LO, hi=HI, hold_s=1.0)
+    kc.knob(127, 0.0)
+    _handshake(kc)
+    kc.note_on(LO, 20.0)
+    kc.note_on(HI, 20.1)
+    assert kc.tick(20.6) is False
+    assert kc.in_control
+    assert kc.tick(21.1) is True
+    assert not kc.in_control
+
+
+def test_chord_hold_cancelled_by_third_key():
+    kc = KeyboardControl(lo=LO, hi=HI, hold_s=1.0)
+    kc.knob(127, 0.0)
+    _handshake(kc)
+    kc.note_on(LO, 20.0)
+    kc.note_on(HI, 20.1)
+    kc.note_on(64, 20.2)
+    assert kc.tick(21.5) is False
+    assert kc.in_control
+
+
+def test_chord_hold_does_nothing_outside_control_mode():
+    kc = KeyboardControl(lo=LO, hi=HI, hold_s=1.0)
+    kc.note_on(LO, 0.0)
+    kc.note_on(HI, 0.1)
+    assert kc.tick(2.0) is False
+    assert not kc.in_control
+
+
+def test_sticky_channel_follows_controller_pages_and_survives_neutral_pages():
+    kc = KeyboardControl(lo=LO, hi=HI, default_channel=1)
+    assert kc.target_channel() == 1
+    kc.observe_page_channel(3)
+    assert kc.target_channel() == 3
+    kc.observe_page_channel(None)      # moved to a neutral page
+    assert kc.target_channel() == 3
+    assert kc.sticky_channel == 3
+    kc.observe_page_channel(7)
+    assert kc.target_channel() == 7
+
+
+def test_sticky_channel_can_be_restored_from_config():
+    kc = KeyboardControl(lo=LO, hi=HI, default_channel=1, sticky_channel=5)
+    assert kc.target_channel() == 5
+
+
+def test_indicator_offline():
+    kc = KeyboardControl(lo=LO, hi=HI)
+    assert kc.indicator(now=0.0, source=None) == ("BT off", False)
+
+
+def test_indicator_flashes_on_any_message_then_clears():
+    kc = KeyboardControl(lo=LO, hi=HI, flash_s=0.12, default_channel=1)
+    kc.touch(1.0)
+    assert kc.indicator(now=1.05, source="BT") == ("BT ch1 *", False)
+    assert kc.indicator(now=1.30, source="BT") == ("BT ch1  ", False)
+
+
+def test_indicator_shows_source_and_sticky_channel():
+    kc = KeyboardControl(lo=LO, hi=HI)
+    kc.observe_page_channel(4)
+    assert kc.indicator(now=0.0, source="USB") == ("USB ch4  ", False)
+
+
+def test_indicator_in_control_mode_is_reverse():
+    kc = KeyboardControl(lo=LO, hi=HI)
+    kc.knob(127, 0.0)
+    _handshake(kc)
+    assert kc.indicator(now=5.0, source="BT") == (" BT CTRL ", True)
