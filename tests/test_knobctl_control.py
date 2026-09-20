@@ -229,3 +229,30 @@ def test_default_chord_hold_is_half_a_second():
     kc.note_on(HI, 20.0)
     assert kc.tick(20.4) is False
     assert kc.tick(20.55) is True
+
+
+# ----- reminder when the combo is right but the knob is not up ---------------
+
+def test_correct_combo_with_low_knob_shows_reverse_reminder_for_one_second():
+    kc = KeyboardControl(lo=LO, hi=HI, prefix_min=100)
+    kc.knob(60, 0.0)
+    verdicts = _handshake(kc, t0=1.0, step=0.2)      # last tap lands at t=2.2
+    assert verdicts[-1] == "forward" and not kc.in_control
+    assert kc.indicator(now=2.3, source="BT") == (" KNOB UNDER 100 ", True)
+    assert kc.indicator(now=3.1, source="BT") == (" KNOB UNDER 100 ", True)
+    assert kc.indicator(now=3.3, source="BT")[1] is False      # back to normal
+
+
+def test_correct_combo_with_knob_never_seen_says_turn_knob_up():
+    kc = KeyboardControl(lo=LO, hi=HI, prefix_min=100)   # no knob() call: position unknown
+    _handshake(kc, t0=1.0, step=0.2)
+    assert kc.indicator(now=2.3, source="BT") == (" TURN KNOB UP ", True)
+
+
+def test_wrong_combo_shows_no_reminder():
+    kc = KeyboardControl(lo=LO, hi=HI, prefix_min=100)
+    kc.knob(60, 0.0)
+    t = 1.0
+    for n in [LO, LO, HI, HI, HI, LO, LO]:
+        kc.note_on(n, t); kc.note_off(n, t + 0.05); t += 0.2
+    assert kc.indicator(now=t, source="BT")[1] is False

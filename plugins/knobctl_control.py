@@ -43,6 +43,8 @@ class KeyboardControl:
         self._held = set()         # notes currently down (all modes)
         self._chord_since = None   # when lo+hi (and nothing else) became held
         self._last_msg_t = None
+        self._knob_warn_t = None   # when a correct combo was refused for the knob
+        self.warn_s = 1.0
 
     # ----- inputs -------------------------------------------------------
     def touch(self, now):
@@ -103,6 +105,10 @@ class KeyboardControl:
             return f" {source} OFF ", on
         if self.in_control:
             return f" {source} CTRL ", True
+        if self._knob_warn_t is not None and now - self._knob_warn_t < self.warn_s:
+            if self._knob_value is None:      # not seen since startup: position unknown
+                return " TURN KNOB UP ", True
+            return f" KNOB UNDER {self.prefix_min} ", True
         flashing = self._last_msg_t is not None and now - self._last_msg_t < self.flash_s
         dot = "*" if flashing else " "
         return f"{source} ch{self.target_channel()} {dot}", False
@@ -130,6 +136,8 @@ class KeyboardControl:
         if now - self._taps[0][1] > self.window_s:
             return "forward"
         if self._knob_value is None or self._knob_value < self.prefix_min:
+            # right combo, knob not up: remind on the footer for warn_s
+            self._knob_warn_t = now
             return "forward"
         self._reset_seq()
         self.in_control = True

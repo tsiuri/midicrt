@@ -156,6 +156,10 @@ Pages: **18 LXP-1** (`*`), **19 Matrix-1000** (`(`), **20 TG77** (`)`),
   `ctrl_note_hi`, default **48/60** = what this keyboard's two Cs really send;
   mind the octave shift). Matching is on the LAST seven taps, so a fumbled
   start (an extra tap) still works; a real combo takes ~1.6-2.1 s. The taps still play through until the last one.
+  If the combo is right but the knob is not up, the cell shows reverse
+  ` KNOB UNDER 100 ` for 1 s — or ` TURN KNOB UP ` when the knob has not been
+  seen since startup (**after every relaunch the knob position is unknown
+  until it moves once**).
   *In mode:* the footer cell becomes reverse ` BT CTRL `; lo-C = previous
   page, hi-C = next page; every other note is swallowed; the knob still works.
   *Exit:* hold lo-C + hi-C together (nothing else held) for 0.5 s
