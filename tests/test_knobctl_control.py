@@ -32,7 +32,7 @@ def test_handshake_enters_control_mode():
 
 def test_handshake_requires_knob_at_max():
     kc = KeyboardControl(lo=LO, hi=HI)
-    kc.knob(100, 0.0)
+    kc.knob(60, 0.0)
     verdicts = _handshake(kc)
     assert verdicts == ["forward"] * 7
     assert not kc.in_control
@@ -170,3 +170,52 @@ def test_indicator_disconnected_wins_over_control_mode():
 def test_indicator_connected_keeps_normal_text():
     kc = KeyboardControl(lo=LO, hi=HI)
     assert kc.indicator(now=0.0, source="BT", connected=True) == ("BT ch1  ", False)
+
+
+# ----- tuned against the real SMK-25 capture of 2026-09-20 -----------------
+# (knob = CC7 and rests around 119 after being "turned all the way up";
+#  the player's two Cs are notes 48 and 60; a full combo takes ~1.6-2.1 s)
+
+def test_fumbled_start_still_enters_on_the_last_seven_taps():
+    kc = KeyboardControl(lo=LO, hi=HI)
+    kc.knob(127, 0.0)
+    t = 0.0
+    verdicts = []
+    for n in [LO, LO, LO, LO, HI, HI, HI, LO]:      # one low C too many
+        verdicts.append(kc.note_on(n, t)); kc.note_off(n, t + 0.05); t += 0.2
+    assert verdicts[-1] == "enter"
+    assert kc.in_control
+
+
+def test_real_captured_combo_enters_with_default_knob_threshold():
+    # capture group at t=224.58: gaps 0.25 0.14 0.37 0.25 0.20 0.45, knob resting at 119
+    kc = KeyboardControl(lo=48, hi=60)
+    kc.knob(119, 0.0)
+    times = [0.0, 0.25, 0.39, 0.76, 1.01, 1.21, 1.66]
+    notes = [48, 48, 48, 60, 60, 60, 48]
+    verdicts = []
+    for t, n in zip(times, notes):
+        verdicts.append(kc.note_on(n, t)); kc.note_off(n, t + 0.1)
+    assert verdicts[-1] == "enter"
+
+
+def test_knob_turned_down_before_the_last_tap_blocks_entry():
+    kc = KeyboardControl(lo=LO, hi=HI)
+    kc.knob(127, 0.0)
+    t = 0.0
+    for n in [LO, LO, LO, HI, HI, HI]:
+        kc.note_on(n, t); kc.note_off(n, t + 0.05); t += 0.2
+    kc.knob(10, t)
+    assert kc.note_on(LO, t + 0.1) == "forward"
+    assert not kc.in_control
+
+
+def test_taps_before_leaving_control_mode_do_not_count_toward_reentry():
+    kc = KeyboardControl(lo=LO, hi=HI, hold_s=1.0)
+    kc.knob(127, 0.0)
+    _handshake(kc)
+    kc.note_on(LO, 10.0); kc.note_on(HI, 10.1)
+    assert kc.tick(11.2) is True
+    kc.note_off(LO, 11.3); kc.note_off(HI, 11.3)
+    assert kc.note_on(LO, 11.5) == "forward"      # a single tap must not re-enter
+    assert not kc.in_control

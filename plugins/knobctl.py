@@ -49,8 +49,12 @@ knob_cc = _cfg.get("knob_cc")            # int or None (unlearned)
 knob_mode = _cfg.get("knob_mode", "abs")  # "abs" | "rel2" (2's-complement relative)
 forward_notes = bool(_cfg.get("forward_notes", True))
 default_channel = int(_cfg.get("default_channel", 1))
-ctrl_note_lo = int(_cfg.get("ctrl_note_lo", 60))   # the two Cs of the handshake /
-ctrl_note_hi = int(_cfg.get("ctrl_note_hi", 72))   # chord-hold (note numbers)
+# Measured from the real SMK-25 (capture 2026-09-20): its two Cs send notes 48
+# and 60, the knob is CC7 and rests around 119 after being turned "all the way
+# up" — hence the 100 threshold rather than 127.
+ctrl_note_lo = int(_cfg.get("ctrl_note_lo", 48))   # the two Cs of the handshake /
+ctrl_note_hi = int(_cfg.get("ctrl_note_hi", 60))   # chord-hold (note numbers)
+ctrl_knob_min = int(_cfg.get("ctrl_knob_min", 100))  # knob value that arms the handshake
 offline_blink = bool(_cfg.get("offline_blink", True))   # blink " BT OFF " when the link is down
 # Link-state probe: the kernel creates one hci0:<handle> object per live BLE
 # connection; the SMK-25 is the only bonded device, so "any connection" == it.
@@ -61,6 +65,7 @@ _ctl = KeyboardControl(
     sticky_channel=_cfg.get("sticky_channel"),
     default_channel=default_channel,
     offline_blink=offline_blink,
+    prefix_min=ctrl_knob_min,
 )
 _link_cache = (0.0, False)   # (checked_at, connected)
 
@@ -112,6 +117,7 @@ def _save_cfg():
             "default_channel": default_channel,
             "ctrl_note_lo": ctrl_note_lo,
             "ctrl_note_hi": ctrl_note_hi,
+            "ctrl_knob_min": ctrl_knob_min,
             "sticky_channel": _ctl.sticky_channel,
             "offline_blink": offline_blink,
             "link_probe_glob": link_probe_glob,

@@ -126,9 +126,11 @@ Pages: **18 LXP-1** (`*`), **19 Matrix-1000** (`(`), **20 TG77** (`)`),
   knobctl's "SMK" hint grabs it. `smk25-autoconnect.service` reconnects the
   bonded keyboard every 15 s if dropped; knobctl reopens its input after 20 s
   of silence (BLE reconnects kill the subscription silently).
-- Knob binding lives in `settings.json → knobctl.knob_cc` (21 on this keyboard).
-  Learn (`L`) arms for 20 s only — a stale learn once grabbed the keyboard's
-  CC7 volume blip and "broke" the knob.
+- Knob binding lives in `settings.json → knobctl.knob_cc`. **The knob is CC7**
+  (measured 2026-09-20 from a timestamped capture: 230 CC7 messages sweeping
+  0..127; an earlier note here claiming CC21 was wrong, and "fixing" the
+  binding to 21 broke the knob for a day). It rests around 119 after being
+  turned "all the way up". Learn (`L`) arms for 20 s only.
 - Keys forward to the current page's channel; the keyboard's 3-octave layer
   mode is its own setting.
 - **Sticky target (2026-09-19):** the channel of the last *controller* page you
@@ -149,15 +151,19 @@ Pages: **18 LXP-1** (`*`), **19 Matrix-1000** (`(`), **20 TG77** (`)`),
   under a second after `bluetoothctl disconnect`; to see the OFF cell for
   real, power the keyboard off or `bluetoothctl block <MAC>` (then `unblock`).
 - **Keyboard-control mode (2026-09-19):** page switching from the keyboard
-  alone. *Enter:* knob turned to max, then within 5 s tap lo-C x3, hi-C x3,
-  lo-C (note numbers `knobctl.ctrl_note_lo`/`ctrl_note_hi`, default 60/72 —
-  mind the octave shift). The taps still play through until the last one.
+  alone. *Enter:* knob turned up (>= `knobctl.ctrl_knob_min`, default 100), then
+  within 5 s tap lo-C x3, hi-C x3, lo-C (note numbers `knobctl.ctrl_note_lo`/
+  `ctrl_note_hi`, default **48/60** = what this keyboard's two Cs really send;
+  mind the octave shift). Matching is on the LAST seven taps, so a fumbled
+  start (an extra tap) still works; a real combo takes ~1.6-2.1 s. The taps still play through until the last one.
   *In mode:* the footer cell becomes reverse ` BT CTRL `; lo-C = previous
   page, hi-C = next page; every other note is swallowed; the knob still works.
   *Exit:* hold lo-C + hi-C together (nothing else held) for 1 s. Rules live in
   `plugins/knobctl_control.py` (tests: `tests/test_knobctl_control.py`).
-  Shell test rig without the keyboard: `aseqsend -p 14:0 "B0 15 7F"` (knob
-  max), then `"90 3C 40"` / `"80 3C 00"` taps — knobctl reads Midi Through Port-0.
+  Tuning dataset: capture with a mido logger on Midi Through Port-0 and tune
+  against the player's real timing (tests replay the 2026-09-20 capture).
+  Shell test rig without the keyboard: `aseqsend -p 14:0 "B0 07 77"` (knob
+  up), then `"90 30 40"` / `"80 30 00"` (lo) and `3C` (hi) taps — knobctl reads Midi Through Port-0.
 
 ## Wiring (rack, as of 2026-08-25)
 

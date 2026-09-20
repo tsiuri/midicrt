@@ -24,7 +24,7 @@ HANDSHAKE = ("lo", "lo", "lo", "hi", "hi", "hi", "lo")
 
 
 class KeyboardControl:
-    def __init__(self, lo=60, hi=72, window_s=5.0, hold_s=1.0, prefix_min=126,
+    def __init__(self, lo=60, hi=72, window_s=5.0, hold_s=1.0, prefix_min=100,
                  flash_s=0.12, sticky_channel=None, default_channel=1,
                  offline_blink=True, blink_s=0.5):
         self.lo = int(lo)
@@ -39,8 +39,7 @@ class KeyboardControl:
         self.sticky_channel = int(sticky_channel) if sticky_channel else None
         self.in_control = False
         self._knob_value = None
-        self._seq_pos = 0          # how many handshake steps matched so far
-        self._seq_t0 = None        # time of the first matched tap
+        self._taps = []            # recent note-on taps: (kind, time), newest last
         self._held = set()         # notes currently down (all modes)
         self._chord_since = None   # when lo+hi (and nothing else) became held
         self._last_msg_t = None
@@ -87,6 +86,7 @@ class KeyboardControl:
                 and now - self._chord_since >= self.hold_s:
             self.in_control = False
             self._chord_since = None
+            self._reset_seq()
             return True
         return False
 
@@ -116,25 +116,25 @@ class KeyboardControl:
             self._chord_since = None
 
     def _advance_handshake(self, note, now):
-        want = HANDSHAKE[self._seq_pos] if self._seq_pos < len(HANDSHAKE) else None
-        got = "lo" if note == self.lo else "hi" if note == self.hi else None
-        if self._seq_pos == 0:
-            prefix_ok = self._knob_value is not None and self._knob_value >= self.prefix_min
-            if got == "lo" and prefix_ok:
-                self._seq_pos = 1
-                self._seq_t0 = now
+        """Sliding match: the LAST len(HANDSHAKE) taps must be the pattern,
+        inside window_s, with the knob up when the final tap lands. A fumbled
+        start (one tap too many) therefore still enters; any stray note sits
+        in the ring and breaks the match until it scrolls out."""
+        kind = "lo" if note == self.lo else "hi" if note == self.hi else "x"
+        self._taps.append((kind, now))
+        self._taps = self._taps[-len(HANDSHAKE):]
+        if len(self._taps) < len(HANDSHAKE):
             return "forward"
-        if now - self._seq_t0 > self.window_s or got != want:
-            self._reset_seq()
+        if tuple(k for k, _ in self._taps) != HANDSHAKE:
             return "forward"
-        self._seq_pos += 1
-        if self._seq_pos == len(HANDSHAKE):
-            self._reset_seq()
-            self.in_control = True
-            self._chord_since = None
-            return "enter"
-        return "forward"
+        if now - self._taps[0][1] > self.window_s:
+            return "forward"
+        if self._knob_value is None or self._knob_value < self.prefix_min:
+            return "forward"
+        self._reset_seq()
+        self.in_control = True
+        self._chord_since = None
+        return "enter"
 
     def _reset_seq(self):
-        self._seq_pos = 0
-        self._seq_t0 = None
+        self._taps = []
