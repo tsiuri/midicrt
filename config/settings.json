@@ -222,7 +222,7 @@
     "idle_scroll_bpm": 120.0,
     "out_range_hold": 2.5,
     "pixel_style": "text",
-    "projection_mode": "beat"
+    "projection_mode": "tempo_relative"
   },
   "pianoroll_exp": {
     "memory_max_sessions": 32,
@@ -276,9 +276,9 @@
   },
   "audiospectrum": {
     "lowcut_hz": 30.0,
-    "hpf_on": true,
-    "display_scale": 0.9917515139074456,
-    "floor_db": -115.0,
+    "hpf_on": false,
+    "display_scale": 0.9999999999999982,
+    "floor_db": -120.0,
     "ceil_db": 15.0,
     "freq_scale": "log",
     "agg_mode": "max",
@@ -289,5 +289,278 @@
   },
   "escape_menu": {
     "visible_rows": 10
+  },
+  "knobctl": {
+    "input_hints": [
+      "Midi Through Port-0",
+      "SMK",
+      "M-VAVE"
+    ],
+    "output_hints": [
+      "UX16",
+      "USB MIDI",
+      "MIDI 1"
+    ],
+    "knob_cc": 7,
+    "knob_mode": "abs",
+    "forward_notes": true,
+    "default_channel": 1,
+    "ctrl_note_lo": 48,
+    "ctrl_note_hi": 60,
+    "ctrl_knob_min": 100,
+    "ctrl_hold_s": 0.5,
+    "ctrl_keys": {
+      "50": "KEY_UP",
+      "52": "KEY_DOWN",
+      "53": "KEY_LEFT",
+      "55": "KEY_RIGHT",
+      "57": "KEY_ENTER",
+      "59": "KEY_ESCAPE"
+    },
+    "ctrl_octaves": [
+      -1,
+      0,
+      1
+    ],
+    "ctrl_repeat_delay_s": 0.4,
+    "ctrl_repeat_interval_s": 0.125,
+    "sticky_channel": 2,
+    "offline_blink": true,
+    "link_probe_glob": "/sys/class/bluetooth/hci0/hci0:*"
+  },
+  "midimap": {
+    "mappings": []
+  },
+  "matrix1000": {
+    "channel": 2,
+    "bank": 1,
+    "program": 56,
+    "values": {
+      "80": 7,
+      "48": 0,
+      "0": 39,
+      "5": 31,
+      "3": 3,
+      "7": 0,
+      "6": 1,
+      "10": 0,
+      "15": 31,
+      "13": 14,
+      "17": 3,
+      "16": 1,
+      "12": 2,
+      "20": 31,
+      "8": 0,
+      "9": 0,
+      "18": 2,
+      "19": 0,
+      "2": 2,
+      "21": 41,
+      "24": 0,
+      "25": 3,
+      "26": 0,
+      "30": 10,
+      "27": 40,
+      "44": 0,
+      "46": 0,
+      "47": 0,
+      "86": 0,
+      "87": 0,
+      "82": 2,
+      "83": 0,
+      "88": 9,
+      "84": 0,
+      "90": 30,
+      "96": 0,
+      "97": 0,
+      "92": 0,
+      "93": 0,
+      "98": 9,
+      "94": 0,
+      "57": 0,
+      "50": 0,
+      "51": 0,
+      "52": 26,
+      "53": 26,
+      "54": 21,
+      "55": 10,
+      "59": 0,
+      "58": 0,
+      "67": 0,
+      "60": 0,
+      "61": 0,
+      "62": 32,
+      "63": 0,
+      "64": 17,
+      "65": 35,
+      "69": 0,
+      "68": 0,
+      "77": 0,
+      "70": 0,
+      "71": 0,
+      "72": 9,
+      "73": 0,
+      "74": 0,
+      "75": 63,
+      "79": 0,
+      "78": 0,
+      "33": 3,
+      "34": 15,
+      "35": 20,
+      "36": 0,
+      "37": 0,
+      "38": 63,
+      "40": 0,
+      "41": 0,
+      "42": 0,
+      "43": 0,
+      "1": 0,
+      "4": 0,
+      "11": 0,
+      "14": 41,
+      "22": 57,
+      "23": 0,
+      "28": 63,
+      "29": 57,
+      "56": 63,
+      "66": 63,
+      "76": 63,
+      "85": 63,
+      "95": 63,
+      "45": 0,
+      "31": 31,
+      "32": 0,
+      "81": 0,
+      "91": 0
+    },
+    "mod": {
+      "0": [
+        13,
+        5,
+        20
+      ],
+      "1": [
+        17,
+        22,
+        16
+      ],
+      "2": [
+        17,
+        49,
+        21
+      ],
+      "3": [
+        17,
+        0,
+        8
+      ],
+      "4": [
+        17,
+        10,
+        15
+      ],
+      "5": [
+        3,
+        63,
+        8
+      ],
+      "6": [
+        0,
+        0,
+        0
+      ],
+      "7": [
+        0,
+        0,
+        0
+      ],
+      "8": [
+        0,
+        0,
+        0
+      ],
+      "9": [
+        0,
+        0,
+        0
+      ]
+    },
+    "output_hints": [
+      "UX16",
+      "USB MIDI",
+      "MIDI 1"
+    ],
+    "edit_mode": "both"
+  },
+  "tg77": {
+    "channel": 6,
+    "device_number": 11,
+    "element_slot": 0,
+    "filter_select": 0,
+    "values": {
+      "o0.AfmEgHt": 46,
+      "o0.KeyOnVel": 3,
+      "o0.AfmEgR1": 51,
+      "o0.AfmEgR2": 57,
+      "o0.AfmEgR3": 62,
+      "o0.AfmEgR4": 54,
+      "o0.AfmEgRr1": 49,
+      "o0.AfmEgRr2": 49,
+      "o0.AfmEgL0": 39,
+      "o0.AfmEgL1": 43,
+      "o0.AfmEgL2": 44,
+      "o0.AfmEgL3": 55,
+      "o0.AfmEgL4": 59,
+      "o0.AfmEgRl1": 62,
+      "o0.AfmEgRl2": 22,
+      "o0.RateScalingSign": 0,
+      "o0.RateScalingValue": 2,
+      "o0.SusLoopPoint": 2,
+      "o0.OutputLevel": 15,
+      "o0.Bp1Amount": 147,
+      "o0.Bp2Amount": 187,
+      "o0.Bp3Amount": 114,
+      "o0.Bp4Amount": 92,
+      "o0.Bp1Keyboard": 28,
+      "o0.Bp2Keyboard": 23,
+      "o0.Bp3Keyboard": 66,
+      "o0.Bp4Keyboard": 99,
+      "o0.Mode": 1
+    },
+    "output_hints": [
+      "UX16",
+      "USB MIDI",
+      "MIDI 1"
+    ]
+  },
+  "lxp1": {
+    "channel": 1,
+    "program": 1,
+    "preset": 0,
+    "param_class": "packed",
+    "values": {
+      "1": {
+        "0": 1,
+        "1": 250,
+        "2": 255
+      }
+    },
+    "output_hints": [
+      "UX16",
+      "USB MIDI",
+      "MIDI 1"
+    ]
+  },
+  "bassstation": {
+    "channel": 3,
+    "program": 0,
+    "values": {
+      "env2Attack": 61
+    },
+    "output_hints": [
+      "UX16",
+      "USB MIDI",
+      "MIDI 1"
+    ]
   }
 }
