@@ -169,6 +169,21 @@ Pages: **18 LXP-1** (`*`), **19 Matrix-1000** (`(`), **20 TG77** (`)`),
   against the player's real timing (tests replay the 2026-09-20 capture).
   Shell test rig without the keyboard: `aseqsend -p 14:0 "B0 07 77"` (knob
   up), then `"90 30 40"` / `"80 30 00"` (lo) and `3C` (hi) taps — knobctl reads Midi Through Port-0.
+- **In-page navigation from the keyboard (2026-09-20):** in control mode the
+  white keys above lo-C are the arrow cluster — **D up · E down · F left ·
+  G right · A enter · B escape** (mapping measured from a capture of the
+  player; remap via `knobctl.ctrl_keys`, note-in-home-octave → key name).
+  Keys are *injected* through `midicrt.inject_key()` into the normal keyboard
+  path, so they behave exactly like typed keys everywhere: page cursors and
+  nudges, typed-entry confirm/cancel, and **B on a page that doesn't use
+  Escape opens the PAGES menu**, which D/E/A then drive — a full page picker.
+  Held arrows auto-repeat (0.4 s delay, 8 Hz; `ctrl_repeat_delay_s` /
+  `ctrl_repeat_interval_s`); enter/escape never repeat.
+  **The same controls work in octaves 2, 3 and 4** (`ctrl_octaves`): the
+  handshake and the exit chord accept any C pair an octave apart in that
+  range, and for page stepping a C at or below the C you entered with is
+  *previous*, a C above it is *next*.
+  Left/right on a controller page sends real parameter changes to the synth.
 
 ## Wiring (rack, as of 2026-08-25)
 

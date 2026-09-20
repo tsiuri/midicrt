@@ -759,6 +759,15 @@ def run_menu_action(action):
     threading.Thread(target=_go, daemon=True).start()
 
 
+def _menu_label(pid, name):
+    """Menu row text. Page entries have int ids ("12  Stuck Heatmap"); action
+    entries have string ids ("action:panic") and show no number — formatting
+    those with :2d raised every frame and froze the screen while the menu was
+    open (regression from the ALL NOTES OFF / PANIC actions, fixed 2026-09-20)."""
+    num = f"{pid:2d}" if isinstance(pid, int) else "  "
+    return f"{num}  {name}"
+
+
 def _draw_escape_menu(cr):
     """Centered opaque panel listing pages; scrolls when the list exceeds
     MENU_VISIBLE_ROWS (settings: escape_menu.visible_rows)."""
@@ -780,7 +789,7 @@ def _draw_escape_menu(cr):
     _menu_scroll = max(0, min(_menu_scroll, n - vis))
 
     hint = "Enter:go  Esc:close"
-    inner_w = max([len(f"{pid:2d}  {name}") for pid, name in entries] + [len(hint), 22]) + 2
+    inner_w = max([len(_menu_label(pid, name)) for pid, name in entries] + [len(hint), 22]) + 2
     panel_w_px = (inner_w + 2) * cw
     panel_h_px = (vis + 4) * ch
     fb_h, fb_w = comp._buf.shape
@@ -801,7 +810,7 @@ def _draw_escape_menu(cr):
     for i in range(vis):
         idx = _menu_scroll + i
         pid, name = entries[idx]
-        line = f" {pid:2d}  {name}".ljust(inner_w)[:inner_w]
+        line = (" " + _menu_label(pid, name)).ljust(inner_w)[:inner_w]
         if idx == sel:
             comp.text(x0 + cw, list_y + i * ch, line, fg=BLACK, bg=GREEN_BRIGHT)
         else:
@@ -2000,6 +2009,36 @@ def trigger_capture_recent(trigger: str = "key", bars: int | None = None):
     return ok, message, out_path
 
 #keyboard
+# ---------------------------------------------------------------------
+# Injected keys — synthesized keypresses from plugins (plugins/knobctl.py maps
+# BLE-keyboard notes to arrows/enter/escape). They are drained by
+# keyboard_listener, so an injected key takes EXACTLY the path a typed key
+# does (screensaver wake, page-cycler pause, escape menu, page keypress) and
+# pages are only ever driven from that one thread.
+# ---------------------------------------------------------------------
+import queue as _queue
+_injected_keys = _queue.SimpleQueue()
+_INJECT_UCS = {"KEY_ENTER": "\r", "KEY_ESCAPE": "\x1b", "KEY_UP": "\x1b[A",
+               "KEY_DOWN": "\x1b[B", "KEY_RIGHT": "\x1b[C", "KEY_LEFT": "\x1b[D"}
+
+
+def inject_key(name):
+    """Queue a named key (e.g. "KEY_UP") as if typed. Thread-safe."""
+    from blessed.keyboard import Keystroke
+    code = getattr(term, name, None)
+    if code is None:
+        return False
+    _injected_keys.put(Keystroke(ucs=_INJECT_UCS.get(name, ""), code=code, name=name))
+    return True
+
+
+def _next_key():
+    try:
+        return _injected_keys.get_nowait()
+    except _queue.Empty:
+        return term.inkey(timeout=0.05)
+
+
 def keyboard_listener():
     global exit_flag, _page_locked
     # find plugins of interest once at startup
@@ -2007,7 +2046,7 @@ def keyboard_listener():
     _pc = _pagecycle_module()
     with term.cbreak():
         while not exit_flag:
-            key = term.inkey(timeout=0.05)
+            key = _next_key()
             if not key:
                 continue
 

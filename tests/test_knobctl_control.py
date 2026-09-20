@@ -68,8 +68,8 @@ def test_control_mode_keys_step_pages_and_swallow_the_rest():
     assert kc.note_off(LO, 10.1) == "swallow"
     assert kc.note_on(HI, 10.2) == "next"
     assert kc.note_off(HI, 10.3) == "swallow"
-    assert kc.note_on(64, 10.4) == "swallow"
-    assert kc.note_off(64, 10.5) == "swallow"
+    assert kc.note_on(61, 10.4) == "swallow"      # C#: not mapped to anything
+    assert kc.note_off(61, 10.5) == "swallow"
 
 
 def test_chord_hold_exits_after_hold_time():
@@ -256,3 +256,101 @@ def test_wrong_combo_shows_no_reminder():
     for n in [LO, LO, HI, HI, HI, LO, LO]:
         kc.note_on(n, t); kc.note_off(n, t + 0.05); t += 0.2
     assert kc.indicator(now=t, source="BT")[1] is False
+
+
+# ----- in-page navigation keys (capture 2026-09-20: D E F G A B above lo-C) ----
+
+def _enter(kc, lo, t0=0.0):
+    kc.knob(127, t0)
+    t = t0
+    for n in [lo, lo, lo, lo + 12, lo + 12, lo + 12, lo]:
+        v = kc.note_on(n, t); kc.note_off(n, t + 0.05); t += 0.2
+    assert v == "enter"
+    return t
+
+
+NAV = {2: "KEY_UP", 4: "KEY_DOWN", 5: "KEY_LEFT", 7: "KEY_RIGHT", 9: "KEY_ENTER", 11: "KEY_ESCAPE"}
+
+
+def test_navigation_keys_in_control_mode():
+    kc = KeyboardControl(lo=48, hi=60)
+    t = _enter(kc, 48)
+    for off, name in NAV.items():
+        assert kc.note_on(48 + off, t) == "key:" + name
+        assert kc.note_off(48 + off, t + 0.1) == "swallow"
+        t += 0.3
+
+
+def test_navigation_keys_work_in_octaves_2_and_4_too():
+    kc = KeyboardControl(lo=48, hi=60)
+    t = _enter(kc, 48)
+    for base in (36, 60):
+        for off, name in NAV.items():
+            assert kc.note_on(base + off, t) == "key:" + name
+            kc.note_off(base + off, t + 0.1); t += 0.3
+
+
+def test_navigation_keys_are_plain_notes_outside_control_mode():
+    kc = KeyboardControl(lo=48, hi=60)
+    assert kc.note_on(50, 0.0) == "forward"
+
+
+def test_notes_outside_the_three_octaves_are_swallowed_in_control_mode():
+    kc = KeyboardControl(lo=48, hi=60)
+    t = _enter(kc, 48)
+    assert kc.note_on(26, t) == "swallow"       # D1
+    assert kc.note_on(86, t + 0.3) == "swallow"  # D6
+
+
+def test_handshake_and_exit_chord_work_in_octave_2_and_octave_4():
+    for lo in (36, 60):
+        kc = KeyboardControl(lo=48, hi=60)
+        t = _enter(kc, lo)
+        kc.note_on(lo, t + 1.0); kc.note_on(lo + 12, t + 1.0)
+        assert kc.tick(t + 1.6) is True
+        assert not kc.in_control
+
+
+def test_page_step_cs_are_relative_to_the_c_used_to_enter():
+    kc = KeyboardControl(lo=48, hi=60)
+    t = _enter(kc, 48)
+    for note, want in ((36, "prev"), (48, "prev"), (60, "next"), (72, "next")):
+        assert kc.note_on(note, t) == want
+        kc.note_off(note, t + 0.05); t += 0.3
+
+
+def test_held_arrow_repeats_after_delay_then_at_interval():
+    kc = KeyboardControl(lo=48, hi=60, repeat_delay_s=0.4, repeat_interval_s=0.125)
+    t = _enter(kc, 48)
+    assert kc.note_on(50, t) == "key:KEY_UP"
+    assert kc.poll_repeat(t + 0.30) == []
+    assert kc.poll_repeat(t + 0.41) == ["KEY_UP"]
+    assert kc.poll_repeat(t + 0.45) == []
+    assert kc.poll_repeat(t + 0.54) == ["KEY_UP"]
+    kc.note_off(50, t + 0.6)
+    assert kc.poll_repeat(t + 1.0) == []
+
+
+def test_enter_and_escape_never_repeat():
+    kc = KeyboardControl(lo=48, hi=60)
+    t = _enter(kc, 48)
+    kc.note_on(57, t)
+    assert kc.poll_repeat(t + 2.0) == []
+    kc.note_off(57, t + 2.1)
+    kc.note_on(59, t + 3.0)
+    assert kc.poll_repeat(t + 5.0) == []
+
+
+def test_another_key_cancels_a_running_repeat():
+    kc = KeyboardControl(lo=48, hi=60)
+    t = _enter(kc, 48)
+    kc.note_on(50, t)
+    kc.note_on(57, t + 0.1)          # enter pressed while up is held
+    assert kc.poll_repeat(t + 1.0) == []
+
+
+def test_custom_keymap_is_respected():
+    kc = KeyboardControl(lo=48, hi=60, keymap={2: "KEY_DOWN"})
+    t = _enter(kc, 48)
+    assert kc.note_on(50, t) == "key:KEY_DOWN"
+    assert kc.note_on(52, t + 0.3) == "swallow"

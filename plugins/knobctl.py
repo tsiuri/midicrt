@@ -17,6 +17,9 @@
 #   * keyboard-control mode — knob at max, then lo-C x3, hi-C x3, lo-C (within
 #     5 s) enters a mode where lo/hi step pages and other notes are swallowed;
 #     hold lo+hi together 0.5 s to leave. Footer shows " BT CTRL " in reverse.
+#     In the mode D E F G A B = up down left right enter escape, injected
+#     through midicrt.inject_key() so they behave exactly like the real keys
+#     (held arrows auto-repeat); the same controls work in octaves 2, 3 and 4.
 #   * footer indicator — indicator() -> (text, reverse): "BT ch3 *" with a
 #     120 ms flash on ANY received message; blinking reverse " BT OFF " while
 #     the BLE link is down (config offline_blink=false -> solid reverse).
@@ -56,6 +59,15 @@ ctrl_note_lo = int(_cfg.get("ctrl_note_lo", 48))   # the two Cs of the handshake
 ctrl_note_hi = int(_cfg.get("ctrl_note_hi", 60))   # chord-hold (note numbers)
 ctrl_knob_min = int(_cfg.get("ctrl_knob_min", 100))  # knob value that arms the handshake
 ctrl_hold_s = float(_cfg.get("ctrl_hold_s", 0.5))     # lo+hi chord-hold that leaves control mode
+# In-page navigation while in control mode: note (in the home octave) -> key name.
+# Measured from the player 2026-09-20: D E F G A B = up down left right enter back.
+ctrl_keys = dict(_cfg.get("ctrl_keys") or {
+    "50": "KEY_UP", "52": "KEY_DOWN", "53": "KEY_LEFT", "55": "KEY_RIGHT",
+    "57": "KEY_ENTER", "59": "KEY_ESCAPE",
+})
+ctrl_octaves = list(_cfg.get("ctrl_octaves", [-1, 0, 1]))   # same controls one octave down/up too
+ctrl_repeat_delay_s = float(_cfg.get("ctrl_repeat_delay_s", 0.4))
+ctrl_repeat_interval_s = float(_cfg.get("ctrl_repeat_interval_s", 0.125))
 offline_blink = bool(_cfg.get("offline_blink", True))   # blink " BT OFF " when the link is down
 # Link-state probe: the kernel creates one hci0:<handle> object per live BLE
 # connection; the SMK-25 is the only bonded device, so "any connection" == it.
@@ -68,6 +80,11 @@ _ctl = KeyboardControl(
     offline_blink=offline_blink,
     prefix_min=ctrl_knob_min,
     hold_s=ctrl_hold_s,
+    keymap={(int(n) - ctrl_note_lo) % (ctrl_note_hi - ctrl_note_lo): name
+            for n, name in ctrl_keys.items()},
+    octaves=ctrl_octaves,
+    repeat_delay_s=ctrl_repeat_delay_s,
+    repeat_interval_s=ctrl_repeat_interval_s,
 )
 _link_cache = (0.0, False)   # (checked_at, connected)
 
@@ -121,6 +138,10 @@ def _save_cfg():
             "ctrl_note_hi": ctrl_note_hi,
             "ctrl_knob_min": ctrl_knob_min,
             "ctrl_hold_s": ctrl_hold_s,
+            "ctrl_keys": ctrl_keys,
+            "ctrl_octaves": ctrl_octaves,
+            "ctrl_repeat_delay_s": ctrl_repeat_delay_s,
+            "ctrl_repeat_interval_s": ctrl_repeat_interval_s,
             "sticky_channel": _ctl.sticky_channel,
             "offline_blink": offline_blink,
             "link_probe_glob": link_probe_glob,
@@ -175,10 +196,22 @@ def _release_all():
     _held = {}
 
 
+def _inject(key_name):
+    """Send a synthesized key through midicrt's normal keyboard path."""
+    try:
+        import midicrt as _m
+        _m.inject_key(key_name)
+    except Exception:
+        pass
+
+
 def _apply_verdict(verdict):
     """Act on a KeyboardControl verdict. Returns True if the message is consumed."""
     if verdict == "forward":
         return False
+    if verdict.startswith("key:"):
+        _inject(verdict[4:])
+        return True
     if verdict == "enter":
         _release_all()
         _user_activity()
@@ -383,6 +416,8 @@ def _worker():
             if _ctl.tick(now):          # chord-hold ended control mode
                 _release_all()
                 _user_activity()
+            for _name in _ctl.poll_repeat(now):   # held arrow auto-repeat
+                _inject(_name)
             if not got and now - max(_last_seen, last_reopen) > IDLE_REOPEN_SECS:
                 try:
                     _in_port.close()
