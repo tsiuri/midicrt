@@ -362,11 +362,13 @@ def test_help_lines_describe_the_default_bindings():
     kc = KeyboardControl(lo=48, hi=60)
     assert kc.help_lines() == [
         "BT KEYBOARD CONTROL",
-        "enter: knob up, then C C C  C' C' C'  C",
+        "enter kb control mode: turn wheel to max.",
+        "press C4 3x, then C5 3x, then C4 1x more.",
         "D up  E down  F left  G right",
         "A enter  B esc/menu",
-        "C prev page  C' next page",
-        "exit: hold C + C' 0.5s  (octaves 2-4)",
+        "C4 prev page  C5 next page",
+        "exit kb control mode: hold C4+C5 for 0.5s.",
+        "also works one octave down / up",
     ]
 
 
@@ -377,7 +379,7 @@ def test_help_lines_follow_a_custom_keymap_and_hold_time():
     assert "D down" in lines
     assert "A enter" in lines
     assert not any("left" in l or "right" in l for l in lines)
-    assert lines[-1] == "exit: hold C + C' 1s  (octave 3)"
+    assert lines[-1] == "exit kb control mode: hold C4+C5 for 1s."   # single octave: no "also works" line
 
 
 def test_help_lines_fit_the_menu_panel():

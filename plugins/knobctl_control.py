@@ -154,7 +154,7 @@ class KeyboardControl:
     def help_lines(self):
         """Short how-to for the Help page and the Esc-menu overlay, generated
         from the LIVE bindings so the text can never drift from the behaviour.
-        C = the low C, C' = the C an octave above it."""
+        Wording chosen by the player (2026-09-20)."""
         names = "C C# D D# E F F# G G# A A# B".split()
         label = {"KEY_UP": "up", "KEY_DOWN": "down", "KEY_LEFT": "left",
                  "KEY_RIGHT": "right", "KEY_ENTER": "enter", "KEY_ESCAPE": "esc/menu"}
@@ -162,16 +162,20 @@ class KeyboardControl:
                 for off, k in sorted(self.keymap.items())]
         arrows = "  ".join(f"{n} {l}" for n, l, k in keys if k in REPEATING)
         others = "  ".join(f"{n} {l}" for n, l, k in keys if k not in REPEATING)
-        octs = sorted(b // 12 - 1 for b in self.bases)
-        span = f"octave {octs[0]}" if len(octs) == 1 else f"octaves {octs[0]}-{octs[-1]}"
+        # The player's keyboard labels note 48 "C4" and 60 "C5" (octave = note // 12).
+        c_lo = f"C{self.lo // 12}"
+        c_hi = f"C{self.hi // 12}"
         lines = ["BT KEYBOARD CONTROL",
-                 "enter: knob up, then C C C  C' C' C'  C"]
+                 "enter kb control mode: turn wheel to max.",
+                 f"press {c_lo} 3x, then {c_hi} 3x, then {c_lo} 1x more."]
         if arrows:
             lines.append(arrows)
         if others:
             lines.append(others)
-        lines.append("C prev page  C' next page")
-        lines.append(f"exit: hold C + C' {self.hold_s:g}s  ({span})")
+        lines.append(f"{c_lo} prev page  {c_hi} next page")
+        lines.append(f"exit kb control mode: hold {c_lo}+{c_hi} for {self.hold_s:g}s.")
+        if len(self.bases) > 1:
+            lines.append("also works one octave down / up")
         return lines
 
     # ----- internals ----------------------------------------------------
