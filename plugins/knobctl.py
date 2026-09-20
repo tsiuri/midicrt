@@ -169,6 +169,11 @@ def in_control_mode():
     return _ctl.in_control
 
 
+def help_lines():
+    """How-to text for the Help page and the Esc-menu overlay (live bindings)."""
+    return _ctl.help_lines()
+
+
 def _user_activity():
     """A mode change or page step counts as a keypress for screensaver/pagecycle."""
     try:

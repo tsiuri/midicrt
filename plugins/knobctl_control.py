@@ -150,6 +150,30 @@ class KeyboardControl:
         dot = "*" if flashing else " "
         return f"{source} ch{self.target_channel()} {dot}", False
 
+    # ----- on-screen help ------------------------------------------------
+    def help_lines(self):
+        """Short how-to for the Help page and the Esc-menu overlay, generated
+        from the LIVE bindings so the text can never drift from the behaviour.
+        C = the low C, C' = the C an octave above it."""
+        names = "C C# D D# E F F# G G# A A# B".split()
+        label = {"KEY_UP": "up", "KEY_DOWN": "down", "KEY_LEFT": "left",
+                 "KEY_RIGHT": "right", "KEY_ENTER": "enter", "KEY_ESCAPE": "esc/menu"}
+        keys = [(names[(self.lo + off) % 12], label.get(k, k.replace("KEY_", "").lower()), k)
+                for off, k in sorted(self.keymap.items())]
+        arrows = "  ".join(f"{n} {l}" for n, l, k in keys if k in REPEATING)
+        others = "  ".join(f"{n} {l}" for n, l, k in keys if k not in REPEATING)
+        octs = sorted(b // 12 - 1 for b in self.bases)
+        span = f"octave {octs[0]}" if len(octs) == 1 else f"octaves {octs[0]}-{octs[-1]}"
+        lines = ["BT KEYBOARD CONTROL",
+                 "enter: knob up, then C C C  C' C' C'  C"]
+        if arrows:
+            lines.append(arrows)
+        if others:
+            lines.append(others)
+        lines.append("C prev page  C' next page")
+        lines.append(f"exit: hold C + C' {self.hold_s:g}s  ({span})")
+        return lines
+
     # ----- internals ----------------------------------------------------
     def _update_chord(self, now):
         if any(self._held == {b, b + self._span} for b in self.bases):

@@ -789,9 +789,19 @@ def _draw_escape_menu(cr):
     _menu_scroll = max(0, min(_menu_scroll, n - vis))
 
     hint = "Enter:go  Esc:close"
-    inner_w = max([len(_menu_label(pid, name)) for pid, name in entries] + [len(hint), 22]) + 2
+    # BLE-keyboard how-to under the hint (text comes from plugins/knobctl.py,
+    # generated from the live bindings; absent if the plugin isn't loaded).
+    kb_help = []
+    try:
+        _kc = next((p for p in PLUGINS if hasattr(p, "help_lines")), None)
+        if _kc is not None:
+            kb_help = list(_kc.help_lines())
+    except Exception:
+        kb_help = []
+    inner_w = max([len(_menu_label(pid, name)) for pid, name in entries]
+                  + [len(l) for l in kb_help] + [len(hint), 22]) + 2
     panel_w_px = (inner_w + 2) * cw
-    panel_h_px = (vis + 4) * ch
+    panel_h_px = (vis + 4 + (len(kb_help) + 1 if kb_help else 0)) * ch
     fb_h, fb_w = comp._buf.shape
     x0 = max(0, (fb_w - panel_w_px) // 2)
     y0 = max(0, (fb_h - panel_h_px) // 2)
@@ -821,7 +831,11 @@ def _draw_escape_menu(cr):
     if _menu_scroll + vis < n:
         comp.text(x0 + panel_w_px - 3 * cw, list_y + (vis - 1) * ch, "v", fg=GREEN_BRIGHT)
 
-    comp.text(x0 + (panel_w_px - len(hint) * cw) // 2, y0 + panel_h_px - ch - ch // 2, hint, fg=GREEN_DIM)
+    hint_y = list_y + vis * ch + ch // 2
+    comp.text(x0 + (panel_w_px - len(hint) * cw) // 2, hint_y, hint, fg=GREEN_DIM)
+    for i, l in enumerate(kb_help):
+        comp.text(x0 + cw, hint_y + ch + ch // 2 + i * ch, l,
+                  fg=GREEN_MID if i == 0 else GREEN_DIM)
 
 
 def _screensaver_module() -> ScreenSaverModule | None:

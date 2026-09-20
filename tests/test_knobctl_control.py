@@ -354,3 +354,31 @@ def test_custom_keymap_is_respected():
     t = _enter(kc, 48)
     assert kc.note_on(50, t) == "key:KEY_DOWN"
     assert kc.note_on(52, t + 0.3) == "swallow"
+
+
+# ----- on-screen help text is generated from the live bindings ---------------
+
+def test_help_lines_describe_the_default_bindings():
+    kc = KeyboardControl(lo=48, hi=60)
+    assert kc.help_lines() == [
+        "BT KEYBOARD CONTROL",
+        "enter: knob up, then C C C  C' C' C'  C",
+        "D up  E down  F left  G right",
+        "A enter  B esc/menu",
+        "C prev page  C' next page",
+        "exit: hold C + C' 0.5s  (octaves 2-4)",
+    ]
+
+
+def test_help_lines_follow_a_custom_keymap_and_hold_time():
+    kc = KeyboardControl(lo=48, hi=60, keymap={2: "KEY_DOWN", 9: "KEY_ENTER"}, hold_s=1.0,
+                         octaves=(0,))
+    lines = kc.help_lines()
+    assert "D down" in lines
+    assert "A enter" in lines
+    assert not any("left" in l or "right" in l for l in lines)
+    assert lines[-1] == "exit: hold C + C' 1s  (octave 3)"
+
+
+def test_help_lines_fit_the_menu_panel():
+    assert max(len(l) for l in KeyboardControl(lo=48, hi=60).help_lines()) <= 44
