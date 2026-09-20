@@ -562,5 +562,8 @@
       "USB MIDI",
       "MIDI 1"
     ]
+  },
+  "notes_badge": {
+    "enabled": false
   }
 }

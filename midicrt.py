@@ -641,6 +641,14 @@ def switch_page_relative(step):
 # ---------------------------------------------------------------------
 # Escape menu — game-style page navigator overlaid on the running page
 # ---------------------------------------------------------------------
+# Page-1 inset ("welcome to the jungle" mini spectrum + piano-roll badge).
+# settings.json -> "notes_badge": {"enabled": false} turns it off, which also
+# skips the spectrum/roll data gathering that feeds it.
+try:
+    NOTES_BADGE_ENABLED = bool((load_section("notes_badge") or {}).get("enabled", True))
+except Exception:
+    NOTES_BADGE_ENABLED = True
+
 _menu_cfg = load_section("escape_menu") or {}
 MENU_VISIBLE_ROWS = max(3, int(_menu_cfg.get("visible_rows", 10)))
 try:
@@ -1387,7 +1395,7 @@ def _ui_loop_body():
 
         _pt0 = _pt("page_cache", _pt0)
         if _compositor is not None:
-            if current_page == 1:
+            if current_page == 1 and NOTES_BADGE_ENABLED:
                 badge_now = time.monotonic()
                 badge_next = getattr(ui_loop, "_notes_badge_data_next_t", 0.0)
                 if badge_now >= badge_next or not hasattr(ui_loop, "_notes_badge_levels"):
