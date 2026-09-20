@@ -24,7 +24,7 @@ HANDSHAKE = ("lo", "lo", "lo", "hi", "hi", "hi", "lo")
 
 
 class KeyboardControl:
-    def __init__(self, lo=60, hi=72, window_s=5.0, hold_s=1.0, prefix_min=100,
+    def __init__(self, lo=60, hi=72, window_s=5.0, hold_s=0.5, prefix_min=100,
                  flash_s=0.12, sticky_channel=None, default_channel=1,
                  offline_blink=True, blink_s=0.5):
         self.lo = int(lo)

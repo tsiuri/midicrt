@@ -158,7 +158,8 @@ Pages: **18 LXP-1** (`*`), **19 Matrix-1000** (`(`), **20 TG77** (`)`),
   start (an extra tap) still works; a real combo takes ~1.6-2.1 s. The taps still play through until the last one.
   *In mode:* the footer cell becomes reverse ` BT CTRL `; lo-C = previous
   page, hi-C = next page; every other note is swallowed; the knob still works.
-  *Exit:* hold lo-C + hi-C together (nothing else held) for 1 s. Rules live in
+  *Exit:* hold lo-C + hi-C together (nothing else held) for 0.5 s
+  (`knobctl.ctrl_hold_s`). Rules live in
   `plugins/knobctl_control.py` (tests: `tests/test_knobctl_control.py`).
   Tuning dataset: capture with a mido logger on Midi Through Port-0 and tune
   against the player's real timing (tests replay the 2026-09-20 capture).

@@ -16,7 +16,7 @@
 #     on neutral pages (persisted as "sticky_channel").
 #   * keyboard-control mode — knob at max, then lo-C x3, hi-C x3, lo-C (within
 #     5 s) enters a mode where lo/hi step pages and other notes are swallowed;
-#     hold lo+hi together 1 s to leave. Footer shows " BT CTRL " in reverse.
+#     hold lo+hi together 0.5 s to leave. Footer shows " BT CTRL " in reverse.
 #   * footer indicator — indicator() -> (text, reverse): "BT ch3 *" with a
 #     120 ms flash on ANY received message; blinking reverse " BT OFF " while
 #     the BLE link is down (config offline_blink=false -> solid reverse).
@@ -55,6 +55,7 @@ default_channel = int(_cfg.get("default_channel", 1))
 ctrl_note_lo = int(_cfg.get("ctrl_note_lo", 48))   # the two Cs of the handshake /
 ctrl_note_hi = int(_cfg.get("ctrl_note_hi", 60))   # chord-hold (note numbers)
 ctrl_knob_min = int(_cfg.get("ctrl_knob_min", 100))  # knob value that arms the handshake
+ctrl_hold_s = float(_cfg.get("ctrl_hold_s", 0.5))     # lo+hi chord-hold that leaves control mode
 offline_blink = bool(_cfg.get("offline_blink", True))   # blink " BT OFF " when the link is down
 # Link-state probe: the kernel creates one hci0:<handle> object per live BLE
 # connection; the SMK-25 is the only bonded device, so "any connection" == it.
@@ -66,6 +67,7 @@ _ctl = KeyboardControl(
     default_channel=default_channel,
     offline_blink=offline_blink,
     prefix_min=ctrl_knob_min,
+    hold_s=ctrl_hold_s,
 )
 _link_cache = (0.0, False)   # (checked_at, connected)
 
@@ -118,6 +120,7 @@ def _save_cfg():
             "ctrl_note_lo": ctrl_note_lo,
             "ctrl_note_hi": ctrl_note_hi,
             "ctrl_knob_min": ctrl_knob_min,
+            "ctrl_hold_s": ctrl_hold_s,
             "sticky_channel": _ctl.sticky_channel,
             "offline_blink": offline_blink,
             "link_probe_glob": link_probe_glob,

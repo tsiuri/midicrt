@@ -219,3 +219,13 @@ def test_taps_before_leaving_control_mode_do_not_count_toward_reentry():
     kc.note_off(LO, 11.3); kc.note_off(HI, 11.3)
     assert kc.note_on(LO, 11.5) == "forward"      # a single tap must not re-enter
     assert not kc.in_control
+
+
+def test_default_chord_hold_is_half_a_second():
+    kc = KeyboardControl(lo=LO, hi=HI)          # no hold_s given
+    kc.knob(127, 0.0)
+    _handshake(kc)
+    kc.note_on(LO, 20.0)
+    kc.note_on(HI, 20.0)
+    assert kc.tick(20.4) is False
+    assert kc.tick(20.55) is True
