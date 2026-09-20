@@ -555,7 +555,9 @@
     "channel": 3,
     "program": 0,
     "values": {
-      "env2Attack": 61
+      "env2Attack": 61,
+      "filterFrequency": 62,
+      "env1Sustain": 64
     },
     "output_hints": [
       "UX16",

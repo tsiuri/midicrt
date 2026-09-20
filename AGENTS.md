@@ -1,5 +1,14 @@
 # AGENTS.md - midicrt
 
+> **Direction (2026-09-20): this repo IS the system.** The `midicrt2` v2 rewrite
+> (`~/midicrt2`) was an experimental branch the owner ultimately didn't like — it is
+> **not planned, there is no cutover**, and its units (`midicrtd`, `midicrt-fb`,
+> `midicrt-web`) stay disabled. Move the visualizer forward by **patching this
+> codebase in place**. Pattern to follow: put rules in a small pure, unit-tested
+> module (`plugins/knobctl_control.py` + `tests/test_knobctl_control.py`), keep the
+> plugin/`midicrt.py` glue thin, verify on the real framebuffer (`cat /dev/fb0`).
+> After any relaunch **confirm the PID changed** (`q` via tmux can be swallowed).
+
 This file tracks launch, config, and development notes for midicrt.
 
 ## Active Task Docs
