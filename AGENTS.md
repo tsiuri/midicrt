@@ -8,6 +8,13 @@
 > module (`plugins/knobctl_control.py` + `tests/test_knobctl_control.py`), keep the
 > plugin/`midicrt.py` glue thin, verify on the real framebuffer (`cat /dev/fb0`).
 > After any relaunch **confirm the PID changed** (`q` via tmux can be swallowed).
+>
+> **Before building a feature, check whether the v2 experiment already solved it.**
+> midicrt2 is archived, not lost: `~/deprecated/midicrt2-2026-09-20/midicrt2/PRIOR-ART-INDEX.md`
+> on this Pi (also GitHub tsiuri/midicrt2, read-only) maps feature → file → doc — MIDI-learn
+> bindings, remappable keymaps, device identity, input overflow recovery, capture/replay,
+> sysex librarian, cheap tuner/demand-gated audio, web control bridge, fast RGB565 drawing.
+> Mine it for algorithms, tested edge cases and gotchas; port ideas into v1, don't revive v2.
 
 This file tracks launch, config, and development notes for midicrt.
 

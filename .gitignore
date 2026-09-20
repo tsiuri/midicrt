@@ -14,6 +14,10 @@ pages/pianoroll
 log.txt
 midicrt_autoconnect.log
 sysex.log
+# rotated copies (logrotate: /etc/logrotate.d/midicrt) + ad-hoc log backups
+log.txt.*
+midicrt_autoconnect.log.*
+sysex.log.*
 sysex.d/
 vars.txt
 *.mid
